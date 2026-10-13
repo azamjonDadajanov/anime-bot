@@ -1,0 +1,15 @@
+# Secrets and host-specific state must never end up in the image.
+.env
+.venv
+db.sqlite3
+media
+staticfiles
+
+__pycache__
+*.py[cod]
+*.log
+.pytest_cache
+.mypy_cache
+.git
+.gitignore
+.dockerignore

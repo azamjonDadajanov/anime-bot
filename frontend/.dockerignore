@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-ssr
+# Vite loads .env.production / .env.development from the repo, so only the
+# machine-local overrides stay out of the build context.
+.env
+.env.local
+.env.*.local
+*.log
+.vscode
+.idea
+.git
+.gitignore
+.dockerignore

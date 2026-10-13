@@ -1,0 +1,39 @@
+from django.urls import path
+from .views import (
+	CurrentUserView,
+	FavoriteListView,
+	PasswordTokenRefreshView,
+	ProfileActivityView,
+	ProfileHistoryView,
+	ProfileOverviewView,
+	ProfileSubscriptionView,
+	RegisterView,
+	SubscriptionCardView,
+	SubscriptionCreateView,
+	SubscriptionPlansView,
+	SubscriptionRequestDetailView,
+	TelegramMiniAppLoginView,
+	TelegramWidgetLoginView,
+	UserSettingsView,
+)
+from .views import PasswordTokenView
+
+
+urlpatterns = [
+	path("register/", RegisterView.as_view(), name="register"),
+	path("token/", PasswordTokenView.as_view(), name="token_obtain_pair"),
+	path("token/refresh/", PasswordTokenRefreshView.as_view(), name="token_refresh"),
+	path("me/", CurrentUserView.as_view(), name="current_user"),
+	path("favorites/", FavoriteListView.as_view(), name="favorite_list"),
+	path("profile/", ProfileOverviewView.as_view(), name="profile_overview"),
+	path("profile/activity/", ProfileActivityView.as_view(), name="profile_activity"),
+	path("profile/history/", ProfileHistoryView.as_view(), name="profile_history"),
+	path("profile/subscription/", ProfileSubscriptionView.as_view(), name="profile_subscription"),
+	path("settings/", UserSettingsView.as_view(), name="user_settings"),
+	path("telegram/mini-app/", TelegramMiniAppLoginView.as_view(), name="telegram_mini_app_login"),
+	path("telegram/login/", TelegramWidgetLoginView.as_view(), name="telegram_widget_login"),
+	path("subscription/plans/", SubscriptionPlansView.as_view(), name="subscription_plans"),
+	path("subscription/card/", SubscriptionCardView.as_view(), name="subscription_card"),
+	path("subscription/request/", SubscriptionCreateView.as_view(), name="subscription_create"),
+	path("subscription/requests/<int:pk>/", SubscriptionRequestDetailView.as_view(), name="subscription_request_detail"),
+]

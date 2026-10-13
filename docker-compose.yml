@@ -1,0 +1,98 @@
+# Production stack for Kino Top.
+#
+#   cp .env.production.example .env     # fill in the secrets
+#   docker compose up -d --build
+#
+# Services: PostgreSQL, the Django API (gunicorn), the aiogram bot and nginx,
+# which serves the built SPA, the static/media files and proxies the API.
+name: kino-top
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_DB: ${DB_NAME:-kino_top}
+      POSTGRES_USER: ${DB_USER:-kino_top}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build: ./kino_top
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      # Migrate and collectstatic before gunicorn starts.
+      RUN_SETUP: "1"
+      # Compose owns the connection settings; the rest comes from .env.
+      DB_ENGINE: django.db.backends.postgresql
+      DB_HOST: db
+      DB_PORT: "5432"
+    volumes:
+      - static:/app/staticfiles
+      - media:/app/media
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # /api/schema/ is public, so it doubles as the readiness probe.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/schema/', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  bot:
+    # Same image, different process. aiogram long-polls Telegram, so exactly one
+    # replica may run: never use `--scale bot=`.
+    build: ./kino_top
+    command: ["python", "manage.py", "runbot"]
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DB_ENGINE: django.db.backends.postgresql
+      DB_HOST: db
+      DB_PORT: "5432"
+    volumes:
+      - media:/app/media
+    depends_on:
+      # The schema exists once `web` is healthy, so the bot never starts against
+      # an unmigrated database.
+      web:
+        condition: service_healthy
+
+  nginx:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      # Served directly by nginx instead of being proxied through gunicorn.
+      - static:/var/www/static:ro
+      - media:/var/www/media:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  static:
+  media:
