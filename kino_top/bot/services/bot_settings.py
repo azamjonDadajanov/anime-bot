@@ -106,4 +106,8 @@ async def runtime_settings() -> Dict[str, Any]:
 
 async def publish_channel() -> Optional[Any]:
 	obj = await get_settings()
-	return obj.publish_channel if obj.publish_channel_id else None
+	if not obj.publish_channel_id:
+		return None
+	from .channels import get_channel
+
+	return await get_channel(obj.publish_channel_id)

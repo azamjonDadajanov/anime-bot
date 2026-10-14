@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
       setLoading(false)
     }
 
-    window.addEventListener('kino-top:auth-expired', clearSession)
+    window.addEventListener('anichopar:auth-expired', clearSession)
     if (hasAccessToken()) {
       authApi.currentUser()
         .then((profile) => active && setUser(profile))
@@ -44,7 +44,7 @@ export function AuthProvider({ children }) {
 
     return () => {
       active = false
-      window.removeEventListener('kino-top:auth-expired', clearSession)
+      window.removeEventListener('anichopar:auth-expired', clearSession)
     }
   }, [])
 

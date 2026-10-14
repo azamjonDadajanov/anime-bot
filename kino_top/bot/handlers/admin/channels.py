@@ -21,6 +21,7 @@ from ...keyboards.admin import (
 	confirm,
 )
 from ...keyboards.common import btn, cancel_keyboard, keyboard
+from ...services.access import active_required_channels_sync
 from ...services.bot_settings import update_settings
 from ...services.channels import (
 	add_channel,
@@ -73,11 +74,16 @@ def _context(callback: CallbackQuery, *, purpose: str, page: int) -> str:
 
 async def channels_menu_text() -> str:
 	counts = await counts_by_purpose()
+	# Public channels count towards the mandatory subscription too, so show the
+	# real number the users are checked against, not just the 'required' rows.
+	enforced = len(await to_async(active_required_channels_sync)())
 	return (
 		ADMIN_CHANNELS_MENU
 		+ f"\n\n🔒 Majburiy: <b>{counts.get('required', 0)}</b>"
 		+ f"\n☁️ Saqlash: <b>{counts.get('storage', 0)}</b>"
 		+ f"\n📢 Ommaviy: <b>{counts.get('public', 0)}</b>"
+		+ "\n\nℹ️ Ommaviy kanallar ham majburiy obuna sifatida ishlaydi"
+		+ f" (jami tekshiriladi: <b>{enforced}</b> ta faol kanal)."
 	)
 
 

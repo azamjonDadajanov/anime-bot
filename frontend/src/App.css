@@ -16,11 +16,13 @@
   backdrop-filter: blur(22px) saturate(150%);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
 }
-.wordmark { display: inline-flex; gap: 11px; align-items: center; border-radius: 14px; text-decoration: none; font-family: Manrope, sans-serif; font-size: 15px; font-weight: 800; letter-spacing: .01em; transition: opacity .16s ease; }
+.wordmark { display: inline-flex; align-items: center; border-radius: 14px; text-decoration: none; transition: opacity .16s ease; }
 .wordmark:hover { opacity: .82; }
 .wordmark:focus-visible { outline: 2px solid var(--mantine-color-blue-5); outline-offset: 4px; }
-.wordmark b { color: #e2a63b; }
-.wordmark-mark { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 13px; color: #151515; background: linear-gradient(145deg, #f0bd55, #d99325); font-family: Manrope, sans-serif; font-size: 19px; font-weight: 800; box-shadow: 0 10px 20px -12px rgb(226 166 59 / 95%), inset 0 1px rgb(255 255 255 / 45%); }
+.wordmark-logo { display: block; height: 36px; width: auto; }
+.wordmark-logo-dark, .wordmark-emblem { display: none; }
+:root[data-mantine-color-scheme='dark'] .wordmark-logo-light { display: none; }
+:root[data-mantine-color-scheme='dark'] .wordmark-logo-dark { display: block; }
 .header-actions { min-width: 0; display: flex; align-items: center; gap: 10px; }
 /* Search opens a modal, so the trigger is a button, not a disabled input. */
 .header-search { width: min(340px, 40vw); height: 44px; display: inline-flex; align-items: center; gap: 10px; padding: 0 9px 0 14px; border: 1px solid var(--mantine-color-default-border); border-radius: 15px; color: var(--mantine-color-dimmed); background: color-mix(in srgb, var(--mantine-color-body) 60%, transparent); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, color .16s ease; }
@@ -339,8 +341,9 @@
 }
 @media (max-width: 480px) {
   .topbar { height: 64px; padding-inline: 16px; }
-  .wordmark { gap: 0; }
-  .wordmark-text { display: none; }
+  .wordmark-logo,
+  :root[data-mantine-color-scheme='dark'] .wordmark-logo-dark { display: none; }
+  .wordmark-emblem { display: block; height: 40px; width: auto; }
   .header-actions { gap: 8px; }
   .header-search, .header-icon-button { width: 42px; height: 42px; border-radius: 14px; }
   .header-user { height: 42px; }

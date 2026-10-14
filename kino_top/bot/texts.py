@@ -6,7 +6,7 @@ on logic rather than copy.
 
 from __future__ import annotations
 
-BRAND = "🎬 <b>Kino Top</b>"
+BRAND = "🎬 <b>AniChopar</b>"
 
 WELCOME_NEW = (
 	"{brand}\n\n"
@@ -32,12 +32,18 @@ HELP_TEXT = (
 
 SEARCH_PROMPT = (
 	"🔍 <b>Qidiruv</b>\n\n"
-	"Anime nomini, 4 xonali kodini yoki janr nomini yuboring."
+	"Nomini, 4 xonali kodini yoki janr nomini yuboring.\n\n"
+	"Turi yoki janri bo'yicha filtrlash uchun quyidagi tugmalardan foydalaning."
 )
 
 SEARCH_EMPTY_QUERY = "❌ Iltimos, matn yoki kod yuboring."
 SEARCH_NOTHING_FOUND = "😔 <b>{query}</b> bo'yicha hech narsa topilmadi."
 SEARCH_RESULTS = "🔍 <b>{query}</b> uchun natijalar:"
+SEARCH_TYPE_TITLE = "🎬 <b>{label}</b> — {page}/{pages}"
+SEARCH_GENRE_TITLE = "🎭 <b>{genre}</b> janri — {page}/{pages}"
+SEARCH_ALL_TITLE = "📚 <b>Barcha kontent</b> — {page}/{pages}"
+SEARCH_GENRE_LIST = "🎭 <b>Janr bo'yicha qidiruv</b>\n\nJanrni tanlang:"
+SEARCH_EMPTY_RESULTS = "📭 Hozircha bu bo'limda kontent yo'q."
 
 CATALOG_TITLE = "📚 <b>Katalog</b>\n\nKategoriyani tanlang:"
 GENRE_LIST = "🎭 <b>Janrlar</b>\n\nJanrni tanlang:"
@@ -91,10 +97,10 @@ SUBSCRIPTION_OK = "✅ Obuna tasdiqlandi!"
 SUBSCRIPTION_STILL_MISSING = "❌ Siz hali quyidagi kanallarga obuna bo'lmagansiz:\n{channels}"
 
 PREMIUM_REQUIRED = (
-	"💎 <b>Premium tarif kerak</b>\n\n"
-	"Bu kontent <b>{plan}</b> tarifiga mo'ljallangan.\n"
+	"🔒 <b>Faol obuna kerak</b>\n\n"
+	"Bu kontent <b>{plan}</b> uchun mo'ljallangan.\n"
 	"Hisobingiz tarifi: <b>{current}</b>.\n\n"
-	"Tarifni oshirish uchun administrator bilan bog'laning."
+	"Obunani «🎫 Obuna» bo'limidan tanlang."
 )
 
 FAVORITES_TITLE = "⭐ <b>Sevimlilar</b> — {page}/{pages}"
@@ -108,6 +114,7 @@ PROFILE = (
 	"👤 Ism: {name}\n"
 	"🔗 Username: {username}\n"
 	"💎 Tarif: <b>{plan}</b>\n"
+	"📅 Obuna muddati: <b>{expires}</b>\n"
 	"⭐ Sevimlilar: {favorites}\n"
 	"📅 Ro'yxatdan o'tgan: {created}"
 )
@@ -197,33 +204,38 @@ ADMIN_INVALID_INPUT = "❌ Noto'g'ri qiymat. Qayta yuboring."
 
 ADMIN_EPISODES_MENU = "🎞 <b>Qismlar boshqaruvi</b>"
 ADMIN_EPISODE_SELECT_TITLE = "🎬 Qaysi kontentga qism qo'shamiz?"
-ADMIN_EPISODE_ASK_SEASON = "📺 Mavsum raqamini yuboring (mavsumsiz bo'lsa <code>-</code>):"
-ADMIN_EPISODE_ASK_NUMBER = "🔢 Qism raqamini yuboring:"
-ADMIN_EPISODE_ASK_TITLE = "📝 Qism nomini yuboring (ixtiyoriy, <code>-</code> bilan o'tkazish):"
+ADMIN_EPISODE_ASK_SEASON = (
+	"📺 Nechanchi mavsum ekanini yuboring (mavsumsiz bo'lsa <code>-</code>).\n"
+	"Qismlar raqami o'zi hisoblanadi."
+)
 ADMIN_EPISODE_SELECT_CHANNEL = "📡 Cloud (saqlash) kanalini tanlang:"
 ADMIN_EPISODE_NO_CHANNELS = "⚠️ Cloud kanal yo'q. Avval «Kanallar» bo'limida qo'shing."
-ADMIN_EPISODE_ASK_MEDIA = (
-	"📤 Endi mediani yuboring yoki kanaldan forward qiling.\n\n"
-	"Video, rasm yoki fayl qabul qilinadi.\n"
-	"Bir nechta faylni ketma-ket yuborishingiz mumkin."
+ADMIN_EPISODE_ASK_FILES = (
+	"📤 Endi media fayllarni yuboring.\n\n"
+	"Har bir xabar alohida qism bo'ladi — bitta qismda faqat bitta video yoki fayl.\n"
+	"Har bir fayl Cloud kanalga alohida nusxalanadi.\n"
+	"Qismlar raqami avtomatik beriladi.\n\n"
+	"Tugagach <b>💾 Saqlash</b> tugmasini bosing."
 )
-ADMIN_EPISODE_MEDIA_ADDED = "✅ Fayl qo'shildi ({count} ta). Yana yuboring yoki <b>💾 Saqlash</b> ni bosing."
-ADMIN_EPISODE_PREVIEW = (
-	"🧾 <b>Qismni tekshirish</b>\n\n"
-	"🎬 Kontent: <b>{title}</b>\n"
-	"📺 Mavsum: {season}\n"
-	"🔢 Qism: {number}\n"
-	"📝 Nomi: {part_title}\n"
-	"📡 Kanal: {channel}\n"
-	"📦 Fayllar: {files}\n\n"
-	"Saqlashni tasdiqlaysizmi?"
+ADMIN_EPISODE_FILES_READY = "📥 Fayllarni yuboring. Tugagach 💾 Saqlash tugmasini bosing."
+ADMIN_EPISODE_FILE_SAVED = (
+	"✅ {label}qism saqlandi (Cloud kanalga nusxalandi).\n"
+	"Yana fayl yuboring yoki <b>💾 Saqlash</b> ni bosing."
 )
-ADMIN_EPISODE_SAVED = "✅ Qism saqlandi: {season} mavsum · {number}-qism ({files} ta fayl)."
+ADMIN_EPISODE_CLOUD_FAILED = (
+	"❌ Faylni Cloud kanalga nusxalab bo'lmadi. "
+	"Bot kanalda administrator ekaniga ishonch hosil qilib, qayta yuboring."
+)
+ADMIN_EPISODE_SESSION_SAVED = "✅ <b>{title}</b> uchun {count} ta qism saqlandi.\n🎞 {label}"
+ADMIN_EPISODE_PUBLISHED = "📢 Ommaviy kanalga e'lon joylandi."
+ADMIN_EPISODE_NOT_PUBLISHED = (
+	"⚠️ E'lon kanali tanlanmagani uchun ommaviy kanalga chiqarilmadi. "
+	"«Sozlamalar → E'lon kanali» bo'limida tanlang."
+)
+ADMIN_EPISODE_NO_FILES = "📭 Hech qanday fayl yuborilmadi. Avval media yuboring."
 ADMIN_EPISODE_LIST = "🎞 <b>{title}</b> qismlari — {page}/{pages}"
-ADMIN_EPISODE_DELETE_CONFIRM = "🗑 {season} mavsum {number}-qismni o'chirmoqchimisiz?"
+ADMIN_EPISODE_DELETE_CONFIRM = "🗑 {label}qismni o'chirmoqchimisiz?"
 ADMIN_EPISODE_DELETED = "🗑 Qism o'chirildi."
-ADMIN_EPISODE_REPLACE_PROMPT = "🔄 Qism uchun yangi mediani yuboring (yoki forward qiling):"
-ADMIN_EPISODE_REPLACED = "✅ Fayllar almashtirildi ({count} ta)."
 
 ADMIN_CHANNELS_MENU = "📡 <b>Kanallar boshqaruvi</b>\n\nQaysi turdagi kanallar?"
 ADMIN_CHANNEL_LIST = "📡 <b>{label}</b> — {page}/{pages}"
@@ -302,6 +314,7 @@ ADMIN_USER_CARD = (
 	"🆔 Telegram ID: <code>{telegram_id}</code>\n"
 	"🔗 Username: {username}\n"
 	"💎 Tarif: <b>{plan}</b>\n"
+	"📅 Muddat: <b>{expires}</b>\n"
 	"🚫 Bloklangan: <b>{blocked}</b>\n"
 	"⭐ Sevimlilar: {favorites}\n"
 	"📅 Ro'yxat: {created}\n"
@@ -347,6 +360,7 @@ SUBREQ_CARD_HINT = (
 <b>Obuna to'lovi</b>
 
 Tarif: <b>{plan}</b>
+Davomiylik: <b>{days} kun</b>
 Narx: <b>{price}</b>
 Karta raqami: <code>{card}</code>
 
@@ -365,9 +379,14 @@ SUBREQ_SAVED = "Screenshot qabul qilindi. Arizangiz administratorga yuborildi. T
 
 SUBREQ_PENDING_NOTICE = "Sizda allaqachon ko'rib chiqilayotgan ariza bor. Iltimos, kuting."
 
-SUBREQ_ALREADY_PLAN = "Bu tarif allaqachon sizniki."
+SUBREQ_ALREADY_PLAN = "Bu tarif allaqachon sizniki va faol."
 
-SUBREQ_APPROVED = "✅ <b>Obuna tasdiqlandi!</b>\n\nTarif: <b>{plan}</b>\nEndi barcha imkoniyatlardan foydalanishingiz mumkin."
+SUBREQ_APPROVED = (
+	"✅ <b>Obuna tasdiqlandi!</b>\n\n"
+	"Tarif: <b>{plan}</b>\n"
+	"Davomiylik: {days} kun\n"
+	"Endi barcha imkoniyatlardan foydalanishingiz mumkin."
+)
 
 SUBREQ_REJECTED = "❌ <b>Obuna bekor qilindi.</b>\n\nTarif: <b>{plan}</b>\nSabab: to'lov tasdiqlanmadi."
 
@@ -378,3 +397,157 @@ SUBREQ_ALREADY_PROCESSED = "Bu ariza allaqachon ko'rib chiqilgan."
 ADMIN_SUBREQ_APPROVED = "✅ Ariza tasdiqlandi.\n\n{details}"
 
 ADMIN_SUBREQ_REJECTED = "❌ Ariza rad etildi.\n\n{details}"
+
+# --- coupons ------------------------------------------------------------------
+COUPON_PROMPT = (
+	"🎟 <b>Kupon</b>\n\n"
+	"Kupon kodini yuboring.\n"
+	"Masalan: <code>ANICHOPAR</code>"
+)
+COUPON_REDEEMED = (
+	"🎉 <b>Kupon qabul qilindi!</b>\n\n"
+	"🎁 Sovg'a: <b>{days} kunlik obuna</b>\n"
+	"📅 Amal qiladi: <b>{expires}</b>"
+)
+COUPON_ALREADY = "ℹ️ Siz bu kuponni allaqachon ishlatgansiz."
+COUPON_EXPIRED = (
+	"⌛️ Bu kupon eskirgan — ruxsat etilganlar soni tugagan."
+)
+COUPON_NOT_FOUND = "❌ Bunday kupon topilmadi. Kodni tekshirib qayta yuboring."
+COUPON_NO_ACCOUNT = "⚠️ Hisobingiz topilmadi. Avval /start buyrug'ini yuboring."
+
+# Posted to a public channel when the administrator publishes a coupon.
+COUPON_POST = (
+	"🎟 <b>KUPON SOVG'A</b>\n\n"
+	"🎁 Sovg'a: <b>{days} kunlik obuna</b>\n"
+	"👥 Kimga: birinchi <b>{max_uses}</b> kishi\n"
+	"🔑 Kod: <code>{code}</code>\n\n"
+	"Kodni botga yuborib obunani oling — son cheklangan!"
+)
+
+# --- admin coupons ------------------------------------------------------------
+ADMIN_COUPONS_MENU = (
+	"🎟 <b>Kuponlar</b>\n\n"
+	"Kupon — cheklangan sonda beriladigan sovg'a kod: birinchi <b>N</b> kishi "
+	"kodni kiritsa, <b>D</b> kunlik obuna oladi. Chegaradan oshgan kupon "
+	"<b>eskirgan</b> hisoblanadi.\n\n"
+	"Jami kuponlar: <b>{total}</b>"
+)
+ADMIN_COUPON_ASK_DAYS = "🎁 Necha kunlik obuna beriladi? Masalan: <code>7</code>"
+ADMIN_COUPON_ASK_USES = "👥 Necha kishiga mo'ljallangan? Masalan: <code>50</code>"
+ADMIN_COUPON_ASK_CODE = (
+	"🔑 Kupon kodini yuboring (4–24 belgi, kamida bitta harf).\n"
+	"Avtomatik kod uchun <code>-</code> yuboring."
+)
+ADMIN_COUPON_CARD = (
+	"🔑 Kod: <code>{code}</code>\n"
+	"🎁 Sovg'a: <b>{days} kunlik obuna</b>\n"
+	"👥 Kimga: birinchi <b>{max_uses}</b> kishi\n"
+	"✅ Ishlatilgan: <b>{used}</b> · Qoldi: <b>{remaining}</b>\n"
+	"📊 Holat: <b>{status}</b>"
+)
+ADMIN_COUPON_CREATED = "✅ <b>Kupon yaratildi!</b>\n\n{card}"
+ADMIN_COUPON_LIST = "🎟 <b>Kuponlar</b> — {page}/{pages}"
+ADMIN_COUPON_EMPTY = "📭 Hozircha kupon yo'q. «➕ Yangi kupon» orqali yarating."
+ADMIN_COUPON_INVALID = "❌ Noto'g'ri qiymat. Qayta yuboring."
+ADMIN_COUPON_CODE_TAKEN = "⚠️ Bu kod band. Boshqa kod yuboring."
+ADMIN_COUPON_DELETE_CONFIRM = "🗑 <b>{code}</b> kuponini o'chirmoqchimisiz?"
+ADMIN_COUPON_DELETED = "🗑 Kupon o'chirildi."
+ADMIN_COUPON_PUBLISHED = "📢 Kupon kanalga joylandi."
+ADMIN_COUPON_NOT_PUBLISHED = (
+	"⚠️ E'lon kanali tanlanmagan. «Sozlamalar → E'lon kanali» bo'limida tanlang."
+)
+ADMIN_COUPON_TOGGLED = "✅ Kupon holati: <b>{state}</b>"
+
+# --- referrals -----------------------------------------------------------------
+REFERRAL_MENU = (
+	"👥 <b>Do'stlarni taklif qilish</b>\n\n"
+	"Har bir do'stingizni shu havola orqali botga taklif qiling — "
+	"do'stlar soni oshgani sari bepul obuna yuting!\n\n"
+	"🔗 Havolangiz: <code>{link}</code>\n"
+	"👥 Taklif qilinganlar: <b>{invited}</b>\n\n"
+	"🎁 10 ta do'st → <b>15 kunlik obuna</b>\n"
+	"🎁 15 ta do'st → <b>1 oylik obuna</b>\n\n"
+	"Mukofot avtomatik berilmaydi — yetarli do'st to'plangach, "
+	"quyidagi tugma orqali o'zingiz tasdiqlaysiz."
+)
+REFERRAL_CLAIMED = (
+	"🎉 <b>Mukofot olindi!</b>\n\n"
+	"🎁 Sizga <b>{days} kunlik obuna</b> berildi.\n"
+	"📅 Amal qiladi: <b>{expires}</b>"
+)
+REFERRAL_ALREADY = "ℹ️ Bu mukofotni allaqachon olgansiz."
+REFERRAL_NOT_ENOUGH = (
+	"⏳ Hali erta. Sizning mukofotingiz uchun <b>{needed}</b> ta do'st kerak, "
+	"hozircha <b>{invited}</b> ta bor."
+)
+REFERRAL_NO_ACCOUNT = "⚠️ Hisobingiz topilmadi. Avval /start buyrug'ini yuboring."
+REFERRAL_INVALID = "❌ Noto'g'ri mukofot turi."
+REFERRAL_JOINED = (
+	"👋 Do'stingiz orqali keldingiz!\n\n"
+	"U sizni botga taklif qildi. Ko'rganingizdan keyin u mukofot oladi."
+)
+
+# --- giveaways -----------------------------------------------------------------
+GIVEAWAY_WINNER_DM = (
+	"🎉 <b>Sovg'a g'olibi!</b>\n\n"
+	"«{title}» sovg'asida yutib oldingiz!\n"
+	"🎁 Sizga <b>{days} kunlik obuna</b> berildi.\n"
+	"📅 Amal qiladi: <b>{expires}</b>"
+)
+
+# --- admin giveaways -----------------------------------------------------------
+ADMIN_GIVEAWAYS_MENU = (
+	"🎁 <b>Sovg'alar</b>\n\n"
+	"Admin sovg'asi: shartlarni o'zingiz belgilaysiz (masalan: botda anime "
+	"ko'rgan, homiy kanallarga obuna, biosida referral havolasi). O'tkazilganda "
+	"3 ta tasodifiy obunachi g'olib bo'ladi va har biri mukofot oladi.\n\n"
+	"Jami sovg'alar: <b>{total}</b>"
+)
+ADMIN_GIVEAWAY_ASK_TITLE = "🎁 Sovg'a nomini yuboring.\nMasalan: <code>Yangi yil sovg'asi</code>"
+ADMIN_GIVEAWAY_ASK_DAYS = "🎁 G'oliblarga necha kunlik obuna beriladi? Masalan: <code>30</code>"
+ADMIN_GIVEAWAY_ASK_WINNERS = "👥 Nechta g'olib tanlanadi? Masalan: <code>3</code>"
+ADMIN_GIVEAWAY_ASK_MIN_VIEWS = (
+	"🎬 Nomzod kamida nechta anime ko'rgan bo'lishi kerak (botda ochilgan)?\n"
+	"Shart bo'lmasa <code>0</code> yuboring."
+)
+ADMIN_GIVEAWAY_CREATED = "✅ <b>Sovg'a yaratildi!</b>\n\n{card}"
+ADMIN_GIVEAWAY_CARD = (
+	"🎁 <b>{title}</b>\n\n"
+	"🎁 Mukofot: <b>{days} kun</b>\n"
+	"👥 G'oliblar: <b>{winners_count}</b> ta\n"
+	"📌 Shartlar: {conditions}\n"
+	"📊 Holat: <b>{status}</b>\n\n"
+	"🏆 G'oliblar:\n{winners}"
+)
+ADMIN_GIVEAWAY_LIST = "🎁 <b>Sovg'alar</b> — {page}/{pages}"
+ADMIN_GIVEAWAY_EMPTY = "📭 Hozircha sovg'a yo'q. «➕ Yangi sovg'a» orqali yarating."
+ADMIN_GIVEAWAY_INVALID = "❌ Noto'g'ri qiymat. Qayta yuboring."
+ADMIN_GIVEAWAY_DELETE_CONFIRM = "🗑 <b>{title}</b> sovg'asini o'chirmoqchimisiz?"
+ADMIN_GIVEAWAY_DELETED = "🗑 Sovg'a o'chirildi."
+ADMIN_GIVEAWAY_DRAW_CONFIRM = (
+	"🎲 <b>{title}</b> sovg'asini o'tkazmoqchimisiz?\n\n"
+	"Shartlar tekshiriladi (kanallar va bio qayta tekshiruvi bilan), "
+	"keyin <b>{winners}</b> ta g'olib tanlanadi va har biriga "
+	"<b>{days} kun</b> beriladi.\n\n"
+	"⚠️ Bu amalni qaytarib bo'lmaydi."
+)
+ADMIN_GIVEAWAY_DRAWN = (
+	"🎲 <b>Sovg'a yakunlandi!</b>\n\n"
+	"🎁 {title}\n"
+	"✅ Mos nomzodlar: <b>{eligible}</b>\n"
+	"🏆 G'oliblar (<b>{won}</b> ta):\n{winners}"
+)
+ADMIN_GIVEAWAY_DRAW_EMPTY = (
+	"⚠️ G'olib topilmadi — shartlarga mos nomzod yo'q.\n\n"
+	"🎁 {title}\n"
+	"Nomzodlar soni: <b>{candidates}</b>"
+)
+ADMIN_GIVEAWAY_ALREADY_DRAWN = "ℹ️ Bu sovg'a allaqachon o'tkazilgan."
+ADMIN_GIVEAWAY_NOT_OPEN = "⚠️ Bu sovg'a o'tkazish uchun ochiq holatda bo'lishi kerak."
+ADMIN_GIVEAWAY_STATUS_LABELS = {
+	"draft": "Loyiha",
+	"open": "Ochiq",
+	"drawn": "E'lon qilingan",
+	"closed": "Yopilgan",
+}

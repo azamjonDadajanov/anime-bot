@@ -1,8 +1,8 @@
 import axios from 'axios'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
-const ACCESS_TOKEN_KEY = 'kino_top_access'
-const REFRESH_TOKEN_KEY = 'kino_top_refresh'
+const ACCESS_TOKEN_KEY = 'anichopar_access'
+const REFRESH_TOKEN_KEY = 'anichopar_refresh'
 
 export const api = axios.create({
   baseURL: apiBaseUrl,
@@ -42,7 +42,7 @@ api.interceptors.response.use(
     } catch (refreshError) {
       localStorage.removeItem(ACCESS_TOKEN_KEY)
       localStorage.removeItem(REFRESH_TOKEN_KEY)
-      window.dispatchEvent(new Event('kino-top:auth-expired'))
+      window.dispatchEvent(new Event('anichopar:auth-expired'))
       return Promise.reject(refreshError)
     } finally {
       refreshRequest = undefined
@@ -230,6 +230,33 @@ export const subscriptionApi = {
   },
   async status(requestId) {
     const { data } = await api.get(`/auth/subscription/requests/${requestId}/`)
+    return data
+  },
+}
+
+export const gameApi = {
+  async status() {
+    const { data } = await api.get('/game/status/')
+    return data
+  },
+  async titles(query = '') {
+    const { data } = await api.get('/game/titles/', { params: query ? { q: query } : {} })
+    return data
+  },
+  async startQuiz(titleId) {
+    const { data } = await api.post('/game/quiz/start/', { title_id: titleId })
+    return data
+  },
+  async submitQuiz({ attemptId, answers, elapsedMs }) {
+    const { data } = await api.post('/game/quiz/submit/', {
+      attempt_id: attemptId,
+      answers,
+      elapsed_ms: elapsedMs,
+    })
+    return data
+  },
+  async leaderboard(limit = 50) {
+    const { data } = await api.get('/game/leaderboard/', { params: { limit } })
     return data
   },
 }

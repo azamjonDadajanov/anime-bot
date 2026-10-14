@@ -87,9 +87,15 @@ class CurrentUserSerializer(serializers.ModelSerializer):
 		profile = getattr(user, "telegram_profile", None)
 		return profile.telegram_id if profile else None
 
-	def get_subscription(self, user) -> dict[str, str]:
+	def get_subscription(self, user) -> dict[str, str | bool | None]:
 		subscription = getattr(user, "subscription", None)
-		return {"plan": subscription.plan if subscription else Subscription.Plan.FREE}
+		plan = subscription.plan if subscription else Subscription.Plan.FREE
+		return {
+			"plan": plan,
+			"plan_label": subscription.get_plan_display() if subscription else "Bepul",
+			"is_active": bool(subscription and subscription.is_active),
+			"expires_at": subscription.expires_at if subscription else None,
+		}
 
 	def get_settings(self, user) -> dict:
 		settings, _ = UserSettings.objects.get_or_create(user=user)
@@ -108,11 +114,14 @@ class FavoriteTitleSerializer(MediaTitleSerializer):
 
 
 class SubscriptionRequestSerializer(serializers.ModelSerializer):
+	plan_label = serializers.CharField(source="get_plan_display", read_only=True)
+
 	class Meta:
 		model = SubscriptionRequest
 		fields = [
 			"id",
 			"plan",
+			"plan_label",
 			"amount",
 			"card_number",
 			"screenshot",
@@ -134,6 +143,8 @@ class SubscriptionRequestCreateSerializer(serializers.ModelSerializer):
 		}
 
 	def validate_plan(self, value):
-		if value not in Subscription.Plan.values:
+		from .plans import PLAN_ORDER
+
+		if value not in PLAN_ORDER:
 			raise serializers.ValidationError("Invalid plan")
 		return value

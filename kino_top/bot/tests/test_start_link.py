@@ -17,7 +17,7 @@ class StartAccountLinkTests(DispatcherTestCase):
 		return user
 
 	def test_start_payload_links_the_site_account(self) -> None:
-		site_user = self.site_user("aa", plan="pro")
+		site_user = self.site_user("aa", plan="yearly")
 
 		self.feed(build_command("start", payload="aa"))
 
@@ -34,13 +34,13 @@ class StartAccountLinkTests(DispatcherTestCase):
 		self.assertEqual(profile.auth_user_id, site_user.pk)
 
 	def test_linked_profile_uses_the_site_subscription(self) -> None:
-		site_user = self.site_user("cc", plan="plus")
+		site_user = self.site_user("cc", plan="monthly")
 		self.feed(build_command("start", payload="cc"))
 		self.session.reset()
 
 		self.feed(build_callback("prof", update_id=3))
 
-		self.assertIn("<b>Plus</b>", self.all_text())
+		self.assertIn("<b>1 oylik</b>", self.all_text())
 
 	def test_repeated_start_reports_the_existing_link(self) -> None:
 		self.site_user("dd")

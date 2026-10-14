@@ -40,7 +40,9 @@ TEXT_FIELDS = {"welcome": "welcome_text", "denied": "access_denied_text"}
 
 
 async def settings_text(settings) -> str:
-	channel = settings.publish_channel if settings.publish_channel_id else None
+	# Resolve the FK through the ORM bridge, never the lazy descriptor (that would
+	# query the database from the event loop).
+	channel = await get_channel(settings.publish_channel_id) if settings.publish_channel_id else None
 	return ADMIN_SETTINGS_MENU.format(
 		require_subscription=on_off(settings.require_subscription),
 		auto_publish=on_off(settings.auto_publish_new_content),

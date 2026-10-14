@@ -10,11 +10,13 @@ buttons.
 from __future__ import annotations
 
 import logging
+import math
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from users.models import Subscription, SubscriptionRequest
+from django.utils import timezone
+from users.models import SubscriptionRequest
 
 from ... import callbacks as cb
 from ...keyboards.user import (
@@ -30,7 +32,7 @@ from ...texts import (
 	SUBREQ_PENDING_NOTICE,
 	SUBREQ_SAVED,
 )
-from ...utils import escape_html, to_async
+from ...utils import escape_html, human_datetime, to_async
 from ..common import render
 
 logger = logging.getLogger(__name__)
@@ -51,9 +53,21 @@ def all_plans_sync():
 
 
 def current_plan_sync(profile) -> str:
+	return subscription_state_sync(profile)["plan"]
+
+
+def subscription_state_sync(profile) -> dict:
+	"""``{plan, label, active, expires_at}`` for the catalogue header."""
 	user = getattr(profile, "auth_user", None)
 	subscription = getattr(user, "subscription", None) if user else None
-	return (subscription.plan if subscription else "free") or "free"
+	if subscription is None:
+		return {"plan": "free", "label": "Bepul", "active": False, "expires_at": None}
+	return {
+		"plan": subscription.plan or "free",
+		"label": subscription.get_plan_display(),
+		"active": subscription.is_active,
+		"expires_at": subscription.expires_at,
+	}
 
 
 def has_pending_sync(user, plan: str) -> bool:
@@ -64,8 +78,18 @@ def has_pending_sync(user, plan: str) -> bool:
 
 load_plans = to_async(all_plans_sync)
 load_plan_details = to_async(plan_details_sync)
-load_current_plan = to_async(current_plan_sync)
+load_state = to_async(subscription_state_sync)
 check_pending = to_async(has_pending_sync)
+
+
+def _status_line(state: dict) -> str:
+	if state["active"]:
+		expires = state["expires_at"]
+		days_left = max(0, math.ceil((expires - timezone.now()).total_seconds() / 86400))
+		return f"✅ Faol · {human_datetime(expires)} gacha ({days_left} kun qoldi)"
+	if state["plan"] == "free":
+		return "⚪ Bepul tarif — faqat bepul kontent ochiq"
+	return "⏳ Muddati o'tgan"
 
 
 def _plan_rows(plans) -> str:
@@ -75,9 +99,15 @@ def _plan_rows(plans) -> str:
 			f"{item['display']} {item['label']}" for item in plan.get("features", [])
 		)
 		price = int(plan.get("price") or 0)
-		price_text = "Bepul" if price <= 0 else f"{price:,} so'm"
+		days = int(plan.get("days") or 0)
+		per_day = int(plan.get("price_per_day") or 0)
+		meta = "Bepul" if price <= 0 else f"{price:,} so'm"
+		if days:
+			meta += f" · {days} kun"
+			if per_day:
+				meta += f" · kuniga {per_day:,} so'm"
 		lines.append(
-			f"🔸 <b>{escape_html(plan['label'])}</b> — {price_text}\n"
+			f"🔸 <b>{escape_html(plan['label'])}</b> — {meta}\n"
 			f"   {escape_html(features)}"
 		)
 	return "\n".join(lines)
@@ -85,15 +115,22 @@ def _plan_rows(plans) -> str:
 
 async def send_subscription_page(target, profile, *, edit: bool = False) -> None:
 	plans, card = await load_plans()
-	current = await load_current_plan(profile)
+	state = await load_state(profile)
 	text = (
 		"🎫 <b>Obunalar</b>\n\n"
 		f"{_plan_rows(plans)}\n\n"
-		"Joriy tarif: <b>{}</b>\n\n"
-		"Tarifni o'zgartirmoqchi bo'lsangiz, kerakli tarifni tanlang — "
-		"to'lov yo'riqnomasi ko'rsatiladi.".format(escape_html(current.upper()))
+		"Joriy tarif: <b>{}</b>\n"
+		"Holat: {}\n\n"
+		"Tarifni tanlash orqali to'lov yo'riqnomasini olasiz.".format(
+			escape_html(state["label"]), _status_line(state)
+		)
 	)
-	await render(target, text, markup=subscription_keyboard(plans, current), edit=edit)
+	await render(
+		target,
+		text,
+		markup=subscription_keyboard(plans, state["plan"], current_active=state["active"]),
+		edit=edit,
+	)
 
 
 @router.callback_query(F.data == cb.SUBSCRIPTION)
@@ -111,8 +148,9 @@ async def start_purchase(callback: CallbackQuery, state: FSMContext, profile) ->
 		await callback.answer(NOT_FOUND[:200], show_alert=True)
 		return
 
-	current = await load_current_plan(profile)
-	if plan == current:
+	current_state = await load_state(profile)
+	current = current_state["plan"]
+	if plan == current and current_state["active"]:
 		await callback.answer(SUBREQ_ALREADY_PLAN[:200], show_alert=True)
 		return
 
@@ -135,6 +173,7 @@ async def start_purchase(callback: CallbackQuery, state: FSMContext, profile) ->
 	)
 	text = SUBREQ_CARD_HINT.format(
 		plan=escape_html(details["label"]),
+		days=int(details.get("days") or 0),
 		price=price_text,
 		card=escape_html(card or "-"),
 	)
@@ -142,7 +181,9 @@ async def start_purchase(callback: CallbackQuery, state: FSMContext, profile) ->
 	await render(
 		callback,
 		text,
-		markup=subscription_keyboard(plans, current),
+		markup=subscription_keyboard(
+			plans, current, current_active=current_state["active"]
+		),
 		edit=True,
 	)
 
@@ -152,7 +193,9 @@ async def receive_screenshot(message: Message, state: FSMContext, profile) -> No
 	data = await state.get_data()
 	plan = data.get("plan") or ""
 	user = getattr(profile, "auth_user", None)
-	if user is None or plan not in Subscription.Plan.values:
+	from users.plans import PLAN_ORDER
+
+	if user is None or plan not in PLAN_ORDER:
 		await state.clear()
 		await message.answer(NOT_FOUND, reply_markup=profile_keyboard())
 		return

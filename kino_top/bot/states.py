@@ -19,6 +19,12 @@ class UserSubscriptionStates(StatesGroup):
 	awaiting_screenshot = State()
 
 
+class UserCouponStates(StatesGroup):
+	"""Waiting for a promo code to redeem."""
+
+	code = State()
+
+
 class AdminMediaStates(StatesGroup):
 	search = State()
 	select_type = State()
@@ -36,13 +42,16 @@ class AdminMediaStates(StatesGroup):
 
 
 class AdminEpisodeStates(StatesGroup):
-	select_title = State()
+	"""Episode uploader.
+
+	``season`` collects the season number, ``channel`` only appears when more
+	than one Cloud channel exists, and ``media`` is the bulk-upload step where
+	every incoming file becomes its own part until ``💾 Saqlash`` is pressed.
+	"""
+
 	season = State()
-	number = State()
-	title = State()
 	channel = State()
 	media = State()
-	preview = State()
 
 
 class AdminChannelStates(StatesGroup):
@@ -70,6 +79,24 @@ class AdminUserStates(StatesGroup):
 
 class AdminSettingsStates(StatesGroup):
 	edit_value = State()
+
+
+class AdminCouponStates(StatesGroup):
+	"""Three-step coupon builder: duration, audience size, then the code."""
+
+	days = State()
+	uses = State()
+	code = State()
+
+
+class AdminGiveawayStates(StatesGroup):
+	"""Giveaway builder: name, reward, winners, condition, flags."""
+
+	ask_title = State()
+	ask_days = State()
+	ask_winners = State()
+	ask_min_views = State()
+	flags = State()
 
 
 class AdminGenreStates(StatesGroup):

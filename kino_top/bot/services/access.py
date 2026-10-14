@@ -63,7 +63,16 @@ class ChannelCheck:
 
 
 def required_channels_sync(*, active_only: bool = True) -> List[TelegramChannel]:
-	queryset = TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.REQUIRED)
+	"""Channels a user must join before the bot does anything for them.
+
+	Besides the explicitly marked ``required`` channels, every *public*
+	(``ommaviy``) channel is mandatory too: public channels are the ones users
+	are meant to see, so adding one in the admin panel automatically turns it
+	into a mandatory-subscription channel — no second entry needed.
+	"""
+	queryset = TelegramChannel.objects.filter(
+		purpose__in=[TelegramChannel.Purpose.REQUIRED, TelegramChannel.Purpose.PUBLIC]
+	)
 	if active_only:
 		queryset = queryset.filter(is_active=True)
 	return list(queryset.order_by("title"))
@@ -77,7 +86,7 @@ _required_channels_async = to_async(active_required_channels_sync)
 
 
 def plan_of(profile) -> str:
-	"""Resolve the effective plan of a ``TelegramUser`` via its auth user."""
+	"""Resolve the stored plan of a ``TelegramUser`` via its auth user."""
 	if profile is None:
 		return "free"
 	auth_user = getattr(profile, "auth_user", None)
@@ -89,8 +98,28 @@ def plan_of(profile) -> str:
 	return str(subscription.plan or "free")
 
 
+def effective_plan(profile) -> str:
+	"""The plan usable *right now* — an expired (or free) plan reads as ``free``."""
+	if profile is None:
+		return "free"
+	auth_user = getattr(profile, "auth_user", None)
+	if auth_user is None:
+		return "free"
+	subscription = getattr(auth_user, "subscription", None)
+	if subscription is None or not subscription.is_active:
+		return "free"
+	return str(subscription.plan or "free")
+
+
 def plan_satisfies(plan: Optional[str], required: Optional[str]) -> bool:
-	return plan_rank(plan) >= plan_rank(required)
+	"""Content is either open to everyone (``free``) or needs a live plan.
+
+	``plan`` must be the *effective* plan (see :func:`effective_plan`), so an
+	expired subscription never unlocks paid content.
+	"""
+	if str(required or "free").lower() in {"", "free"}:
+		return True
+	return plan_rank(plan) > 0
 
 
 async def membership_state(bot: Bot, chat_id: int, user_id: int) -> Optional[bool]:
@@ -160,7 +189,7 @@ async def ensure_access(bot: Bot, profile, media: Optional[MediaTitle] = None) -
 
 	if media is None:
 		return
-	current = plan_of(profile)
+	current = effective_plan(profile)
 	required = (media.required_plan or "free").lower()
 	if not plan_satisfies(current, required):
 		raise AccessDenied(reason="premium", required_plan=required, current_plan=current)

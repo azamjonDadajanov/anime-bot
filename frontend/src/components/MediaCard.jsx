@@ -6,6 +6,7 @@ const mediaTypeLabels = {
   anime: 'Anime',
   series: 'Serial',
   manga: 'Manga',
+  podcast: 'Podcast',
 }
 
 function MediaCard({ item }) {

@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class TelegramUser(models.Model):
@@ -28,10 +31,21 @@ class TelegramUser(models.Model):
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 	last_seen_at = models.DateTimeField(null=True, blank=True)
+	referred_by = models.ForeignKey(
+		"self",
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="referrals",
+		editable=False,
+	)
 
 	class Meta:
 		ordering = ["-created_at"]
-		indexes = [models.Index(fields=["last_seen_at"], name="tguser_last_seen_idx")]
+		indexes = [
+			models.Index(fields=["last_seen_at"], name="tguser_last_seen_idx"),
+			models.Index(fields=["referred_by"], name="tguser_referred_by_idx"),
+		]
 
 	def __str__(self):
 		return self.username or self.first_name or str(self.telegram_id)
@@ -69,17 +83,27 @@ class UserSettings(models.Model):
 
 
 class Subscription(models.Model):
+	"""Duration based plan: every paid plan unlocks everything for N days."""
+
 	class Plan(models.TextChoices):
-		FREE = "free", "Free"
-		PLUS = "plus", "Plus"
-		PRO = "pro", "Pro"
+		FREE = "free", "Bepul"
+		DAILY = "daily", "Kunlik"
+		D15 = "d15", "15 kunlik"
+		MONTHLY = "monthly", "1 oylik"
+		QUARTERLY = "quarterly", "3 oylik"
+		YEARLY = "yearly", "1 yillik"
+		# Granted by a coupon: a fixed number of days that is not one of the
+		# catalogue durations. It still counts as a paid tier.
+		COUPON = "coupon", "Kupon"
 
 	user = models.OneToOneField(
 		settings.AUTH_USER_MODEL,
 		on_delete=models.CASCADE,
 		related_name="subscription",
 	)
-	plan = models.CharField(max_length=4, choices=Plan.choices, default=Plan.FREE)
+	plan = models.CharField(max_length=16, choices=Plan.choices, default=Plan.FREE)
+	started_at = models.DateTimeField(null=True, blank=True)
+	expires_at = models.DateTimeField(null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
 	class Meta:
@@ -87,6 +111,172 @@ class Subscription(models.Model):
 
 	def __str__(self):
 		return f"{self.user} - {self.get_plan_display()}"
+
+	@property
+	def is_active(self) -> bool:
+		"""A plan is live only while it is paid *and* not expired."""
+		if self.plan == self.Plan.FREE:
+			return False
+		return self.expires_at is not None and self.expires_at > timezone.now()
+
+	def grant_days(self, days: int, at=None) -> None:
+		"""Extend access by ``days`` (used by coupons).
+
+		Unlike :meth:`activate`, which is tied to a catalogue plan, a coupon
+		promises a number of days. A still running plan keeps its label and simply
+		gets extra days; a free or expired account moves to the dedicated "Kupon"
+		tier so the window counts as a paid subscription.
+		"""
+		at = at or timezone.now()
+		days = int(days or 0)
+		if days <= 0:
+			return
+		extends = bool(self.expires_at and self.expires_at > at)
+		if not extends:
+			self.started_at = at
+			if self.plan in (None, "", self.Plan.FREE) or not self.is_active:
+				self.plan = self.Plan.COUPON
+		base = self.expires_at if extends else at
+		self.expires_at = base + timedelta(days=days)
+		self.save(update_fields=["plan", "started_at", "expires_at", "updated_at"])
+
+	def activate(self, plan: str, at=None) -> None:
+		"""Switch to ``plan`` for its full period.
+
+		A still running subscription is extended instead of cut short, so a
+		renewal (or a switch to a longer plan) never loses paid time.
+		"""
+		from .plans import plan_days
+
+		at = at or timezone.now()
+		days = int(plan_days(plan))
+		self.plan = plan or self.Plan.FREE
+		if days <= 0:
+			self.started_at = None
+			self.expires_at = None
+		else:
+			extends = bool(self.expires_at and self.expires_at > at)
+			if not extends:
+				self.started_at = at
+			base = self.expires_at if extends else at
+			self.expires_at = base + timedelta(days=days)
+		self.save(update_fields=["plan", "started_at", "expires_at", "updated_at"])
+
+
+class Coupon(models.Model):
+	"""A limited-use promo code: the first ``max_uses`` people win ``days`` days.
+
+	Redemption is first-come-first-served. Once more people have entered the code
+	than the administrator allowed, the coupon reads as *expired* (nothing is
+	deleted, so the history stays visible in the panel).
+	"""
+
+	code = models.CharField(max_length=32, unique=True)
+	days = models.PositiveIntegerField(default=0)
+	max_uses = models.PositiveIntegerField(default=1)
+	used_count = models.PositiveIntegerField(default=0)
+	is_active = models.BooleanField(default=True)
+	created_by = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="coupons_created",
+	)
+	posted_channel = models.ForeignKey(
+		"movies.TelegramChannel",
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="posted_coupons",
+	)
+	posted_message_id = models.PositiveBigIntegerField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		indexes = [models.Index(fields=["-created_at"], name="coupon_created_idx")]
+
+	def __str__(self) -> str:
+		return f"{self.code} ({self.days} kun, {self.used_count}/{self.max_uses})"
+
+	@property
+	def is_exhausted(self) -> bool:
+		"""True once as many (or more) people redeemed it as allowed."""
+		return self.max_uses > 0 and self.used_count >= self.max_uses
+
+	@property
+	def is_expired(self) -> bool:
+		"""A coupon stops handing out rewards once its limit or toggle says so."""
+		return (not self.is_active) or self.is_exhausted
+
+	@property
+	def remaining(self) -> int:
+		return max(0, self.max_uses - self.used_count)
+
+	@property
+	def status_label(self) -> str:
+		if self.is_exhausted:
+			return "Tugagan"
+		if not self.is_active:
+			return "To'xtatilgan"
+		return "Faol"
+
+
+class CouponRedemption(models.Model):
+	"""One successful coupon use; the unique constraint stops double dipping."""
+
+	coupon = models.ForeignKey(Coupon, on_delete=models.CASCADE, related_name="redemptions")
+	user = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.CASCADE,
+		related_name="coupon_redemptions",
+	)
+	telegram_id = models.PositiveBigIntegerField(null=True, blank=True)
+	days = models.PositiveIntegerField(default=0)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		constraints = [
+			models.UniqueConstraint(
+				fields=["coupon", "user"],
+				name="unique_coupon_redemption",
+			),
+		]
+
+	def __str__(self) -> str:
+		return f"{self.coupon.code} - {self.user}"
+
+
+class ReferralReward(models.Model):
+	"""A claimed referral milestone; the unique constraint stops double claiming."""
+
+	MILESTONE_10 = 10
+	MILESTONE_15 = 15
+	MILESTONES = {MILESTONE_10: 15, MILESTONE_15: 30}
+
+	user = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.CASCADE,
+		related_name="referral_rewards",
+	)
+	milestone = models.PositiveIntegerField()
+	days = models.PositiveIntegerField(default=0)
+	claimed_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-claimed_at"]
+		constraints = [
+			models.UniqueConstraint(
+				fields=["user", "milestone"],
+				name="unique_referral_reward",
+			),
+		]
+
+	def __str__(self) -> str:
+		return f"{self.user} - {self.milestone} referral ({self.days} kun)"
 
 
 class SubscriptionRequest(models.Model):
@@ -101,7 +291,7 @@ class SubscriptionRequest(models.Model):
 		on_delete=models.CASCADE,
 		related_name="subscription_requests",
 	)
-	plan = models.CharField(max_length=4, choices=Subscription.Plan.choices)
+	plan = models.CharField(max_length=16, choices=Subscription.Plan.choices)
 	amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 	card_number = models.CharField(max_length=20, blank=True)
 	screenshot = models.ImageField(upload_to="subscription_screenshots/", blank=True, null=True)
@@ -150,3 +340,122 @@ class FavoriteContent(models.Model):
 
 	def __str__(self):
 		return f"{self.user} - {self.content}"
+
+
+class Giveaway(models.Model):
+	"""An administrator-run raffle with eligibility conditions.
+
+	The administrator picks the reward and the conditions; at draw time the bot
+	re-verifies channel membership and the referral link in the user's bio via
+	the Bot API, then grants the reward to ``winner_count`` random eligible
+	subscribers.
+	"""
+
+	class Status(models.TextChoices):
+		DRAFT = "draft", "Loyiha"
+		OPEN = "open", "Ochiq"
+		DRAWN = "drawn", "E'lon qilingan"
+		CLOSED = "closed", "Yopilgan"
+
+	title = models.CharField(max_length=200)
+	reward_days = models.PositiveIntegerField(default=0)
+	winner_count = models.PositiveIntegerField(default=3)
+	# Condition: the candidate watched at least N anime titles via the bot.
+	min_bot_views = models.PositiveIntegerField(default=0)
+	# Condition: the candidate is subscribed to every selected channel
+	# (falls back to the bot's mandatory channels when none are selected).
+	require_channels = models.BooleanField(default=False)
+	# Condition: the candidate's Telegram bio contains their referral link.
+	require_bio_ref = models.BooleanField(default=False)
+	channels = models.ManyToManyField(
+		"movies.TelegramChannel",
+		blank=True,
+		related_name="giveaways",
+	)
+	status = models.CharField(
+		max_length=10, choices=Status.choices, default=Status.DRAFT
+	)
+	created_by = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="giveaways_created",
+	)
+	created_at = models.DateTimeField(auto_now_add=True)
+	drawn_at = models.DateTimeField(null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+
+	def __str__(self) -> str:
+		return f"{self.title} ({self.reward_days} kun, {self.status})"
+
+
+class GiveawayEntry(models.Model):
+	"""Per-candidate verification journal written during a draw."""
+
+	class Status(models.TextChoices):
+		ELIGIBLE = "eligible", "Mos"
+		WINNER = "winner", "G'olib"
+		NO_SUBSCRIPTION = "no_sub", "Obunasi yo'q"
+		NO_VIEWS = "no_views", "Kam anime ko'rgan"
+		NO_CHANNEL = "no_channel", "Kanalga obuna yo'q"
+		NO_BIO = "no_bio", "Bio'da havola yo'q"
+		NO_ACCOUNT = "no_account", "Hisob yo'q"
+
+	giveaway = models.ForeignKey(
+		Giveaway, on_delete=models.CASCADE, related_name="entries"
+	)
+	user = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.CASCADE,
+		related_name="giveaway_entries",
+	)
+	telegram_id = models.PositiveBigIntegerField()
+	status = models.CharField(
+		max_length=16, choices=Status.choices, default=Status.ELIGIBLE
+	)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		constraints = [
+			models.UniqueConstraint(
+				fields=["giveaway", "user"],
+				name="unique_giveaway_entry",
+			),
+		]
+
+	def __str__(self) -> str:
+		return f"{self.giveaway_id} - {self.telegram_id} - {self.status}"
+
+
+class GiveawayWinner(models.Model):
+	"""A drawn winner; the unique constraint stops a double grant per raffle."""
+
+	giveaway = models.ForeignKey(
+		Giveaway, on_delete=models.CASCADE, related_name="winners"
+	)
+	user = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.CASCADE,
+		related_name="giveaway_wins",
+	)
+	telegram_id = models.PositiveBigIntegerField()
+	days = models.PositiveIntegerField(default=0)
+	notified_at = models.DateTimeField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		constraints = [
+			models.UniqueConstraint(
+				fields=["giveaway", "user"],
+				name="unique_giveaway_winner",
+			),
+		]
+
+	def __str__(self) -> str:
+		return f"{self.giveaway_id} - {self.telegram_id} ({self.days} kun)"

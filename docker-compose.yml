@@ -1,4 +1,4 @@
-# Production stack for Kino Top.
+# Production stack for AniChopar.
 #
 #   cp .env.production.example .env     # fill in the secrets
 #   docker compose up -d --build

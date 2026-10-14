@@ -83,7 +83,10 @@ async def render_access_denial(target: Any, denial: AccessDenied, *, edit: bool 
 	if denial.is_premium:
 		await render(
 			target,
-			PREMIUM_REQUIRED.format(plan=denial.required_plan.upper(), current=denial.current_plan.upper())
+			PREMIUM_REQUIRED.format(
+				plan=access_label(denial.required_plan),
+				current=access_label(denial.current_plan),
+			)
 			+ extra,
 			edit=edit,
 		)
@@ -95,4 +98,16 @@ async def render_access_denial(target: Any, denial: AccessDenied, *, edit: bool 
 
 
 def plan_label(plan: str) -> str:
-	return {"free": "Free", "plus": "Plus", "pro": "Pro"}.get(str(plan), str(plan))
+	from users.plans import plan_label as catalogue_label
+
+	return catalogue_label(plan)
+
+
+def access_label(value: str) -> str:
+	"""Human label for either a content gate (free/paid) or a plan id."""
+	from movies.models import MediaTitle
+
+	key = str(value or "free").lower()
+	if key in MediaTitle.AccessPlan.values:
+		return dict(MediaTitle.AccessPlan.choices)[key]
+	return plan_label(key)

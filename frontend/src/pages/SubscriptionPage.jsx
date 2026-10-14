@@ -33,11 +33,16 @@ function errorText(error) {
 
 export function SubscriptionPage() {
   const { user, refreshUser } = useAuth()
-  const currentPlan = user?.subscription?.plan || 'free'
+  const subscription = user?.subscription
+  const currentPlan = subscription?.plan || 'free'
+  const currentActive = Boolean(subscription?.is_active)
+  const currentExpiresAt = subscription?.expires_at || null
 
   const [plans, setPlans] = useState([])
   const [cardNumber, setCardNumber] = useState('')
   const [pendingRequest, setPendingRequest] = useState(null)
+  const [activePlan, setActivePlan] = useState(currentActive)
+  const [expiresAt, setExpiresAt] = useState(currentExpiresAt)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
@@ -55,6 +60,8 @@ export function SubscriptionPage() {
       setPlans(data.plans || [])
       setCardNumber(data.card_number || '')
       setPendingRequest(data.pending_request || null)
+      setActivePlan(Boolean(data.current_active))
+      setExpiresAt(data.expires_at || null)
     } catch (error) {
       setLoadError(errorText(error))
     } finally {
@@ -65,15 +72,19 @@ export function SubscriptionPage() {
   useEffect(() => {
     loadPlans()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPlan])
+  }, [currentPlan, currentActive])
 
   const selected = useMemo(
     () => plans.find((item) => item.id === selectedPlan) || null,
     [plans, selectedPlan],
   )
 
+  const currentLabel = subscription?.plan_label
+    || plans.find((item) => item.id === currentPlan)?.label
+    || 'Bepul'
+
   function startPurchase(planId) {
-    if (planId === currentPlan) return
+    if (planId === currentPlan && activePlan) return
     setSelectedPlan(planId)
     setScreenshot(null)
     setMessage('')
@@ -118,13 +129,27 @@ export function SubscriptionPage() {
         <Alert color="yellow" mb="lg">Tariflar topilmadi.</Alert>
       )}
 
+      {!loading && !loadError && (
+        <Alert
+          color={activePlan ? 'blue' : 'gray'}
+          mb="lg"
+          icon={<i className={activePlan ? 'bi bi-stars' : 'bi bi-person'} aria-hidden="true" />}
+        >
+          Joriy tarif: <b>{currentLabel}</b>
+          {activePlan && expiresAt
+            ? ` · ${new Date(expiresAt).toLocaleDateString()} gacha amal qiladi`
+            : ''}
+          {!activePlan && currentPlan !== 'free' ? " · muddati o'tgan" : ''}
+        </Alert>
+      )}
+
       {pendingRequest && (
         <Alert
           color={STATUS_COLORS[pendingRequest.status] || 'blue'}
           icon={<i className="bi bi-hourglass-split" aria-hidden="true" />}
           mb="lg"
         >
-          <b>{pendingRequest.plan?.toUpperCase()}</b> tarifi uchun arizangiz
+          <b>{pendingRequest.plan_label || pendingRequest.plan}</b> tarifi uchun arizangiz
           {' '}{STATUS_LABELS[pendingRequest.status] || pendingRequest.status}.
         </Alert>
       )}
@@ -132,7 +157,7 @@ export function SubscriptionPage() {
       {!loading && plans.length > 0 && (
         <section className="plan-list" aria-label="Obuna tariflari">
           {plans.map((item, index) => {
-            const isCurrent = item.id === currentPlan
+            const isCurrent = item.id === currentPlan && activePlan
             const isPending = Boolean(
               pendingRequest && pendingRequest.plan === item.id && pendingRequest.status === 'pending',
             )
@@ -148,8 +173,16 @@ export function SubscriptionPage() {
                     {isCurrent && <Badge color="blue">Joriy tarif</Badge>}
                     {isPending && <Badge color="yellow">Ko'rib chiqilmoqda</Badge>}
                     <Badge variant="light" color="teal">{formatPrice(item.price)}</Badge>
+                    {item.days ? (
+                      <Badge variant="outline" color="gray">{item.days} kun</Badge>
+                    ) : null}
                   </Group>
                   <Text c="dimmed" size="sm">{item.description}</Text>
+                  {item.price_per_day ? (
+                    <Text c="dimmed" size="xs">
+                      Kuniga taxminan {formatPrice(item.price_per_day)}
+                    </Text>
+                  ) : null}
                   <div className="plan-features">
                     {(item.features || []).map((feature) => (
                       <span className="plan-feature" key={feature.type}>
@@ -187,6 +220,7 @@ export function SubscriptionPage() {
           <Title order={2} mb="sm">{selected.label} tarifiga to'lov</Title>
           <Text size="sm" c="dimmed" mb="lg">
             Summa: <b>{formatPrice(selected.price)}</b>
+            {selected.days ? ` · ${selected.days} kun` : ''}
           </Text>
 
           {message && <Alert color="green" mb="md">{message}</Alert>}

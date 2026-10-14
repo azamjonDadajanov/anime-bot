@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import math
 from typing import List, Optional, Sequence
+from urllib.parse import quote
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .. import callbacks as cb
+from ..config import game_url, webapp_url
 from ..utils import chunked
 from .common import btn, keyboard, pagination_row
 
@@ -34,6 +36,10 @@ from .common import btn, keyboard, pagination_row
 # than following the generic ``BOT_PAGE_SIZE`` used by the list screens.
 PARTS_PER_ROW = 5
 PARTS_PER_PAGE = PARTS_PER_ROW * 2
+
+# Mini App screen that authenticates through Telegram and lets a new visitor
+# create a profile (see the website's /telegram-auth route).
+AUTH_WEBAPP_PATH = "/telegram-auth"
 
 
 def origin_callback(origin: str, page: int) -> str:
@@ -50,15 +56,62 @@ def origin_callback(origin: str, page: int) -> str:
 	return f"{cb.CATALOG}:{page}"
 
 
+def webapp_row(text: str = "📱 Ilova", path: str = "") -> Optional[List[InlineKeyboardButton]]:
+	"""A Telegram Mini App button row, or ``None`` when no URL is configured.
+
+	``path`` selects the Mini App screen (sign-in/sign-up live at
+	``/telegram-auth``). These buttons stay absent (rather than broken) on a
+	deployment without ``BOT_WEBAPP_URL``.
+	"""
+	url = webapp_url(path)
+	if not url:
+		return None
+	return [btn(text, web_app=url)]
+
+
 def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
 	rows = [
 		[btn("🔍 Qidirish", cb.SEARCH), btn("📚 Katalog", cb.CATALOG_MENU)],
 		[btn("🎼 Janrlar", f"{cb.GENRES}:1"), btn("💖 Sevimlilar", f"{cb.FAVORITES}:1")],
-		[btn("👤 Profil", cb.PROFILE), btn("ℹ️ Yordam", cb.HELP)],
-		[btn("🎫 Obuna", cb.SUBSCRIPTION)],
+		[btn("👤 Profil", cb.PROFILE), btn("👥 Do'stlar", cb.REF)],
+		[btn("🎫 Obuna", cb.SUBSCRIPTION), btn("🎟 Kupon", cb.COUPON)],
+		[btn("ℹ️ Yordam", cb.HELP)],
 	]
+	# The rating game lives on the website; the button appears only when a
+	# public site URL is configured so it is never broken.
+	game = game_url()
+	if game:
+		rows.insert(3, [btn("🎮 O'yin (reyting)", url=game)])
+	# The Mini App's Telegram-native screen covers sign-in and sign-up.
+	app = webapp_row("🔐 Kirish / Ro'yxatdan o'tish", path=AUTH_WEBAPP_PATH)
+	if app:
+		rows.append(app)
 	if is_admin:
 		rows.append([btn("🛠 Administrator paneli", cb.ADM_STATS)])
+	return keyboard(*rows)
+
+
+def search_keyboard() -> InlineKeyboardMarkup:
+	"""The search screen: filter by media type or genre, or list everything."""
+	rows: List[List[InlineKeyboardButton]] = [
+		[btn("🎌 Anime", f"{cb.S_TYPE}:anime:1"), btn("📺 Serial", f"{cb.S_TYPE}:series:1")],
+		[btn("📖 Manga", f"{cb.S_TYPE}:manga:1"), btn("🎬 Kino", f"{cb.S_TYPE}:movie:1")],
+		[btn("🎭 Janr bo'yicha", f"{cb.S_GENRES}:1")],
+		[btn("📚 Barchasini ko'rish", cb.S_ALL)],
+	]
+	app = webapp_row("📱 Ilovada qidirish")
+	if app:
+		rows.append(app)
+	rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
+	return keyboard(*rows)
+
+
+def search_genres_keyboard(genres: Sequence, page: int, pages: int) -> InlineKeyboardMarkup:
+	rows: List[List[InlineKeyboardButton]] = [
+		[btn(genre.name, f"{cb.S_GENRE}:{genre.pk}:1")] for genre in genres
+	]
+	rows.append(pagination_row(f"{cb.S_GENRES}:", page, pages))
+	rows.append([btn("⬅️ Qidiruvga qaytish", cb.SEARCH)])
 	return keyboard(*rows)
 
 
@@ -190,11 +243,14 @@ def watch_parts_keyboard(parts: Sequence, current) -> InlineKeyboardMarkup:
 	"""Navigator attached under a delivered part.
 
 	The numbers of the *current season* are laid out five per row, ten per page;
-	the page follows the part that was just delivered. The selected part is
-	marked with a green dot (Telegram buttons cannot be recoloured), and the
+	the page follows the part that was just delivered. The part being watched
+	carries a green marker (Telegram buttons cannot be recoloured), and the
 	bottom row walks to the previous/next part — crossing a season boundary
-	delivers the neighbouring season's first (or last) part. The middle button
+	switches to the neighbouring season's first (or last) part. The middle button
 	names the season the user is currently in.
+
+	Every number and both arrows request their part with ``watch:<part_pk>``, so
+	the handler swaps the file inside the message the user is already looking at.
 	"""
 	ordered = sorted(parts, key=_part_sort_key)
 	if not ordered:
@@ -226,11 +282,11 @@ def watch_parts_keyboard(parts: Sequence, current) -> InlineKeyboardMarkup:
 	label = _season_label(current)
 	if pages > 1:
 		label = f"{label} {page}/{pages}"
-	nav = [btn("⬅️", cb.NOOP), btn(label, cb.NOOP), btn("➡️", cb.NOOP)]
+	nav = [btn("⬅️ Oldingi qism", cb.NOOP), btn(label, cb.NOOP), btn("Keyingi qism ➡️", cb.NOOP)]
 	if index > 0:
-		nav[0] = btn("⬅️", f"{cb.WATCH}:{ordered[index - 1].pk}")
+		nav[0] = btn("⬅️ Oldingi qism", f"{cb.WATCH}:{ordered[index - 1].pk}")
 	if index < len(ordered) - 1:
-		nav[2] = btn("➡️", f"{cb.WATCH}:{ordered[index + 1].pk}")
+		nav[2] = btn("Keyingi qism ➡️", f"{cb.WATCH}:{ordered[index + 1].pk}")
 	rows.append(nav)
 	return keyboard(*rows)
 
@@ -244,6 +300,40 @@ def favorites_keyboard(items: Sequence, page: int, pages: int) -> InlineKeyboard
 	return keyboard(*rows)
 
 
+def coupon_keyboard() -> InlineKeyboardMarkup:
+	return keyboard(
+		[btn("🎫 Obuna", cb.SUBSCRIPTION)],
+		[btn("🏠 Asosiy menyu", cb.MENU)],
+	)
+
+
+def referral_keyboard(*, invited: int, claimed, link: str) -> InlineKeyboardMarkup:
+	"""Referral menu: share link plus one claim button per reachable milestone.
+
+	A milestone already claimed shows as a static "olindi" label; one that is
+	still out of reach is omitted (the invited counter in the text explains why).
+	"""
+	from users.referrals import REFERRAL_MILESTONES
+
+	rows: List[List[InlineKeyboardButton]] = []
+	target = (link or "").strip()
+	if target:
+		share = (
+			"https://t.me/share/url?url="
+			+ quote(target, safe="")
+			+ "&text="
+			+ quote("AniChopar botga qo'shil va animelarni tomosha qil!", safe="")
+		)
+		rows.append([btn("📤 Ulashish", url=share)])
+	for milestone, days in sorted(REFERRAL_MILESTONES.items()):
+		if milestone in claimed:
+			rows.append([btn(f"✅ {days} kun olindi", cb.NOOP)])
+		elif invited >= milestone:
+			rows.append([btn(f"🎁 {days} kun olish", f"{cb.REF_CLAIM}:{milestone}")])
+	rows.append([btn("🏠 Asosiy menyu", cb.MENU)])
+	return keyboard(*rows)
+
+
 def profile_keyboard() -> InlineKeyboardMarkup:
 	return keyboard(
 		[btn("🎫 Obuna", cb.SUBSCRIPTION)],
@@ -252,17 +342,19 @@ def profile_keyboard() -> InlineKeyboardMarkup:
 	)
 
 
-def subscription_keyboard(plans: Sequence, current_plan: str) -> InlineKeyboardMarkup:
-	"""One row per plan; the current plan is shown as a no-op label."""
+def subscription_keyboard(
+	plans: Sequence, current_plan: str, *, current_active: bool = False
+) -> InlineKeyboardMarkup:
+	"""One row per plan; a *running* current plan is shown as a no-op label."""
 	rows: List[List[InlineKeyboardButton]] = []
 	for plan in plans:
 		plan_id = plan["id"]
-		if plan_id == current_plan:
+		price = plan.get("price") or 0
+		price_text = "Bepul" if price <= 0 else f"{price:,} so'm"
+		if plan_id == current_plan and current_active:
 			label = f"✅ {plan['label']} (joriy)"
 			rows.append([btn(label, cb.NOOP)])
 		else:
-			price = plan.get("price") or 0
-			price_text = "Bepul" if price <= 0 else f"{price:,} so'm"
 			rows.append([btn(f"🔄 {plan['label']} — {price_text}", f"{cb.SUBSCRIPTION_BUY}:{plan_id}")])
 	rows.append([btn("⬅️ Orqaga", cb.PROFILE)])
 	return keyboard(*rows)

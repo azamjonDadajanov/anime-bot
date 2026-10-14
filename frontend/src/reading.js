@@ -1,6 +1,6 @@
 import { hasAccessToken, readingApi } from './apis/api'
 
-const STORAGE_KEY = 'kino_top_reading'
+const STORAGE_KEY = 'anichopar_reading'
 
 function readStore() {
   try {

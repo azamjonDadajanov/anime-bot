@@ -20,6 +20,11 @@ NOOP = "noop"
 # --- user -------------------------------------------------------------------
 SEARCH = "search"
 SEARCH_RESULTS = "sres"
+# Search screen filters (media type / genre) and "see everything".
+S_TYPE = "sft"
+S_ALL = "sfall"
+S_GENRES = "sfg"
+S_GENRE = "sfgi"
 CATALOG = "cat"
 CATALOG_MENU = "catmenu"
 GENRES = "genres"
@@ -28,6 +33,11 @@ PROFILE = "prof"
 HELP = "help"
 SUB_CHECK = "subchk"
 SUBSCRIPTION = "subs"
+# Coupons: the user's "enter a promo code" screen.
+COUPON = "coupon"
+# Referrals: invite menu and manual milestone claims (``refc:<milestone>``).
+REF = "ref"
+REF_CLAIM = "refc"
 SUBSCRIPTION_BUY = "subs:buy"
 WATCH = "watch"
 WATCH_TITLE = "wt"
@@ -47,6 +57,10 @@ ADM_CHANNELS = "a:c"
 ADM_BROADCAST = "a:b"
 ADM_USERS = "a:u"
 ADM_SETTINGS = "a:s"
+# Coupons (promo codes): create, list, publish to a channel, toggle, delete.
+ADM_COUPONS = "a:cp"
+# Giveaways (raffles): wizard, list, draw, delete.
+ADM_GIVEAWAY = "a:ga"
 ADM_LOGS = "a:l"
 # Subscription payment requests (sent by the website, pressed here).
 ADM_SUBREQ_OK = "a:subreq:ok"

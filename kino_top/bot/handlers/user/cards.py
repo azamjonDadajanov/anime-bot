@@ -7,7 +7,8 @@ import logging
 from typing import Any, Optional
 
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
-from movies.models import MediaTitle
+from aiogram.types import CallbackQuery
+from movies.models import MediaTitle, TelegramMedia
 from users.models import FavoriteContent
 
 from ...config import manga_url
@@ -18,10 +19,13 @@ from ...keyboards.user import (
 	title_detail_keyboard,
 	watch_parts_keyboard,
 )
+from ...middlewares.context import inner_event
 from ...services.access import AccessDenied, ensure_access
 from ...services.media import (
+	MediaNotEditable,
 	MediaUnavailable,
 	deliver_part,
+	edit_part_media,
 	record_media_view,
 	title_parts,
 )
@@ -37,6 +41,28 @@ from ...utils import escape_html, to_async
 from ..common import render, render_access_denial
 
 logger = logging.getLogger(__name__)
+
+# Attributes of a sent message, mapped to the stored media type they represent.
+MESSAGE_MEDIA_ATTRS = (
+	("video", TelegramMedia.MediaType.VIDEO),
+	("document", TelegramMedia.MediaType.DOCUMENT),
+	("photo", TelegramMedia.MediaType.PHOTO),
+)
+
+
+def media_kind_of(message) -> str:
+	"""Media type of a message the bot sent, or ``""`` when it is not media.
+
+	The parts navigator rides on the delivered file, so the message a callback
+	comes from tells us which file type we may swap in place.
+	"""
+	if message is None or getattr(message, "media_group_id", None):
+		# Album items are edited as a set, so they are never swapped in place.
+		return ""
+	for attr, kind in MESSAGE_MEDIA_ATTRS:
+		if getattr(message, attr, None):
+			return kind
+	return ""
 
 
 def _genres_text_sync(title) -> str:
@@ -180,6 +206,34 @@ async def deliver_media_for_part(
 	parts = await title_parts(title)
 	markup = watch_parts_keyboard(parts, part) if len(parts) > 1 else None
 
+	payload = inner_event(target)
+	message = getattr(payload, "message", None)
+	kind = media_kind_of(message)
+	if kind and isinstance(payload, CallbackQuery) and message is not None:
+		# The user tapped a part button under a file the bot already sent: swap
+		# that file inside the very same message instead of sending a new one.
+		try:
+			await edit_part_media(
+				bot,
+				message.chat.id,
+				message.message_id,
+				part,
+				current_kind=kind,
+				quality=quality,
+				reply_markup=markup,
+			)
+		except MediaNotEditable as exc:
+			logger.info("Message %s cannot show part %s in place (%s).", message.message_id, part.pk, exc)
+		except MediaUnavailable:
+			logger.warning("No deliverable file for part %s.", part.pk)
+			await payload.answer()
+			await render(target, MEDIA_UNAVAILABLE)
+			return False
+		else:
+			await payload.answer()
+			await record_media_view(profile.auth_user_id, part.content_id, part.pk)
+			return True
+
 	await render(target, MEDIA_SENDING)
 	try:
 		await deliver_part(
@@ -213,7 +267,11 @@ async def deliver_title_media(
 	state: Any = None,
 	edit: bool = False,
 ) -> bool:
-	"""Deliver every part of a movie/single-part title in one tap."""
+	"""Deliver the *first* part of a movie/single-part title in one tap.
+
+	The remaining parts are not pushed at the user: they are offered as the
+	inline navigator under the first file, one tap away.
+	"""
 	try:
 		await ensure_access(bot, profile, title)
 	except AccessDenied as denial:
@@ -225,26 +283,25 @@ async def deliver_title_media(
 	if state is not None:
 		await state.update_data(pending_part_id=None, pending_quality="")
 
+	first = parts[0]
+	markup = watch_parts_keyboard(parts, first) if len(parts) > 1 else None
+
 	await render(target, MEDIA_SENDING)
-	sent = False
-	for part in parts:
-		try:
-			await deliver_part(
-				bot,
-				profile.telegram_id,
-				part,
-				protect_content=True,
-			)
-		except MediaUnavailable:
-			logger.warning("No deliverable file for part %s.", part.pk)
-			continue
-		except (TelegramForbiddenError, TelegramAPIError) as exc:
-			logger.warning("Delivery failed for part %s: %s", part.pk, exc)
-			await render(target, MEDIA_BLOCKED)
-			return False
-		await record_media_view(profile.auth_user_id, title.pk, part.pk)
-		sent = True
-	if not sent:
+	try:
+		await deliver_part(
+			bot,
+			profile.telegram_id,
+			first,
+			protect_content=True,
+			reply_markup=markup,
+		)
+	except MediaUnavailable:
+		logger.warning("No deliverable file for part %s.", first.pk)
 		await render(target, MEDIA_UNAVAILABLE)
 		return False
+	except (TelegramForbiddenError, TelegramAPIError) as exc:
+		logger.warning("Delivery failed for part %s: %s", first.pk, exc)
+		await render(target, MEDIA_BLOCKED)
+		return False
+	await record_media_view(profile.auth_user_id, title.pk, first.pk)
 	return True

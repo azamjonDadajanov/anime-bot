@@ -9,3 +9,5 @@ drf-spectacular>=0.30,<1.0
 django-cors-headers>=4.9,<5.0
 whitenoise>=6.7,<7.0
 gunicorn>=23.0,<24.0
+# Pillow is required by Django's ImageField (subscription payment screenshots).
+Pillow>=11.0,<14.0

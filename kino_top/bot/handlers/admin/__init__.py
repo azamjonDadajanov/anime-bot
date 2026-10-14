@@ -19,7 +19,19 @@ from aiogram.enums import ChatType
 
 from ...filters import AdminFilter
 from ...middlewares.admin import AdminGuardMiddleware
-from . import broadcast, channels, episodes, logs, media, panel, settings, subscriptions, users
+from . import (
+	broadcast,
+	channels,
+	coupons,
+	episodes,
+	giveaways,
+	logs,
+	media,
+	panel,
+	settings,
+	subscriptions,
+	users,
+)
 
 admin_router = Router(name="admin")
 admin_router.message.filter(F.chat.type == ChatType.PRIVATE, AdminFilter())
@@ -37,6 +49,8 @@ admin_router.include_router(channels.router)
 admin_router.include_router(broadcast.router)
 admin_router.include_router(users.router)
 admin_router.include_router(subscriptions.router)
+admin_router.include_router(coupons.router)
+admin_router.include_router(giveaways.router)
 admin_router.include_router(settings.router)
 admin_router.include_router(logs.router)
 

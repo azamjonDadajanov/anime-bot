@@ -1,16 +1,20 @@
-"""Access control tests: mandatory subscription and premium plans."""
+"""Access control tests: mandatory channel subscription and paid plans."""
 
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 from django.test import TransactionTestCase
+from django.utils import timezone
 from movies.models import TelegramChannel
+from users.models import Subscription
 from users.telegram_auth import get_or_create_telegram_user
 
 from ..models import BotSettings
 from ..services.access import (
 	AccessDenied,
+	effective_plan,
 	ensure_access,
 	missing_channels,
 	plan_of,
@@ -21,14 +25,23 @@ from .fakes import FakeSession, make_bot
 from .helpers import make_channel, make_title
 
 
-def make_profile(telegram_id: int = 111, plan: str = "free", blocked: bool = False):
+def make_profile(
+	telegram_id: int = 111,
+	plan: str = "free",
+	blocked: bool = False,
+	expired: bool = False,
+):
 	profile = get_or_create_telegram_user(
 		{"id": telegram_id, "first_name": "Test", "username": f"user{telegram_id}"}
 	)
 	subscription = profile.auth_user.subscription
-	if subscription.plan != plan:
-		subscription.plan = plan
-		subscription.save(update_fields=["plan", "updated_at"])
+	if subscription.plan != plan or not subscription.is_active or expired:
+		subscription.activate(plan)
+	if expired:
+		Subscription.objects.filter(pk=subscription.pk).update(
+			expires_at=timezone.now() - timedelta(seconds=1)
+		)
+		subscription.refresh_from_db()
 	if blocked:
 		profile.is_blocked = True
 		profile.save(update_fields=["is_blocked", "updated_at"])
@@ -37,18 +50,23 @@ def make_profile(telegram_id: int = 111, plan: str = "free", blocked: bool = Fal
 
 class PlanMathTests(TransactionTestCase):
 	def test_plan_ordering(self) -> None:
-		self.assertTrue(plan_satisfies("pro", "free"))
-		self.assertTrue(plan_satisfies("plus", "free"))
-		self.assertTrue(plan_satisfies("pro", "plus"))
-		self.assertTrue(plan_satisfies("pro", "pro"))
-		self.assertFalse(plan_satisfies("free", "plus"))
-		self.assertFalse(plan_satisfies("plus", "pro"))
-		self.assertFalse(plan_satisfies("free", "pro"))
+		self.assertTrue(plan_satisfies("monthly", "free"))
+		self.assertTrue(plan_satisfies("yearly", "free"))
+		self.assertTrue(plan_satisfies("daily", "paid"))
+		self.assertTrue(plan_satisfies("yearly", "paid"))
+		self.assertFalse(plan_satisfies("free", "paid"))
 
 	def test_plan_of_a_profile_without_subscription_is_free(self) -> None:
-		profile = make_profile(plan="pro")
-		self.assertEqual(plan_of(profile), "pro")
+		profile = make_profile(plan="yearly")
+		self.assertEqual(plan_of(profile), "yearly")
 		self.assertEqual(plan_of(None), "free")
+
+	def test_an_expired_plan_reads_as_free(self) -> None:
+		profile = make_profile(telegram_id=112, plan="yearly", expired=True)
+		self.assertEqual(plan_of(profile), "yearly")
+		self.assertEqual(effective_plan(profile), "free")
+		self.assertEqual(effective_plan(None), "free")
+		self.assertFalse(plan_satisfies(effective_plan(profile), "paid"))
 
 
 class SubscriptionEnforcementTests(TransactionTestCase):
@@ -99,7 +117,7 @@ class SubscriptionEnforcementTests(TransactionTestCase):
 
 	def test_subscription_is_checked_before_premium(self) -> None:
 		profile = make_profile(telegram_id=777)
-		title = make_title(code="1200", required_plan="pro")
+		title = make_title(code="1200", required_plan="paid")
 
 		with self.assertRaises(AccessDenied) as ctx:
 			asyncio.run(ensure_access(self.bot, profile, title))
@@ -112,24 +130,26 @@ class PremiumEnforcementTests(TransactionTestCase):
 	def setUp(self) -> None:
 		self.bot = make_bot(FakeSession(member_status="member"))
 
-	def test_free_user_is_denied_pro_content(self) -> None:
+	def test_free_user_is_denied_paid_content(self) -> None:
 		profile = make_profile(telegram_id=888, plan="free")
-		title = make_title(code="1300", required_plan="pro")
+		title = make_title(code="1300", required_plan="paid")
 		with self.assertRaises(AccessDenied) as ctx:
 			asyncio.run(ensure_access(self.bot, profile, title))
 		self.assertTrue(ctx.exception.is_premium)
-		self.assertEqual(ctx.exception.required_plan, "pro")
+		self.assertEqual(ctx.exception.required_plan, "paid")
 		self.assertEqual(ctx.exception.current_plan, "free")
 
-	def test_plus_user_is_denied_pro_content(self) -> None:
-		profile = make_profile(telegram_id=889, plan="plus")
-		title = make_title(code="1301", required_plan="pro")
-		with self.assertRaises(AccessDenied):
+	def test_an_expired_subscription_is_denied_paid_content(self) -> None:
+		profile = make_profile(telegram_id=889, plan="yearly", expired=True)
+		title = make_title(code="1301", required_plan="paid")
+		with self.assertRaises(AccessDenied) as ctx:
 			asyncio.run(ensure_access(self.bot, profile, title))
+		self.assertTrue(ctx.exception.is_premium)
+		self.assertEqual(ctx.exception.current_plan, "free")
 
-	def test_pro_user_can_watch_everything(self) -> None:
-		profile = make_profile(telegram_id=890, plan="pro")
-		for code, plan in (("1302", "free"), ("1303", "plus"), ("1304", "pro")):
+	def test_a_subscriber_can_watch_everything(self) -> None:
+		profile = make_profile(telegram_id=890, plan="yearly")
+		for code, plan in (("1302", "free"), ("1303", "paid")):
 			title = make_title(code=code, required_plan=plan)
 			asyncio.run(ensure_access(self.bot, profile, title))
 
@@ -138,7 +158,7 @@ class PremiumEnforcementTests(TransactionTestCase):
 		title = make_title(code="1305", required_plan="free")
 		asyncio.run(ensure_access(self.bot, profile, title))
 
-	def test_plus_user_can_watch_plus_content(self) -> None:
-		profile = make_profile(telegram_id=892, plan="plus")
-		title = make_title(code="1306", required_plan="plus")
+	def test_a_daily_plan_is_enough_for_paid_content(self) -> None:
+		profile = make_profile(telegram_id=892, plan="daily")
+		title = make_title(code="1306", required_plan="paid")
 		asyncio.run(ensure_access(self.bot, profile, title))

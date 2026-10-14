@@ -76,7 +76,9 @@ INSTALLED_APPS = [
     'whitenoise',
     'users',
     'movies',
+    'games.apps.GamesConfig',
     'bot.apps.BotConfig',
+    'adminpanel',
 ]
 
 MIDDLEWARE = [
@@ -215,16 +217,22 @@ BOT_AUTO_PUBLISH = env_bool("BOT_AUTO_PUBLISH", False)
 BOT_PROTECT_CONTENT = env_bool("BOT_PROTECT_CONTENT", True)
 # Public website base URL used for manga links shown by the bot.
 BOT_SITE_URL = env("BOT_SITE_URL", "")
+# Public HTTPS URL of the Telegram Mini App (the website) the bot opens in
+# inline buttons for auth and in-app search. Empty hides those buttons.
+BOT_WEBAPP_URL = env("BOT_WEBAPP_URL", "")
 BOT_BROADCAST_RATE = env_int("BOT_BROADCAST_RATE", 25)
 BOT_BROADCAST_CONCURRENCY = env_int("BOT_BROADCAST_CONCURRENCY", 5)
 BOT_THROTTLE_RATE = float(env("BOT_THROTTLE_RATE", "0.4") or 0.4)
 
-# Subscription payment (card number and plan prices shown on the "Obuna" page).
+# Subscription payment (card number and duration plan prices shown on the "Obuna" page).
 SUBSCRIPTION_CARD_NUMBER = env("SUBSCRIPTION_CARD_NUMBER", "")
 SUBSCRIPTION_PRICES = {
     "free": env_int("SUBSCRIPTION_PRICE_FREE", 0),
-    "plus": env_int("SUBSCRIPTION_PRICE_PLUS", 0),
-    "pro": env_int("SUBSCRIPTION_PRICE_PRO", 0),
+    "daily": env_int("SUBSCRIPTION_PRICE_DAILY", 6000),
+    "d15": env_int("SUBSCRIPTION_PRICE_D15", 10000),
+    "monthly": env_int("SUBSCRIPTION_PRICE_MONTHLY", 25000),
+    "quarterly": env_int("SUBSCRIPTION_PRICE_QUARTERLY", 64000),
+    "yearly": env_int("SUBSCRIPTION_PRICE_YEARLY", 220000),
 }
 BOT_PAGE_SIZE = env_int("BOT_PAGE_SIZE", 8)
 BOT_LOG_CHANNEL_ID = env("BOT_LOG_CHANNEL_ID", "")
@@ -242,7 +250,7 @@ REST_FRAMEWORK = {
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Kino Top Bot API",
+    "TITLE": "AniChopar Bot API",
     "DESCRIPTION": "Authentication and anime, series, manga, and movie catalog APIs.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
@@ -274,6 +282,24 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
+}
+
+# ---------------------------------------------------------------------------
+# Anime rating game (games app) — anti-cheat and scoring parameters
+# ---------------------------------------------------------------------------
+GAME_QUIZ_SIZE = env_int("GAME_QUIZ_SIZE", 5)
+GAME_PASS_SCORE = env_int("GAME_PASS_SCORE", 4)
+GAME_MIN_PARTS = env_int("GAME_MIN_PARTS", 3)
+GAME_MIN_ANSWER_SECONDS = env_int("GAME_MIN_ANSWER_SECONDS", 3)
+GAME_MAX_ATTEMPTS_PER_DAY = env_int("GAME_MAX_ATTEMPTS_PER_DAY", 5)
+GAME_ACTIVITY_DAYS = env_int("GAME_ACTIVITY_DAYS", 10)
+GAME_POINTS_PER_LEVEL = env_int("GAME_POINTS_PER_LEVEL", 50)
+GAME_PRIZE_DAYS = env_int("GAME_PRIZE_DAYS", 30)
+GAME_POINTS = {
+    "anime": env_int("GAME_POINTS_ANIME", 10),
+    "series": env_int("GAME_POINTS_SERIES", 10),
+    "movie": env_int("GAME_POINTS_MOVIE", 8),
+    "manga": env_int("GAME_POINTS_MANGA", 5),
 }
 
 LOGGING = {

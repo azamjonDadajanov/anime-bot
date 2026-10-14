@@ -271,6 +271,14 @@ async def _send(bot: Bot, broadcast: Broadcast, chat_id: int, *, protect: bool) 
 			disable_notification=broadcast.disable_notification,
 			protect_content=protect,
 		)
+	elif kind == Broadcast.Kind.AUDIO:
+		await bot.send_audio(
+			chat_id=chat_id,
+			audio=broadcast.file_id,
+			caption=broadcast.caption or None,
+			disable_notification=broadcast.disable_notification,
+			protect_content=protect,
+		)
 	elif kind == Broadcast.Kind.FORWARD:
 		if not broadcast.from_chat_id or not broadcast.source_message_id:
 			raise BroadcastPayloadError("Forward manbasi yo'q.")
@@ -315,6 +323,12 @@ def payload_from_message(message: Message) -> Dict[str, Any]:
 		return {
 			"kind": Broadcast.Kind.VIDEO,
 			"file_id": message.video.file_id,
+			"caption": (message.caption or "")[:1024],
+		}
+	if message.audio:
+		return {
+			"kind": Broadcast.Kind.AUDIO,
+			"file_id": message.audio.file_id,
 			"caption": (message.caption or "")[:1024],
 		}
 	if message.document:

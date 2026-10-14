@@ -1,8 +1,9 @@
 """Channel management for the three logical channel types.
 
-* ``required`` — membership is mandatory before protected content is delivered.
+* ``required`` — membership is mandatory before the bot replies at all.
 * ``storage``  — stores video/photo/document ``file_id`` references.
-* ``public``   — receives announcements and new-episode posts.
+* ``public``   — receives announcements and new-episode posts; membership is
+  mandatory too, because users are pointed at public channels.
 
 The types are fully independent: each may contain zero or many channels.
 """
@@ -235,6 +236,16 @@ async def test_channel(bot: Bot, channel: TelegramChannel) -> ChannelTestResult:
 			if ok
 			else "Bot administrator emas: majburiy obunani tekshirib bo'lmaydi."
 		)
+	elif channel.purpose == TelegramChannel.Purpose.PUBLIC:
+		# A public channel is a mandatory-subscription channel too, so the bot
+		# must both post there and be able to read its members.
+		ok = can_post and can_check
+		if ok:
+			message = "Bot post yubora oladi va a'zolikni tekshira oladi."
+		elif not can_check:
+			message = "Bot administrator emas: majburiy obunani tekshirib bo'lmaydi."
+		else:
+			message = "Botda post yuborish huquqi yo'q. Administrator qilib tayinlang."
 	else:
 		ok = can_post or chat_type == "private"
 		message = (

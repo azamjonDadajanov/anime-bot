@@ -1,5 +1,4 @@
 import math
-from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -160,6 +159,8 @@ class SubscriptionPlansView(APIView):
 		)
 		return Response({
 			"current_plan": current,
+			"current_active": bool(subscription and subscription.is_active),
+			"expires_at": subscription.expires_at if subscription and subscription.is_active else None,
 			"card_number": card_number(),
 			"plans": all_plan_details(),
 			"pending_request": SubscriptionRequestSerializer(pending).data if pending else None,
@@ -183,8 +184,9 @@ class SubscriptionCreateView(generics.CreateAPIView):
 		serializer = self.get_serializer(data=request.data)
 		serializer.is_valid(raise_exception=True)
 		plan = serializer.validated_data["plan"]
-		current_plan = getattr(getattr(request.user, "subscription", None), "plan", "free")
-		if plan == current_plan:
+		subscription = getattr(request.user, "subscription", None)
+		current_plan = (subscription.plan if subscription else "free") or "free"
+		if plan == current_plan and subscription is not None and subscription.is_active:
 			return Response(
 				{"detail": "Bu tarif allaqachon sizniki."},
 				status=status.HTTP_400_BAD_REQUEST,
@@ -219,7 +221,6 @@ class SubscriptionCreateView(generics.CreateAPIView):
 
 
 PROFILE_ACTIVITY_LIMIT = 30
-SUBSCRIPTION_PERIOD_DAYS = 30
 
 SUBSCRIPTION_STATUS_LABELS = {
 	SubscriptionRequest.Status.PENDING: "Ariza ko'rib chiqilmoqda",
@@ -234,31 +235,39 @@ def _plan_label(plan: str) -> str:
 
 
 def _subscription_summary(user) -> dict:
-	"""Plan, expiry and payment totals derived from the real request history.
+	"""Plan, expiry and payment totals for the profile pages.
 
-	Subscription has no date fields, so the period is anchored on the last
-	approved payment: it runs for ``SUBSCRIPTION_PERIOD_DAYS`` from there.
+	Every duration plan stores its own window on ``Subscription.expires_at``,
+	which is (re)written whenever a request is approved or an admin changes the
+	plan. Renewals extend a still running window instead of overwriting it.
 	"""
+	from .plans import plan_days
+
 	subscription = getattr(user, "subscription", None)
 	plan = (subscription.plan if subscription else Subscription.Plan.FREE) or Subscription.Plan.FREE
+	started_at = subscription.started_at if subscription else None
+	expires_at = subscription.expires_at if subscription else None
+	now = timezone.now()
+	days_left = None
+	if expires_at is not None:
+		days_left = max(0, math.ceil((expires_at - now).total_seconds() / 86400))
+	period_days = plan_days(plan)
+	if plan == Subscription.Plan.COUPON and started_at and expires_at:
+		# A coupon matches no catalogue duration, so report the stored window.
+		period_days = max(0, round((expires_at - started_at).total_seconds() / 86400))
+	# A coupon is a paid tier even though no catalogue plan describes it.
+	is_paid = bool(subscription and plan != Subscription.Plan.FREE)
 	approved = SubscriptionRequest.objects.filter(
 		user=user,
 		status=SubscriptionRequest.Status.APPROVED,
 	).order_by("-updated_at", "-id")
 	last_payment = approved.first()
-	started_at = last_payment.updated_at if last_payment else None
-	expires_at = started_at + timedelta(days=SUBSCRIPTION_PERIOD_DAYS) if started_at else None
-	now = timezone.now()
-	days_left = None
-	if expires_at is not None:
-		days_left = max(0, math.ceil((expires_at - now).total_seconds() / 86400))
-	is_paid = plan != Subscription.Plan.FREE
 	return {
 		"plan": plan,
 		"plan_label": _plan_label(plan),
 		"is_paid": is_paid,
-		"is_active": is_paid and (expires_at is None or expires_at >= now),
-		"period_days": SUBSCRIPTION_PERIOD_DAYS,
+		"is_active": is_paid and expires_at is not None and expires_at >= now,
+		"period_days": period_days,
 		"started_at": started_at,
 		"expires_at": expires_at,
 		"days_left": days_left,

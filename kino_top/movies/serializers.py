@@ -1,9 +1,16 @@
 from rest_framework import serializers
 
-from .models import MediaPart, MediaTitle, ReadingProgress, TelegramChannel, TelegramMedia
+from .models import Genre, MediaPart, MediaTitle, ReadingProgress, TelegramChannel, TelegramMedia
 
 
 class MediaTitleSerializer(serializers.ModelSerializer):
+	slug = serializers.SlugField(required=False, allow_blank=True, allow_null=True, default="")
+	genres = serializers.PrimaryKeyRelatedField(
+		queryset=Genre.objects.all(),
+		many=True,
+		required=False,
+	)
+
 	class Meta:
 		model = MediaTitle
 		fields = [
@@ -27,7 +34,12 @@ class MediaTitleSerializer(serializers.ModelSerializer):
 			"created_at",
 			"updated_at",
 		]
-		read_only_fields = ["id", "created_at", "updated_at"]
+		read_only_fields = ["id", "code", "created_at", "updated_at"]
+
+	def validate(self, attrs):
+		if self.instance is None and not attrs.get("title"):
+			raise serializers.ValidationError({"title": "Nomi majburiy."})
+		return attrs
 
 
 class MediaPartSerializer(serializers.ModelSerializer):
@@ -59,6 +71,28 @@ class TelegramMediaSerializer(serializers.ModelSerializer):
 		model = TelegramMedia
 		fields = ["id", "part", "channel", "file_id", "media_type", "order", "caption"]
 		read_only_fields = ["id"]
+		extra_kwargs = {"part": {"required": True}}
+
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		# Disable the auto-generated UniqueTogetherValidator so validate() gives a friendly message.
+		self.validators = [
+			v for v in self.validators
+			if v.__class__.__name__ != "UniqueTogetherValidator"
+		]
+
+	def validate(self, attrs):
+		part = attrs.get("part") or (self.instance.part if self.instance else None)
+		order = attrs.get("order") or (self.instance.order if self.instance else None)
+		if part is not None and order is not None:
+			qs = TelegramMedia.objects.filter(part=part, order=order)
+			if self.instance:
+				qs = qs.exclude(pk=self.instance.pk)
+			if qs.exists():
+				raise serializers.ValidationError(
+					{"order": f"Bu qismda {order}-tartibli media allaqachon mavjud."}
+				)
+		return attrs
 
 
 class TelegramChannelSerializer(serializers.ModelSerializer):

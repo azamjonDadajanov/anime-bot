@@ -87,6 +87,15 @@ docker compose exec web python manage.py check --deploy
   (`web` konteynerining entrypoint'i buni bajaradi).
 - Media yuklash hajmi `DATA_UPLOAD_MAX_MEMORY_SIZE` (512 MB) bilan cheklangan,
   nginx tomonida `client_max_body_size 512m` bilan moslashtirilgan.
+- **Oylik o'yin mukofoti** uchun cron qo'ying (har oyining 1-si, 06:00 da oldingi
+  oy g'olibini e'lon qiladi; bir xil oy uchun ikki marta ishga tushirsa ham
+  mukofot takrorlanmaydi):
+
+  ```cron
+  0 6 1 * * cd /app && python manage.py award_game_monthly_prize
+  ```
+
+  Qo'lda boshqa oy uchun: `python manage.py award_game_monthly_prize --year 2026 --month 9`.
 - `manage.py check --deploy` qolgan ogohlantirishlar HTTPS yoqilgandan keyin
   hal qilinadi (shuning uchun kodda standart holicha qoldirilgan):
   `SECURE_SSL_REDIRECT=True`, `SECURE_HSTS_SECONDS=31536000`

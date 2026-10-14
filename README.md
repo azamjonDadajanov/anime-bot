@@ -1,4 +1,4 @@
-# Kino Top — Telegram bot, REST API va veb-sayt
+# AniChopar — Telegram bot, REST API va veb-sayt
 
 Anime, serial, manga va kinolar uchun to'liq platforma: **aiogram 3** bot, **Django REST** API
 va **React** veb-ilova. Bot kontentni yopiq tarzda (himoyalangan fayllar bilan) yetkazadi,
@@ -13,10 +13,24 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
   joylashadi, tanlangani yashil belgi bilan ajratiladi, pastdagi `⬅️ fasl ➡️` tugmalari
   oldingi/keyingi qismni yuboradi va fasl tugaganda keyingi faslning birinchi qismiga o'tadi.
 - Sevimlilar, manga uchun saytga havola, media himoyasi (`protect_content`).
-- Majburiy obuna kanallari, premium tariflar (`free` / `plus` / `pro`) va tarif bo'yicha
-  yopilgan kontent.
+- Majburiy obuna: ommaviy (public) kanallar ham avtomatik majburiy obuna bo'ladi;
+  birorta kanalga obuna bo'lmagan foydalanuvchi botning **hech bir** imkoniyatidan
+  foydalana olmaydi (faqat "✅ Tekshirish" tugmasi ishlaydi va obuna bo'lingan kanallar
+  ro'yxatda takror ko'rsatilmaydi).
+- Obuna tariflari: kunlik 6 000, 15 kunlik 10 000, 1 oylik 25 000, 3 oylik 64 000 va
+  yillik 220 000 so'm (har keyingisi ~15% arzon). Bepul foydalanuvchi faqat `free`
+  kontentni ko'radi, faol obunada hammasi ochiq (`free` / `paid` darajalari).
 - Broadcast, kanallar, kontent/qismlar, foydalanuvchilar, jurnallar va sozlamalar uchun
   administrator paneli (`/admin`), to'lov arizalarini tasdiqlash.
+- **Referral**: "👥 Do'stlar" bo'limi orqali havola; taklif qilingan har bir do'st
+  uchun mukofot — 10 kishi → 15 kun, 15 kishi → 30 kun. Mukofot faqat "🎁 Olish"
+  tugmasi bosilganda beriladi (avtomatik emas), har bir referral faqat bitta
+  taklifchiga bir marta hisoblanadi.
+- **Sovg'alar (giveaway)**: administrator panel orqali sovg'a yaratish — nom,
+  mukofot kunlari, g'oliblar soni va shartlar (botda ≥ N anime ochilgan bo'lish,
+  homiy kanallarga obuna, bio'da referral havolasi). Kanallar va bio yig'ish
+  paytida Telegram Bot API orqali jonli tekshiriladi; g'oliblar tasodifiy tanlanadi
+  va shaxsiy xabar oladi.
 - `python manage.py runbot` — long-polling rejimida ishlaydi.
 
 **Veb-ilova**
@@ -26,6 +40,12 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 - Qidiruv (modal + `Ctrl K`), profil bo'limlari (ma'lumotlar, faollik, tarix, Telegram,
   obuna), tema va til sozlamalari.
 - Manga o'quvchi (PDF va rasmlar), o'qish pozitsiyasini saqlash.
+- **Anime reyting o'yini** (`/game`): botda ≥3 qism ochilgan animelar bo'yicha
+  5 savollik quiz. To'g'ri javoblar soniga qarab ball (jami ballar soniga proporsional),
+  ≥4/5 bo'lsa animeni "tasdiqlangan" deb belgilaydi. Qayta urinish yo'q (bir marta),
+  javoblar keyin ko'rsatilmaydi. Server tomonidan minimal javob vaqti va kunlik
+  urinish limiti bilan anti-cheat. Oyning eng faol (obunasi bo'lmagan) o'yinchisi
+  1 oylik obuna yutadi (`award_game_monthly_prize`, cron).
 - JWT asosidagi autentifikatsiya: parol, Telegram login widget va Telegram Mini App.
 
 ## Texnologiyalar
@@ -45,7 +65,9 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 ├── kino_top/                  # Django loyihasi
 │   ├── bot/                   # aiogram bot: handlerlar, klaviaturalar, servislar, testlar
 │   ├── movies/                # katalog modellari, DRF API, manga/PDF
-│   ├── users/                 # autentifikatsiya, profil, obuna, tariflar
+│   ├── users/                 # autentifikatsiya, profil, obuna, tariflar, sovg'alar
+│   ├── games/                 # anime reyting o'yini (quiz, ball, oylik mukofot)
+│   ├── adminpanel/            # website admin API (SPA /admin uchun)
 │   ├── kino_top/              # settings, urls, wsgi
 │   └── Dockerfile             # backend image (gunicorn + entrypoint)
 ├── frontend/                  # React SPA (Vite + Mantine)
@@ -115,12 +137,14 @@ JWT bilan himoyalangan REST API (`/api/`):
 - `POST /api/auth/telegram/login/`, `POST /api/auth/telegram/mini-app/`
 - `/api/auth/subscription/plans/`, `subscription/card/`, `subscription/request/`
 - `/api/catalog/`, `/api/parts/`, `/api/reading/`, `/api/telegram-media/`, `/api/channels/`
+- O'yin: `/api/game/status/`, `game/titles/`, `game/quiz/start/`, `game/quiz/submit/`,
+  `game/leaderboard/`
 - Sxema va hujjatlar: `/api/schema/`, `/api/docs/` (Swagger UI)
 
 ## Testlar va tekshiruvlar
 
 ```bash
-cd kino_top && python manage.py test        # 200 ta test
+cd kino_top && python manage.py test        # 326 ta test
 python manage.py check --deploy             # production sozlamalari bo'yicha ogohlantirishlar
 
 cd frontend && npm run lint && npm run build

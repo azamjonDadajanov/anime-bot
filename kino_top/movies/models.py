@@ -8,7 +8,7 @@ from django.db.models import Q
 from django.template.defaultfilters import slugify
 
 def default_available_plans():
-	return ["free", "plus", "pro"]
+	return ["free", "paid"]
 
 
 class TelegramChannel(models.Model):
@@ -60,15 +60,15 @@ class Genre(models.Model):
 
 class MediaTitle(models.Model):
 	class AccessPlan(models.TextChoices):
-		FREE = "free", "Free"
-		PLUS = "plus", "Plus"
-		PRO = "pro", "Pro"
+		FREE = "free", "Bepul"
+		PAID = "paid", "Obunaga"
 
 	class MediaType(models.TextChoices):
 		ANIME = "anime", "Anime"
 		SERIES = "series", "Serial"
 		MANGA = "manga", "Manga"
 		MOVIE = "movie", "Kino"
+		PODCAST = "podcast", "Podcast"
 
 	class Status(models.TextChoices):
 		UPCOMING = "upcoming", "Kutilmoqda"

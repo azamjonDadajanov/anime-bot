@@ -40,7 +40,7 @@ function HomeHero() {
   return (
     <section className="home-hero">
       <div className="home-hero-copy">
-        <Text className="eyebrow">KINO TOP / KATALOG</Text>
+        <Text className="eyebrow">ANICHOPAR / KATALOG</Text>
         <Title order={1} className="home-hero-title">
           Sevimli <b>kino</b>, <b>anime</b> va <b>manga</b>lar — bir joyda
         </Title>

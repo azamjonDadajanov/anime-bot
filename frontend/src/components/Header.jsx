@@ -50,9 +50,10 @@ function Header({ user }) {
   return (
     <header className="topbar">
       <div className="topbar-inner">
-        <Link className="wordmark" to="/" aria-label="Kino Top bosh sahifa">
-          <span className="wordmark-mark" aria-hidden="true">K</span>
-          <span className="wordmark-text">KINO <b>TOP</b></span>
+        <Link className="wordmark" to="/" aria-label="AniChopar bosh sahifa">
+          <img className="wordmark-logo wordmark-logo-light" src="/logo-light.png" alt="AniChopar" />
+          <img className="wordmark-logo wordmark-logo-dark" src="/logo-dark.png" alt="" aria-hidden="true" />
+          <img className="wordmark-emblem" src="/favicon.png" alt="" aria-hidden="true" />
         </Link>
 
         <div className="header-actions">

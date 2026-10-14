@@ -22,6 +22,9 @@ function DashboardLayout({ children }) {
           <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/subscription">
             <i className="bi bi-ticket-perforated top-nav-icon" aria-hidden="true" /><span>Obuna</span>
           </NavLink>
+          <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/game">
+            <i className="bi bi-controller top-nav-icon" aria-hidden="true" /><span>O'yin</span>
+          </NavLink>
           <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/profile">
             <i className="bi bi-person top-nav-icon" aria-hidden="true" /><span>Profil</span>
           </NavLink>

@@ -4,12 +4,24 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Sequence
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from .. import callbacks as cb
 
 
-def btn(text: str, data: Optional[str] = None, url: Optional[str] = None) -> InlineKeyboardButton:
+def btn(
+	text: str,
+	data: Optional[str] = None,
+	url: Optional[str] = None,
+	web_app: Optional[str] = None,
+) -> InlineKeyboardButton:
+	"""Build an inline button from exactly one target.
+
+	``web_app`` opens the Telegram Mini App at that HTTPS URL, ``url`` a normal
+	link and ``data`` a callback (the default when the others are absent).
+	"""
+	if web_app:
+		return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=web_app))
 	if url:
 		return InlineKeyboardButton(text=text, url=url)
 	return InlineKeyboardButton(text=text, callback_data=(data or cb.NOOP)[:64])
@@ -55,6 +67,12 @@ def channel_url(channel) -> Optional[str]:
 
 
 def subscribe_keyboard(channels: Iterable, retry_callback: str = cb.SUB_CHECK) -> InlineKeyboardMarkup:
+	"""Channel links plus a "check" button.
+
+	No "main menu" button: while the mandatory subscription is missing every
+	other action is refused, so offering a menu that immediately bounces back
+	to this same prompt would only be confusing.
+	"""
 	rows: List[List[InlineKeyboardButton]] = []
 	for channel in channels:
 		url = channel_url(channel)
@@ -63,5 +81,4 @@ def subscribe_keyboard(channels: Iterable, retry_callback: str = cb.SUB_CHECK) -
 		else:
 			rows.append([btn(f"📢 {channel.title} (havola yo'q)", cb.NOOP)])
 	rows.append([btn("✅ Tekshirish", retry_callback)])
-	rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
 	return keyboard(*rows)

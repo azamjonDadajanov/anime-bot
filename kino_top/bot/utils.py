@@ -153,6 +153,16 @@ def percent(part: int, total: int) -> str:
 
 
 def plan_rank(plan: Optional[str]) -> int:
-	"""Ordering helper: free < plus < pro."""
-	order = {"free": 0, "plus": 1, "pro": 2}
+	"""Ordering helper: free < kunlik < 15 kunlik < 1 oylik < 3 oylik < 1 yillik."""
+	# ``coupon`` is a paid window granted by a promo code (see users.coupons),
+	# so it ranks above ``free`` just like the shortest catalogue plan.
+	order = {
+		"free": 0,
+		"coupon": 1,
+		"daily": 1,
+		"d15": 2,
+		"monthly": 3,
+		"quarterly": 4,
+		"yearly": 5,
+	}
 	return order.get(str(plan or "free").lower(), 0)

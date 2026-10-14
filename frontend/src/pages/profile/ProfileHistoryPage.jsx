@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Alert, Group, Loader, Pagination, Text, Title } from '@mantine/core'
 import { Link } from 'react-router-dom'
 import { profileApi } from '../../apis/api'
-import { useAuth } from '../../apis/useAuth'
 import { useApi } from './useApi'
 import { coverUrl, formatDateTime, MEDIA_TYPE_LABELS } from './profileUtils'
 
@@ -15,7 +14,6 @@ function partLabel(item) {
 }
 
 export function ProfileHistoryPage() {
-  const { user } = useAuth()
   const [page, setPage] = useState(1)
   const { data, loading, error } = useApi(() => profileApi.history({ page }), `history-${page}`)
 

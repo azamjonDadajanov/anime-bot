@@ -8,8 +8,14 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+	InlineKeyboardButton,
+	InlineKeyboardMarkup,
+	KeyboardButton,
+	ReplyKeyboardMarkup,
+)
 from movies.models import MediaTitle, TelegramChannel
+from users.models import Giveaway
 
 from .. import callbacks as cb
 from .common import btn, confirm_keyboard, keyboard, pagination_row
@@ -46,6 +52,7 @@ def admin_panel() -> InlineKeyboardMarkup:
 		[btn("🎬 Kontent", cb.ADM_MEDIA), btn("🎞 Qismlar", cb.ADM_EPISODES)],
 		[btn("📡 Kanallar", cb.ADM_CHANNELS), btn("📣 Broadcast", cb.ADM_BROADCAST)],
 		[btn("👥 Foydalanuvchilar", cb.ADM_USERS), btn("⚙️ Sozlamalar", cb.ADM_SETTINGS)],
+		[btn("🎟 Kuponlar", cb.ADM_COUPONS), btn("🎁 Sovg'alar", cb.ADM_GIVEAWAY)],
 		[btn("📜 Jurnallar", cb.ADM_LOGS), btn("🔄 Yangilash", cb.ADM_STATS)],
 		[btn("🏠 Asosiy menyu", cb.MENU)],
 	)
@@ -131,17 +138,25 @@ def title_picker(items: Sequence, page: int, pages: int) -> InlineKeyboardMarkup
 	return keyboard(*rows)
 
 
-def episode_draft_keyboard() -> InlineKeyboardMarkup:
-	return keyboard(
-		[btn("💾 Saqlash", f"{cb.ADM_EPISODES}:save")],
-		[btn("❌ Bekor qilish", cb.CANCEL)],
-	)
+# Reply-keyboard labels used by the episode uploader. The text arrives as an
+# ordinary message, so handlers compare against these exact strings.
+EPISODE_SAVE_LABEL = "💾 Saqlash"
+EPISODE_CANCEL_LABEL = "❌ Bekor qilish"
 
 
-def media_upload_keyboard() -> InlineKeyboardMarkup:
-	return keyboard(
-		[btn("💾 Saqlash", f"{cb.ADM_EPISODES}:save")],
-		[btn("❌ Bekor qilish", cb.CANCEL)],
+def episode_upload_reply_keyboard() -> ReplyKeyboardMarkup:
+	"""Keyboard shown while an administrator streams episode files.
+
+	The files are sent as normal messages; ``💾 Saqlash`` finishes the upload
+	and publishes the batch, ``❌ Bekor qilish`` abandons it.
+	"""
+	return ReplyKeyboardMarkup(
+		keyboard=[
+			[KeyboardButton(text=EPISODE_SAVE_LABEL)],
+			[KeyboardButton(text=EPISODE_CANCEL_LABEL)],
+		],
+		resize_keyboard=True,
+		input_field_placeholder="Video yoki fayl yuboring...",
 	)
 
 
@@ -164,19 +179,12 @@ def parts_list(parts: Sequence, title_pk: int, page: int, pages: int) -> InlineK
 
 
 def part_actions(part, *, title_pk: int, page: int = 1, media_items: Sequence = ()) -> InlineKeyboardMarkup:
+	# A part stores exactly one file, so there is nothing to reorder or append.
 	# ``media_items`` is fetched by the caller inside the async ORM bridge; the
 	# keyboard builder must never touch the database from an async context.
 	rows: List[List[InlineKeyboardButton]] = []
 	for media in sorted(media_items, key=lambda item: item.order):
-		rows.append(
-			[
-				btn(f"#{media.order} {media.get_media_type_display()}", cb.NOOP),
-				btn("⬆️", f"{cb.ADM_EPISODES}:up:{media.pk}"),
-				btn("⬇️", f"{cb.ADM_EPISODES}:down:{media.pk}"),
-				btn("🔄", f"{cb.ADM_EPISODES}:rep:{media.pk}"),
-			]
-		)
-	rows.append([btn("➕ Fayl qo'shish", f"{cb.ADM_EPISODES}:addmore:{part.pk}")])
+		rows.append([btn(f"📦 {media.get_media_type_display()}", cb.NOOP)])
 	rows.append([btn("🗑 Qismni o'chirish", f"{cb.ADM_EPISODES}:del:{part.pk}:{title_pk}:{page}")])
 	rows.append([btn("⬅️ Orqaga", f"{cb.ADM_EPISODES}:list:{title_pk}:{page}")])
 	return keyboard(*rows)
@@ -308,12 +316,14 @@ def user_actions(profile) -> InlineKeyboardMarkup:
 
 
 def plan_picker(telegram_id: int) -> InlineKeyboardMarkup:
-	return keyboard(
-		[btn("Free", f"{cb.ADM_USERS}:setplan:{telegram_id}:free")],
-		[btn("Plus", f"{cb.ADM_USERS}:setplan:{telegram_id}:plus")],
-		[btn("Pro", f"{cb.ADM_USERS}:setplan:{telegram_id}:pro")],
-		[btn("⬅️ Orqaga", f"{cb.ADM_USERS}:view:{telegram_id}")],
-	)
+	from users.plans import ALL_PLANS, PLAN_LABELS
+
+	rows = [
+		[btn(PLAN_LABELS[plan_id], f"{cb.ADM_USERS}:setplan:{telegram_id}:{plan_id}")]
+		for plan_id in ALL_PLANS
+	]
+	rows.append([btn("⬅️ Orqaga", f"{cb.ADM_USERS}:view:{telegram_id}")])
+	return keyboard(*rows)
 
 
 def settings_menu(settings) -> InlineKeyboardMarkup:
@@ -351,6 +361,103 @@ def logs_menu() -> InlineKeyboardMarkup:
 		[btn("📊 Hisobotlar", f"{cb.ADM_LOGS}:reports")],
 		[btn("🧹 Eski yozuvlarni tozalash", f"{cb.ADM_LOGS}:purge")],
 		[btn("🏠 Panel", cb.ADM_STATS)],
+	)
+
+
+def coupons_menu() -> InlineKeyboardMarkup:
+	return keyboard(
+		[btn("➕ Yangi kupon", f"{cb.ADM_COUPONS}:new")],
+		[btn("📃 Ro'yxat", f"{cb.ADM_COUPONS}:list:1")],
+		[btn("🏠 Panel", cb.ADM_STATS)],
+	)
+
+
+def coupons_list(items: Sequence, page: int, pages: int) -> InlineKeyboardMarkup:
+	rows: List[List[InlineKeyboardButton]] = []
+	for item in items:
+		mark = "⌛️" if item.is_expired else "✅"
+		label = f"{mark} {item.code} · {item.days} kun · {item.used_count}/{item.max_uses}"
+		rows.append([btn(label, f"{cb.ADM_COUPONS}:view:{item.pk}")])
+	rows.append(pagination_row(f"{cb.ADM_COUPONS}:list:", page, pages))
+	rows.append([btn("⬅️ Orqaga", cb.ADM_COUPONS)])
+	return keyboard(*rows)
+
+
+def coupon_actions(coupon, *, page: int = 1) -> InlineKeyboardMarkup:
+	rows: List[List[InlineKeyboardButton]] = [
+		[btn("📢 Kanalga joylash", f"{cb.ADM_COUPONS}:pub:{coupon.pk}")],
+	]
+	toggle_label = "⏸ To'xtatish" if coupon.is_active else "▶️ Faollashtirish"
+	rows.append([btn(toggle_label, f"{cb.ADM_COUPONS}:tog:{coupon.pk}")])
+	rows.append([btn("🗑 O'chirish", f"{cb.ADM_COUPONS}:del:{coupon.pk}")])
+	rows.append([btn("⬅️ Ro'yxat", f"{cb.ADM_COUPONS}:list:{page}")])
+	return keyboard(*rows)
+
+
+def coupon_confirm_delete(coupon, *, page: int = 1) -> InlineKeyboardMarkup:
+	return confirm_keyboard(
+		f"{cb.ADM_COUPONS}:yes:{coupon.pk}:{page}",
+		f"{cb.ADM_COUPONS}:view:{coupon.pk}",
+	)
+
+
+def giveaways_menu() -> InlineKeyboardMarkup:
+	return keyboard(
+		[btn("➕ Yangi sovg'a", f"{cb.ADM_GIVEAWAY}:new")],
+		[btn("📃 Ro'yxat", f"{cb.ADM_GIVEAWAY}:list:1")],
+		[btn("🏠 Panel", cb.ADM_STATS)],
+	)
+
+
+def giveaways_list(items: Sequence, page: int, pages: int) -> InlineKeyboardMarkup:
+	rows: List[List[InlineKeyboardButton]] = []
+	for item in items:
+		mark = {"open": "🟢", "drawn": "🏆", "closed": "🔒", "draft": "📝"}.get(
+			item.status, "🎁"
+		)
+		label = f"{mark} {item.title} · {item.reward_days} kun"
+		rows.append([btn(label, f"{cb.ADM_GIVEAWAY}:view:{item.pk}")])
+	rows.append(pagination_row(f"{cb.ADM_GIVEAWAY}:list:", page, pages))
+	rows.append([btn("⬅️ Orqaga", cb.ADM_GIVEAWAY)])
+	return keyboard(*rows)
+
+
+def giveaway_actions(giveaway, *, page: int = 1) -> InlineKeyboardMarkup:
+	rows: List[List[InlineKeyboardButton]] = []
+	if giveaway.status in (Giveaway.Status.OPEN, Giveaway.Status.DRAFT):
+		rows.append([btn("🎲 O'tkazish (g'olib aniqlash)", f"{cb.ADM_GIVEAWAY}:draw:{giveaway.pk}")])
+	if giveaway.status == Giveaway.Status.OPEN:
+		rows.append([btn("🔒 Yopish", f"{cb.ADM_GIVEAWAY}:close:{giveaway.pk}")])
+	elif giveaway.status == Giveaway.Status.CLOSED:
+		rows.append([btn("▶️ Qayta ochish", f"{cb.ADM_GIVEAWAY}:open:{giveaway.pk}")])
+	rows.append([btn("🗑 O'chirish", f"{cb.ADM_GIVEAWAY}:del:{giveaway.pk}")])
+	rows.append([btn("⬅️ Ro'yxat", f"{cb.ADM_GIVEAWAY}:list:{page}")])
+	return keyboard(*rows)
+
+
+def giveaway_confirm_draw(giveaway, *, page: int = 1) -> InlineKeyboardMarkup:
+	return confirm_keyboard(
+		f"{cb.ADM_GIVEAWAY}:yes:{giveaway.pk}:{page}",
+		f"{cb.ADM_GIVEAWAY}:view:{giveaway.pk}",
+	)
+
+
+def giveaway_confirm_delete(giveaway, *, page: int = 1) -> InlineKeyboardMarkup:
+	return confirm_keyboard(
+		f"{cb.ADM_GIVEAWAY}:dyes:{giveaway.pk}:{page}",
+		f"{cb.ADM_GIVEAWAY}:view:{giveaway.pk}",
+	)
+
+
+def giveaway_flags_keyboard(*, require_channels: bool, require_bio_ref: bool) -> InlineKeyboardMarkup:
+	"""Wizard step: toggle the live-verified conditions, then create."""
+	ch_mark = "✅" if require_channels else "☐️"
+	bio_mark = "✅" if require_bio_ref else "☐️"
+	return keyboard(
+		[btn(f"{ch_mark} Homiy kanallarga obuna", f"{cb.ADM_GIVEAWAY}:fch")],
+		[btn(f"{bio_mark} Bio'da referral havolasi", f"{cb.ADM_GIVEAWAY}:fbio")],
+		[btn("✅ Yaratish", f"{cb.ADM_GIVEAWAY}:create")],
+		[btn("⬅️ Orqaga", f"{cb.ADM_GIVEAWAY}:cancel")],
 	)
 
 

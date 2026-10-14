@@ -131,6 +131,34 @@ class ChannelProbeTests(TransactionTestCase):
 		self.assertFalse(result.can_check)
 		self.assertIn("administrator", result.message)
 
+	def test_public_channel_must_be_postable_and_checkable(self) -> None:
+		"""A public channel is mandatory, so membership must be verifiable too."""
+		channel = make_channel(
+			chat_id=-703,
+			title="Ommaviy",
+			purpose=TelegramChannel.Purpose.PUBLIC,
+		)
+		bot = make_bot(FakeSession(bot_status="member"))
+
+		result = asyncio.run(test_channel(bot, channel))
+
+		self.assertFalse(result.ok)
+		self.assertTrue(result.can_post is False or result.can_check is False)
+		self.assertIn("administrator", result.message)
+
+	def test_public_channel_is_healthy_for_a_administrator_bot(self) -> None:
+		channel = make_channel(
+			chat_id=-704,
+			title="Ommaviy",
+			purpose=TelegramChannel.Purpose.PUBLIC,
+		)
+		bot = make_bot(FakeSession(bot_status="administrator"))
+
+		result = asyncio.run(test_channel(bot, channel))
+
+		self.assertTrue(result.ok)
+		self.assertTrue(result.can_check)
+
 	def test_unreachable_channel_is_reported(self) -> None:
 		from aiogram.exceptions import TelegramBadRequest
 

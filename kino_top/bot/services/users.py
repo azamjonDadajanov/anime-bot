@@ -19,7 +19,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from users.models import Subscription, TelegramUser
 from users.telegram_auth import get_or_create_telegram_user, link_profile_by_username
 
-from ..utils import to_async
+from ..utils import human_datetime, to_async
 
 logger = logging.getLogger(__name__)
 
@@ -154,9 +154,10 @@ def set_plan_sync(telegram_id: int, plan: str) -> Optional[str]:
 	if profile is None or profile.auth_user_id is None:
 		return None
 	subscription, _ = Subscription.objects.get_or_create(user_id=profile.auth_user_id)
-	if subscription.plan != plan:
-		subscription.plan = plan
-		subscription.save(update_fields=["plan", "updated_at"])
+	# A changed plan — or a dead one being handed out again — restarts the
+	# period, while re-picking the still running plan leaves it alone.
+	if subscription.plan != plan or not subscription.is_active:
+		subscription.activate(plan)
 	return subscription.plan
 
 
@@ -189,17 +190,26 @@ recipients = to_async(recipients_sync)
 
 
 def user_card(profile: TelegramUser) -> Dict[str, Any]:
-	from .access import plan_of
-
 	subscription = getattr(getattr(profile, "auth_user", None), "subscription", None)
 	return {
 		"telegram_id": profile.telegram_id,
 		"name": profile.first_name or profile.username or str(profile.telegram_id),
 		"username": f"@{profile.username}" if profile.username else "—",
-		"plan": plan_of(profile),
-		"plan_display": subscription.get_plan_display() if subscription else "Free",
+		"plan": subscription.plan if subscription else "free",
+		"plan_display": subscription.get_plan_display() if subscription else "Bepul",
+		"plan_active": bool(subscription and subscription.is_active),
+		"plan_expires": subscription.expires_at if subscription else None,
 		"blocked": profile.is_blocked,
 		"favorites": profile.favorites.count(),
 		"created": profile.created_at,
 		"last_seen": profile.last_seen_at,
 	}
+
+
+def plan_expiry_text(card: Dict[str, Any]) -> str:
+	"""Human readable window of the stored plan (``—`` for the free tier)."""
+	if card.get("plan") == "free":
+		return "—"
+	if card.get("plan_active") and card.get("plan_expires"):
+		return f"{human_datetime(card['plan_expires'])} gacha"
+	return "muddati o'tgan"

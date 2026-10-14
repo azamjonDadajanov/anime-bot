@@ -7,6 +7,7 @@ user is told the outcome.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest import mock
 
 from django.test import override_settings
@@ -86,55 +87,71 @@ class SubscriptionPageTests(DispatcherTestCase):
 		self.assertIn("🎫 Obuna", self.button_texts())
 
 	def test_subscription_page_lists_every_plan_with_its_price(self) -> None:
-		from users.plans import plan_price
+		from users.plans import PLAN_ORDER, plan_price
 
 		self._press(cb.SUBSCRIPTION)
 
 		visible = self.visible()
-		for label in ("Free", "Plus", "Pro"):
+		for label in ("Kunlik", "15 kunlik", "1 oylik", "3 oylik", "1 yillik"):
 			self.assertIn(label, visible)
-		self.assertEqual(visible.count("Bepul"), 1)
-		for plan in ("plus", "pro"):
-			price = plan_price(plan)
-			if price:
-				self.assertIn(f"{price:,} so'm", visible)
+		for plan in PLAN_ORDER:
+			self.assertIn(f"{plan_price(plan):,} so'm", visible)
 		self.assertIn("joriy", visible.lower())
 
 	def test_counters_are_computed_from_the_database(self) -> None:
+		from users.plans import content_counts
+
 		for number in range(3):
 			make_title(code=f"80{number}x", title=f"Free Anime {number}")
 		make_title(
 			code="8099",
 			title="Locked Anime",
-			required_plan=MediaTitle.AccessPlan.PRO,
+			required_plan=MediaTitle.AccessPlan.PAID,
 		)
 
 		self._press(cb.SUBSCRIPTION)
 
-		visible = self.visible()
-		# Three free anime are visible on every plan, the pro one only on Pro.
-		self.assertIn("3 anime", visible)
-		self.assertIn("4 anime", visible)
+		# Every paid plan opens the whole catalogue: three free titles plus the
+		# locked one, while the free tier only counts the free titles.
+		self.assertIn("4 anime", self.visible())
+		counts = content_counts()
+		self.assertEqual(counts["free"]["anime"], 3)
+		self.assertEqual(counts["monthly"]["anime"], 4)
 
 	def test_selecting_a_plan_shows_the_payment_guide_and_the_card_number(self) -> None:
-		self._press(f"{cb.SUBSCRIPTION_BUY}:pro")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:yearly")
 
 		text = self.all_text()
 		self.assertIn("Obuna to'lovi", text)
+		self.assertIn("365 kun", text)
 		self.assertIn(CARD, text)
 		self.assertIn("Screenshot", text)
 		self.assertEqual(self._fsm_state(), "UserSubscriptionStates:awaiting_screenshot")
 
 	def test_the_current_plan_cannot_be_bought_again(self) -> None:
-		self._press(f"{cb.SUBSCRIPTION_BUY}:free")
+		self.profile.auth_user.subscription.activate("monthly")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:monthly")
 
 		answers = self.session.methods("AnswerCallbackQuery")
 		self.assertTrue(answers)
-		self.assertEqual(answers[-1].text, "Bu tarif allaqachon sizniki.")
+		self.assertEqual(answers[-1].text, "Bu tarif allaqachon sizniki va faol.")
 		self.assertIsNone(self._fsm_state())
 
+	def test_an_expired_plan_can_be_bought_again(self) -> None:
+		from django.utils import timezone
+
+		self.profile.auth_user.subscription.activate("daily")
+		Subscription.objects.filter(user=self.profile.auth_user).update(
+			expires_at=timezone.now() - timedelta(seconds=1)
+		)
+		self._press(f"{cb.SUBSCRIPTION_BUY}:daily")
+
+		self.assertEqual(
+			self._fsm_state(), "UserSubscriptionStates:awaiting_screenshot"
+		)
+
 	def test_a_text_message_while_waiting_for_the_screenshot_is_ignored(self) -> None:
-		self._press(f"{cb.SUBSCRIPTION_BUY}:pro")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:yearly")
 		self.session.reset()
 		self.feed(build_message("kino top", update_id=300))
 
@@ -160,7 +177,7 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 		self.feed(build_callback(data, user=user, update_id=self.update_id))
 
 	def test_screenshot_creates_a_pending_request(self) -> None:
-		self._press(f"{cb.SUBSCRIPTION_BUY}:pro")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:yearly")
 		self.session.reset()
 
 		with mock.patch(
@@ -171,27 +188,27 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 		self.assertIn(SUBREQ_SAVED, self.all_text())
 		self.assertEqual(notify.call_count, 1)
 		request = SubscriptionRequest.objects.get()
-		self.assertEqual(request.plan, "pro")
+		self.assertEqual(request.plan, "yearly")
 		self.assertEqual(request.status, SubscriptionRequest.Status.PENDING)
 		self.assertEqual(request.notes, "telegram_photo:pay-screenshot")
 		self.assertEqual(request.card_number, CARD)
 		self.assertIsNotNone(request.amount)
-		self.assertEqual(request.amount, 50000)
+		self.assertEqual(request.amount, 220000)
 		self.assertIsNone(current_state(USER.id))
 
 	def test_a_second_screenshot_is_refused_while_one_is_pending(self) -> None:
-		self._press(f"{cb.SUBSCRIPTION_BUY}:pro")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:yearly")
 		with mock.patch("users.telegram_notify.notify_admins_new_request", return_value=True):
 			self.feed(photo_message(update_id=self.update_id + 1))
 
 		self.session.reset()
-		self._press(f"{cb.SUBSCRIPTION_BUY}:pro")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:yearly")
 		answers = self.session.methods("AnswerCallbackQuery")
 		self.assertEqual(answers[-1].text, SUBREQ_PENDING_NOTICE)
 		self.assertEqual(SubscriptionRequest.objects.count(), 1)
 
 	def test_a_non_picture_message_does_not_create_a_request(self) -> None:
-		self._press(f"{cb.SUBSCRIPTION_BUY}:pro")
+		self._press(f"{cb.SUBSCRIPTION_BUY}:yearly")
 		self.session.reset()
 		self.feed(build_message("shu yerga yuboraman", update_id=self.update_id + 1))
 
@@ -200,7 +217,7 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 
 	def test_approval_activates_the_plan_and_tells_the_user(self) -> None:
 		request = SubscriptionRequest.objects.create(
-			user=self.user, plan="pro", amount=50000, card_number=CARD
+			user=self.user, plan="yearly", amount=220000, card_number=CARD
 		)
 
 		with bot_env(ADMIN_IDS=str(ADMIN.id), BOT_TOKEN=BOT_TOKEN):
@@ -208,8 +225,11 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 
 		request.refresh_from_db()
 		self.assertEqual(request.status, SubscriptionRequest.Status.APPROVED)
+		subscription = Subscription.objects.get(user=self.user)
+		self.assertEqual(subscription.plan, "yearly")
+		self.assertTrue(subscription.is_active)
 		self.assertEqual(
-			Subscription.objects.get(user=self.user).plan, "pro"
+			(subscription.expires_at - subscription.started_at).days, 365
 		)
 		self.assertIn(SUBREQ_APPROVED.split("\n")[0].replace("</b>", ""), self.all_text())
 		self.assertIn("Ariza tasdiqlandi.", self.all_text())
@@ -217,7 +237,7 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 
 	def test_rejection_keeps_the_plan_and_tells_the_user(self) -> None:
 		request = SubscriptionRequest.objects.create(
-			user=self.user, plan="pro", amount=50000, card_number=CARD
+			user=self.user, plan="yearly", amount=220000, card_number=CARD
 		)
 
 		with bot_env(ADMIN_IDS=str(ADMIN.id), BOT_TOKEN=BOT_TOKEN):
@@ -231,7 +251,7 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 
 	def test_approving_twice_is_refused_and_changes_nothing(self) -> None:
 		request = SubscriptionRequest.objects.create(
-			user=self.user, plan="plus", amount=30000, card_number=CARD
+			user=self.user, plan="monthly", amount=25000, card_number=CARD
 		)
 
 		with bot_env(ADMIN_IDS=str(ADMIN.id), BOT_TOKEN=BOT_TOKEN):
@@ -257,7 +277,7 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 
 	def test_a_non_administrator_cannot_approve_a_request(self) -> None:
 		request = SubscriptionRequest.objects.create(
-			user=self.user, plan="pro", amount=50000, card_number=CARD
+			user=self.user, plan="yearly", amount=220000, card_number=CARD
 		)
 
 		with bot_env(ADMIN_IDS=str(ADMIN.id), BOT_TOKEN=BOT_TOKEN):
@@ -279,8 +299,8 @@ class SubscriptionRequestFlowTests(DispatcherTestCase):
 
 		request = SubscriptionRequest.objects.create(
 			user=self.user,
-			plan="pro",
-			amount=50000,
+			plan="yearly",
+			amount=220000,
 			card_number=CARD,
 			notes="telegram_photo:secret-file-id",
 		)

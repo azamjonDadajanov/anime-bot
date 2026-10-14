@@ -73,7 +73,7 @@ export function ProfileSubscriptionPage() {
                   <i className="bi bi-credit-card-2-front" aria-hidden="true" />
                 </span>
                 <div className="payment-row-body">
-                  <Text fw={700}>{request.plan?.toUpperCase()} tarifi</Text>
+                  <Text fw={700}>{request.plan_label || request.plan} tarifi</Text>
                   <Text c="dimmed" size="xs">
                     Ariza: {formatDateTime(request.created_at)}
                     {request.updated_at !== request.created_at ? ` · Yangilangan: ${formatDateTime(request.updated_at)}` : ''}

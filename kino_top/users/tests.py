@@ -268,15 +268,18 @@ class AuthenticationApiTests(TestCase):
 		self.assertEqual(response.data["subscription"]["plan"], "free")
 
 	def test_subscription_plan_is_visible_on_current_user(self):
-		user = get_user_model().objects.create_user(username="plus-user", password="secret")
-		user.subscription.plan = "plus"
-		user.subscription.save(update_fields=["plan", "updated_at"])
+		user = get_user_model().objects.create_user(username="monthly-user", password="secret")
+		user.subscription.activate("monthly")
 		self.client.force_authenticate(user)
 
 		response = self.client.get("/api/auth/me/")
 
 		self.assertEqual(response.status_code, 200)
-		self.assertEqual(response.data["subscription"]["plan"], "plus")
+		subscription = response.data["subscription"]
+		self.assertEqual(subscription["plan"], "monthly")
+		self.assertEqual(subscription["plan_label"], "1 oylik")
+		self.assertTrue(subscription["is_active"])
+		self.assertIsNotNone(subscription["expires_at"])
 
 	def test_authenticated_user_can_update_profile(self):
 		user = get_user_model().objects.create_user(username="before-edit", email="old@example.com", password="secret")
@@ -439,8 +442,8 @@ class ProfileApiTests(TestCase):
 		)
 		SubscriptionRequest.objects.create(
 			user=self.user,
-			plan="plus",
-			amount=29000,
+			plan="monthly",
+			amount=25000,
 			status=SubscriptionRequest.Status.APPROVED,
 		)
 
@@ -455,26 +458,29 @@ class ProfileApiTests(TestCase):
 		self.assertEqual(view_event["slug"], "profile-title-20")
 
 	def test_profile_subscription_summarises_plan_expiry_and_payments(self):
-		Subscription.objects.filter(user=self.user).update(plan="pro")
+		Subscription.objects.filter(user=self.user).update(
+			plan="monthly",
+			expires_at=timezone.now() + timedelta(days=27),
+		)
 		# The signal already cached the reverse relation on this instance.
 		self.user.refresh_from_db()
 		first = SubscriptionRequest.objects.create(
 			user=self.user,
-			plan="plus",
+			plan="monthly",
 			amount=19000,
 			status=SubscriptionRequest.Status.APPROVED,
 		)
 		SubscriptionRequest.objects.filter(pk=first.pk).update(updated_at=timezone.now() - timedelta(days=40))
 		second = SubscriptionRequest.objects.create(
 			user=self.user,
-			plan="pro",
+			plan="yearly",
 			amount=39000,
 			status=SubscriptionRequest.Status.APPROVED,
 		)
 		SubscriptionRequest.objects.filter(pk=second.pk).update(updated_at=timezone.now() - timedelta(days=3))
 		SubscriptionRequest.objects.create(
 			user=self.user,
-			plan="plus",
+			plan="daily",
 			amount=29000,
 			status=SubscriptionRequest.Status.REJECTED,
 		)
@@ -483,9 +489,11 @@ class ProfileApiTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		summary = response.data["summary"]
-		self.assertEqual(summary["plan"], "pro")
-		self.assertEqual(summary["plan_label"], "Pro")
+		self.assertEqual(summary["plan"], "monthly")
+		self.assertEqual(summary["plan_label"], "1 oylik")
+		self.assertTrue(summary["is_paid"])
 		self.assertTrue(summary["is_active"])
+		self.assertEqual(summary["period_days"], 30)
 		self.assertEqual(summary["days_left"], 27)
 		self.assertEqual(float(summary["total_paid"]), 58000.0)
 		self.assertEqual(float(summary["last_amount"]), 39000.0)
@@ -574,7 +582,14 @@ PNG_1PX = _tiny_png()
 
 @override_settings(
 	SUBSCRIPTION_CARD_NUMBER="8600 0000 0000 0000",
-	SUBSCRIPTION_PRICES={"free": 0, "plus": 30000, "pro": 50000},
+	SUBSCRIPTION_PRICES={
+		"free": 0,
+		"daily": 6000,
+		"d15": 10000,
+		"monthly": 25000,
+		"quarterly": 64000,
+		"yearly": 220000,
+	},
 )
 class SubscriptionApiTests(TestCase):
 	"""The "Obuna" page: live plan details, the card number and new requests."""
@@ -590,6 +605,8 @@ class SubscriptionApiTests(TestCase):
 		return SimpleUploadedFile(name, PNG_1PX, content_type="image/png")
 
 	def test_plan_catalogue_counts_content_from_the_database(self):
+		from users.plans import PLAN_ORDER, plan_details
+
 		for number in range(3):
 			MediaTitle.objects.create(
 				type=MediaTitle.MediaType.ANIME,
@@ -600,7 +617,7 @@ class SubscriptionApiTests(TestCase):
 			type=MediaTitle.MediaType.MOVIE,
 			title="Locked Movie",
 			slug="locked-movie",
-			required_plan=MediaTitle.AccessPlan.PRO,
+			required_plan=MediaTitle.AccessPlan.PAID,
 		)
 
 		response = self.client.get("/api/auth/subscription/plans/")
@@ -611,19 +628,30 @@ class SubscriptionApiTests(TestCase):
 		self.assertIsNone(response.data["pending_request"])
 
 		plans = {item["id"]: item for item in response.data["plans"]}
-		self.assertEqual(list(plans), ["free", "plus", "pro"])
-		self.assertEqual(plans["free"]["price"], 0)
-		self.assertEqual(plans["plus"]["price"], 30000)
-		self.assertEqual(plans["pro"]["price"], 50000)
+		self.assertEqual(list(plans), PLAN_ORDER)
+		self.assertEqual(
+			[plans[plan]["price"] for plan in PLAN_ORDER],
+			[6000, 10000, 25000, 64000, 220000],
+		)
+		self.assertEqual(
+			[plans[plan]["days"] for plan in PLAN_ORDER], [1, 15, 30, 90, 365]
+		)
+		self.assertEqual(
+			[plans[plan]["label"] for plan in PLAN_ORDER],
+			["Kunlik", "15 kunlik", "1 oylik", "3 oylik", "1 yillik"],
+		)
 
-		def count_of(plan, media_type):
-			return next(f["count"] for f in plans[plan]["features"] if f["type"] == media_type)
+		def count_of(details, media_type):
+			return next(
+				f["count"] for f in details["features"] if f["type"] == media_type
+			)
 
-		self.assertEqual(count_of("free", MediaTitle.MediaType.ANIME), 3)
-		self.assertEqual(count_of("pro", MediaTitle.MediaType.ANIME), 3)
-		self.assertEqual(count_of("free", MediaTitle.MediaType.MOVIE), 0)
-		self.assertEqual(count_of("pro", MediaTitle.MediaType.MOVIE), 1)
-		self.assertTrue(plans["pro"]["description"])
+		free = plan_details("free")
+		self.assertEqual(count_of(free, MediaTitle.MediaType.ANIME), 3)
+		self.assertEqual(count_of(plans["monthly"], MediaTitle.MediaType.ANIME), 3)
+		self.assertEqual(count_of(free, MediaTitle.MediaType.MOVIE), 0)
+		self.assertEqual(count_of(plans["monthly"], MediaTitle.MediaType.MOVIE), 1)
+		self.assertTrue(plans["yearly"]["description"])
 
 	def test_card_endpoint_returns_the_configured_card_number(self):
 		response = self.client.get("/api/auth/subscription/card/")
@@ -635,14 +663,14 @@ class SubscriptionApiTests(TestCase):
 	def test_submitting_a_screenshot_creates_a_pending_request(self, notify):
 		response = self.client.post(
 			"/api/auth/subscription/request/",
-			{"plan": "pro", "screenshot": self._screenshot()},
+			{"plan": "yearly", "screenshot": self._screenshot()},
 			format="multipart",
 		)
 
 		self.assertEqual(response.status_code, 201, response.data)
 		self.assertEqual(response.data["status"], SubscriptionRequest.Status.PENDING)
-		self.assertEqual(response.data["plan"], "pro")
-		self.assertEqual(float(response.data["amount"]), 50000.0)
+		self.assertEqual(response.data["plan"], "yearly")
+		self.assertEqual(float(response.data["amount"]), 220000.0)
 		self.assertEqual(response.data["card_number"], "8600 0000 0000 0000")
 		self.assertTrue(response.data["screenshot"])
 
@@ -659,13 +687,13 @@ class SubscriptionApiTests(TestCase):
 	def test_a_second_request_is_rejected_while_one_is_pending(self, notify):
 		self.client.post(
 			"/api/auth/subscription/request/",
-			{"plan": "pro", "screenshot": self._screenshot()},
+			{"plan": "yearly", "screenshot": self._screenshot()},
 			format="multipart",
 		)
 
 		second = self.client.post(
 			"/api/auth/subscription/request/",
-			{"plan": "pro", "screenshot": self._screenshot("second.png")},
+			{"plan": "yearly", "screenshot": self._screenshot("second.png")},
 			format="multipart",
 		)
 
@@ -674,12 +702,11 @@ class SubscriptionApiTests(TestCase):
 
 	@mock.patch("users.telegram_notify.notify_admins_new_request", return_value=True)
 	def test_cannot_buy_the_plan_you_already_have(self, notify):
-		self.user.subscription.plan = "plus"
-		self.user.subscription.save(update_fields=["plan", "updated_at"])
+		self.user.subscription.activate("monthly")
 
 		response = self.client.post(
 			"/api/auth/subscription/request/",
-			{"plan": "plus", "screenshot": self._screenshot()},
+			{"plan": "monthly", "screenshot": self._screenshot()},
 			format="multipart",
 		)
 
@@ -687,9 +714,25 @@ class SubscriptionApiTests(TestCase):
 		self.assertEqual(SubscriptionRequest.objects.count(), 0)
 
 	@mock.patch("users.telegram_notify.notify_admins_new_request", return_value=True)
+	def test_an_expired_plan_can_be_bought_again(self, notify):
+		self.user.subscription.activate("daily")
+		subscription = self.user.subscription
+		subscription.expires_at = timezone.now() - timedelta(seconds=1)
+		subscription.save(update_fields=["expires_at", "updated_at"])
+
+		response = self.client.post(
+			"/api/auth/subscription/request/",
+			{"plan": "daily", "screenshot": self._screenshot()},
+			format="multipart",
+		)
+
+		self.assertEqual(response.status_code, 201, response.data)
+		self.assertEqual(SubscriptionRequest.objects.count(), 1)
+
+	@mock.patch("users.telegram_notify.notify_admins_new_request", return_value=True)
 	def test_a_screenshot_is_mandatory_and_the_plan_must_be_known(self, notify):
 		missing = self.client.post(
-			"/api/auth/subscription/request/", {"plan": "pro"}, format="multipart"
+			"/api/auth/subscription/request/", {"plan": "yearly"}, format="multipart"
 		)
 		unknown = self.client.post(
 			"/api/auth/subscription/request/",
@@ -707,9 +750,9 @@ class SubscriptionApiTests(TestCase):
 			username="stranger-subscriber", password="stranger-secret-4829"
 		)
 		own = SubscriptionRequest.objects.create(
-			user=self.user, plan="pro", amount=50000
+			user=self.user, plan="yearly", amount=220000
 		)
-		theirs = SubscriptionRequest.objects.create(user=stranger, plan="plus", amount=30000)
+		theirs = SubscriptionRequest.objects.create(user=stranger, plan="monthly", amount=25000)
 
 		self.assertEqual(
 			self.client.get(f"/api/auth/subscription/requests/{own.pk}/").status_code, 200
@@ -727,7 +770,7 @@ class SubscriptionApiTests(TestCase):
 		self.assertEqual(
 			anonymous.post(
 				"/api/auth/subscription/request/",
-				{"plan": "pro"},
+				{"plan": "yearly"},
 				format="multipart",
 			).status_code,
 			401,

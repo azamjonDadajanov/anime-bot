@@ -222,6 +222,31 @@ def manga_url(slug: str) -> str:
 	return f"{base}/read/{target}"
 
 
+def game_url() -> str:
+	"""Deep link to the website rating game (empty without a site URL)."""
+	base = site_url()
+	return f"{base}/game" if base else ""
+
+
+def webapp_url(path: str = "") -> str:
+	"""Public HTTPS base URL of the Telegram Mini App (the website).
+
+	Telegram only opens a Web App over HTTPS and from a reachable public host, so
+	in development this is normally an ngrok tunnel. Returns an empty string when
+	it is not configured, letting callers omit the Mini App buttons entirely.
+
+	Safe to call without a token so keyboards and tests can resolve it.
+	"""
+	raw = _setting(
+		"BOT_WEBAPP_URL", "BOT_MINI_APP_URL", "BOT_WEBAPP", "MINI_APP_URL", default=""
+	)
+	base = str(raw or "").strip().rstrip("/")
+	if not base:
+		return ""
+	target = str(path or "").strip().lstrip("/")
+	return f"{base}/{target}" if target else base
+
+
 @lru_cache(maxsize=1)
 def get_config() -> BotConfig:
 	"""Return the process-wide cached configuration."""

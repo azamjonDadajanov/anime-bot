@@ -13,7 +13,14 @@ from ... import callbacks as cb
 from ...bot_logging import record_event
 from ...keyboards.admin import plan_picker, user_actions, user_results, users_menu
 from ...keyboards.common import cancel_keyboard
-from ...services.users import get_profile, search_users, set_blocked, set_plan, user_card
+from ...services.users import (
+	get_profile,
+	plan_expiry_text,
+	search_users,
+	set_blocked,
+	set_plan,
+	user_card,
+)
 from ...states import AdminUserStates
 from ...texts import (
 	ADMIN_INVALID_INPUT,
@@ -40,6 +47,7 @@ async def user_card_text(profile) -> str:
 		telegram_id=card["telegram_id"],
 		username=escape_html(card["username"]),
 		plan=card["plan_display"],
+		expires=escape_html(plan_expiry_text(card)),
 		blocked="ha" if card["blocked"] else "yo'q",
 		favorites=card["favorites"],
 		created=human_datetime(card["created"]),
@@ -120,7 +128,9 @@ async def choose_plan(callback: CallbackQuery) -> None:
 	card = await to_async(user_card)(profile)
 	await render(
 		callback,
-		f"💎 Joriy tarif: <b>{card['plan_display']}</b>\n\nYangi tarifni tanlang:",
+		"💎 Joriy tarif: <b>{}</b> · {}\n\nYangi tarifni tanlang:".format(
+			escape_html(card["plan_display"]), escape_html(plan_expiry_text(card))
+		),
 		markup=plan_picker(profile.telegram_id),
 		edit=True,
 	)
@@ -147,6 +157,8 @@ async def apply_plan(callback: CallbackQuery, profile) -> None:
 		f"User {target.telegram_id} plan changed to {applied} by {profile.telegram_id}.",
 		telegram_id=profile.telegram_id,
 	)
-	await callback.answer(ADMIN_USER_PLAN_UPDATED.format(plan=applied.upper()))
+	from users.plans import plan_label
+
+	await callback.answer(ADMIN_USER_PLAN_UPDATED.format(plan=escape_html(plan_label(applied))))
 	target = await get_profile(telegram_id)
 	await render(callback, await user_card_text(target), markup=user_actions(target), edit=True)

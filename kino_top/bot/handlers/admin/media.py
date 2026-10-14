@@ -78,7 +78,7 @@ LANGUAGES = (
 	("en", "🇬🇧 Inglizcha"),
 )
 LANGUAGE_LABELS = {"uz": "O'zbekcha", "ru": "Ruscha", "en": "Inglizcha"}
-PLAN_OPTIONS = (("free", "🆓 Free"), ("plus", "💠 Plus"), ("pro", "💎 Pro"))
+PLAN_OPTIONS = (("free", "🆓 Bepul"), ("paid", "🔒 Obunaga"))
 STATUS_OPTIONS = (
 	("upcoming", "🕓 Kutilmoqda"),
 	("ongoing", "▶️ Davom etmoqda"),
@@ -138,7 +138,12 @@ def preview_text(draft_data: dict) -> str:
 		genres=escape_html(", ".join(draft_data.get("genres") or []) or "—"),
 		language=escape_html(draft_data.get("language") or "O'zbekcha"),
 		quality=escape_html(", ".join(draft_data.get("quality_options") or []) or "—"),
-		plan=escape_html(draft_data.get("required_plan") or "free"),
+		plan=escape_html(
+			dict(PLAN_OPTIONS).get(
+				draft_data.get("required_plan") or "free",
+				draft_data.get("required_plan") or "free",
+			)
+		),
 		status=escape_html(draft_data.get("status") or "upcoming"),
 		rating=draft_data.get("rating") or 5,
 		cover=cover,

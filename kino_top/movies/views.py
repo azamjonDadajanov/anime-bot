@@ -2,12 +2,16 @@ from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from .models import MediaPart, MediaTitle, MediaView, ReadingProgress, TelegramChannel, TelegramMedia
 from .permissions import IsAdminOrReadOnly
@@ -20,6 +24,7 @@ from .serializers import (
 	TelegramChannelSerializer,
 	TelegramMediaSerializer,
 )
+from .storage_copy import copy_file_to_storage
 from .telegram_files import TelegramFileError, fetch_file_bytes, resolve_file_path
 
 
@@ -302,6 +307,42 @@ class TelegramMediaViewSet(viewsets.ModelViewSet):
 	queryset = TelegramMedia.objects.select_related("part", "part__content")
 	serializer_class = TelegramMediaSerializer
 	permission_classes = [IsAdminUser]
+
+	def get_queryset(self):
+		queryset = super().get_queryset()
+		part_id = self.request.query_params.get("part")
+		if part_id:
+			queryset = queryset.filter(part_id=part_id)
+		return queryset
+
+	def perform_create(self, serializer):
+		media = serializer.save()
+		# Web orqali file_id qo'shilganda fayl Cloud kanalga ko'chiriladi.
+		if media.file_id and not media.channel_id:
+			success, error = copy_file_to_storage(
+				media.pk,
+				media.file_id,
+				media.media_type,
+				media.caption or "",
+			)
+			if not success:
+				# Xatolikni log qilamiz, lekin media yozuvini saqlab qolamiz
+				# (admin tuzatib qayta urinishi mumkin)
+				logger.warning("Cloud kanalga ko'chirish amalga oshmadi (media #%s): %s", media.pk, error)
+				# Error'ni response'ga qo'shish uchun serializer'ga qo'shamiz
+				serializer.instance.storage_error = error
+
+	def create(self, request, *args, **kwargs):
+		serializer = self.get_serializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		self.perform_create(serializer)
+		headers = self.get_success_headers(serializer.data)
+		# Storage xatolik bo'lsa response'ga qo'shamiz
+		storage_error = getattr(serializer.instance, "storage_error", None)
+		data = serializer.data
+		if storage_error:
+			data["storage_error"] = storage_error
+		return Response(data, status=status.HTTP_201_CREATED, headers=headers)
 
 
 @extend_schema(tags=["Telegram media"])

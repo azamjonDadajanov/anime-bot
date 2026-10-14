@@ -9,12 +9,13 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from django.utils import timezone
+from users.referrals import parse_referral_payload, register_referral_sync
 
 from ... import callbacks as cb
 from ...keyboards.user import main_menu, profile_keyboard
 from ...services.bot_settings import get_settings
 from ...services.media import get_part_by_pk, get_title_by_code, get_title_by_slug
-from ...services.users import link_account_by_username, user_card
+from ...services.users import link_account_by_username, plan_expiry_text, user_card
 from ...texts import (
 	ACCOUNT_ALREADY_LINKED,
 	ACCOUNT_LINK_CONFLICT,
@@ -26,6 +27,7 @@ from ...texts import (
 	MAIN_MENU,
 	NOT_FOUND,
 	PROFILE,
+	REFERRAL_JOINED,
 	WELCOME_BACK,
 	WELCOME_NEW,
 )
@@ -37,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="user-start")
 
-DEEP_PREFIXES = ("anime", "series", "manga", "movie", "code", "title", "part")
+DEEP_PREFIXES = ("anime", "series", "manga", "movie", "code", "title", "part", "ref")
 
 
 def parse_deep_link(payload: str) -> tuple[str, str]:
@@ -154,6 +156,14 @@ async def start_with_payload(
 	await state.clear()
 	await send_welcome(message, profile, is_admin, is_new_user=is_new_user)
 	payload = command.args or ""
+	# Referral deep link (``ref_<telegram_id>``): attribute the invitee once and
+	# stop — there is no content to open for this payload form.
+	if parse_deep_link(payload)[0] == "ref":
+		inviter_id = parse_referral_payload(payload)
+		if inviter_id is not None:
+			await to_async(register_referral_sync)(invitee=profile, inviter_tg_id=inviter_id)
+		await message.answer(REFERRAL_JOINED, reply_markup=main_menu(is_admin))
+		return
 	# A bare payload (the website profile link) names a site account first and
 	# only falls back to a title slug when no such account exists.
 	if parse_deep_link(payload)[0] == "slug" and await link_account(message, payload, profile):
@@ -202,6 +212,7 @@ async def show_profile(callback: CallbackQuery, profile) -> None:
 		name=escape_html(card["name"]),
 		username=escape_html(card["username"]),
 		plan=card["plan_display"],
+		expires=plan_expiry_text(card),
 		favorites=card["favorites"],
 		created=human_datetime(card["created"]),
 	)

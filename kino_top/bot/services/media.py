@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
-from aiogram.types import InputMediaPhoto
+from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.template.defaultfilters import slugify
@@ -31,6 +31,11 @@ PHOTO_LIMIT = 10
 
 class MediaUnavailable(Exception):
 	"""Raised when no stored file reference can be delivered."""
+
+
+class MediaNotEditable(Exception):
+	"""Raised when an already-sent message cannot show a part (see
+	:func:`edit_part_media`). The caller falls back to a fresh message."""
 
 
 # --------------------------------------------------------------------- reading
@@ -378,6 +383,53 @@ def add_media_sync(
 add_media = to_async(add_media_sync)
 
 
+def create_part_with_media_sync(
+	content: MediaTitle,
+	*,
+	season_number: Optional[int],
+	file_id: str,
+	media_type: str,
+	channel: Optional[TelegramChannel] = None,
+	source_message_id: Optional[int] = None,
+	caption: str = "",
+) -> MediaPart:
+	"""Create a fresh part holding exactly one media file.
+
+	The bot's episode uploader follows a strict rule: one part, one video/file.
+	The part number is derived automatically from the parts already stored in
+	``season_number`` — the current count plus one, skipping numbers that a
+	previous deletion may have left as a gap — so the administrator never has to
+	type a part number.
+	"""
+	if media_type not in TelegramMedia.MediaType.values:
+		raise ValueError(f"Unknown media type: {media_type!r}")
+	with transaction.atomic():
+		taken = set(
+			MediaPart.objects.filter(content=content, season_number=season_number).values_list(
+				"number", flat=True
+			)
+		)
+		number = len(taken) + 1
+		while number in taken:
+			number += 1
+		part = MediaPart.objects.create(
+			content=content, season_number=season_number, number=number
+		)
+		TelegramMedia.objects.create(
+			part=part,
+			channel=channel,
+			source_message_id=source_message_id,
+			file_id=str(file_id)[:512],
+			media_type=media_type,
+			order=1,
+			caption=(caption or "")[:1024],
+		)
+	return part
+
+
+create_part_with_media = to_async(create_part_with_media_sync)
+
+
 def replace_part_media_sync(part: MediaPart, entries: Sequence[Dict[str, Any]]) -> int:
 	"""Replace every stored file of ``part`` with ``entries``."""
 	with transaction.atomic():
@@ -617,26 +669,84 @@ async def deliver_part(
 	raise MediaUnavailable(str(last_error or "Media yuborilmadi."))
 
 
-async def deliver_title(
+# Telegram answers "message is not modified" when an edit would change nothing;
+# that is a success for us (the requested part is already on screen).
+ALREADY_CURRENT = "message is not modified"
+
+
+def build_input_media(media: TelegramMedia, caption: Optional[str] = None) -> Any:
+	"""``InputMedia`` for one stored row, or ``None`` for types we never edit.
+
+	Telegram's ``editMessageMedia`` needs the file *type* to match the id, so a
+	stored photo id can only ever be declared as ``InputMediaPhoto`` and so on.
+	"""
+	text = caption if caption is not None else (media.caption or None)
+	if media.media_type == TelegramMedia.MediaType.VIDEO:
+		return InputMediaVideo(media=media.file_id, caption=text, supports_streaming=True)
+	if media.media_type == TelegramMedia.MediaType.PHOTO:
+		return InputMediaPhoto(media=media.file_id, caption=text)
+	if media.media_type == TelegramMedia.MediaType.DOCUMENT:
+		return InputMediaDocument(media=media.file_id, caption=text)
+	return None
+
+
+async def edit_part_media(
 	bot: Bot,
 	chat_id: int,
-	title: MediaTitle,
+	message_id: int,
+	part: MediaPart,
 	*,
+	current_kind: str,
 	quality: Optional[str] = None,
-	protect_content: bool = True,
-) -> List[int]:
-	"""Deliver every part of a movie/single-part title."""
-	parts = await title_parts(title)
-	if not parts:
-		raise MediaUnavailable("Bu kontent uchun qism qo'shilmagan.")
-	sent: List[int] = []
-	for part in parts:
-		sent.extend(
-			await deliver_part(
-				bot, chat_id, part, quality=quality, protect_content=protect_content
+	caption: Optional[str] = None,
+	reply_markup: Any = None,
+) -> bool:
+	"""Swap the file inside an already-sent message, keeping the message itself.
+
+	This is what lets the parts navigator hop between episodes inside one bubble:
+	nothing is deleted and no new message is sent — only the media and the inline
+	keyboard are replaced. ``current_kind`` is the media type of the message being
+	edited (``video``/``photo``/``document``); only a copy of that same type is
+	ever offered, because Telegram cannot change a message's media type reliably.
+
+	Returns ``True`` when the message now shows ``part``. Raises
+	:class:`MediaNotEditable` when the swap is impossible (no file of the same
+	kind, a multi-page part) or Telegram refused it, and :class:`MediaUnavailable`
+	when the part stores no file at all.
+	"""
+	records = await select_media_for_delivery(part, quality)
+	if not records:
+		raise MediaUnavailable("Bu qism uchun media fayl saqlanmagan.")
+
+	candidates = [row for row in records if row.media_type == current_kind]
+	if not candidates:
+		raise MediaNotEditable("Bu qismning fayl turi hozirgi xabarnikidan farq qiladi.")
+	if current_kind == TelegramMedia.MediaType.PHOTO and len(candidates) > 1:
+		# Several pages/prints cannot live in one editable message.
+		raise MediaNotEditable("Ko'p sahifali qismni bitta xabarda almashtirib bo'lmaydi.")
+
+	last_error: Optional[Exception] = None
+	for media in candidates:
+		try:
+			await bot.edit_message_media(
+				chat_id=chat_id,
+				message_id=message_id,
+				media=build_input_media(media, caption),
+				reply_markup=reply_markup,
 			)
-		)
-	return sent
+			return True
+		except TelegramBadRequest as exc:
+			if ALREADY_CURRENT in str(exc):
+				# Telegram only answers this when both the file *and* the keyboard
+				# already match, i.e. the user tapped the part they are watching.
+				return True
+			logger.warning("Could not swap media in message %s: %s", message_id, exc)
+			last_error = exc
+		except (TelegramForbiddenError, TelegramAPIError) as exc:
+			logger.warning("Could not swap media in message %s: %s", message_id, exc)
+			last_error = exc
+
+	raise MediaNotEditable(str(last_error or "Media almashtirilmadi."))
 
 
 def title_stats_sync(title: MediaTitle) -> Dict[str, Any]:

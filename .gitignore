@@ -7,6 +7,12 @@
 *.pem
 *.key
 
+# Local dev artifacts that may contain real tokens or session state.
+# Never commit these — regenerate them locally instead.
+.sisyphus/
+frontend/public/dev-session.json
+frontend/public/*.local
+
 # ---------------------------------------------------------------------------
 # Python / Django
 # ---------------------------------------------------------------------------

@@ -61,17 +61,17 @@ function AuthPage({ mode }) {
 
   return (
     <main className="auth-layout">
-      <section className="cinema-panel" aria-label="Kino Top">
+      <section className="cinema-panel" aria-label="AniChopar">
         <div className="cinema-copy">
           <Text className="eyebrow">SIZNING KINO OLAMINGIZ</Text>
           <Title order={1}>Yaxshi hikoyalar shu yerdan boshlanadi.</Title>
-          <Text className="cinema-caption">Kino Top katalogingiz va shaxsiy profilingizga xush kelibsiz.</Text>
+          <Text className="cinema-caption">AniChopar katalogingiz va shaxsiy profilingizga xush kelibsiz.</Text>
         </div>
-        <div className="film-note"><span>01</span><span>NOW SHOWING</span><span>KT / 2026</span></div>
+        <div className="film-note"><span>01</span><span>NOW SHOWING</span><span>AC / 2026</span></div>
       </section>
       <section className="form-panel">
         <Container size={420} className="form-container">
-          <Text className="mobile-eyebrow">KINO TOP · SHAXSIY KABINET</Text>
+          <Text className="mobile-eyebrow">ANICHOPAR · SHAXSIY KABINET</Text>
           <Title order={2}>{isRegister ? 'Hisob yarating' : 'Xush kelibsiz'}</Title>
           <Text c="dimmed" size="sm" mt={7} mb="xl">
             {isRegister ? 'Yangi profilingizni bir daqiqada sozlang.' : 'Davom etish uchun profilingizga kiring.'}

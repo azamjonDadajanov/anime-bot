@@ -44,7 +44,7 @@ def _details(request) -> str:
 	name = profile.first_name or profile.username or str(request.user) if profile else str(request.user)
 	return (
 		f"👤 {escape_html(name)}\n"
-		f"💳 Tarif: <b>{escape_html(str(request.plan).upper())}</b>\n"
+		f"💳 Tarif: <b>{escape_html(_plan_display(request.plan))}</b>\n"
 		f"💰 Summa: <b>{request.amount:g}</b>"
 	)
 
@@ -73,8 +73,7 @@ def process_request_sync(request_pk: int, *, approved: bool, admin_telegram_id: 
 	if approved:
 		with transaction.atomic():
 			subscription, _ = Subscription.objects.get_or_create(user=request.user)
-			subscription.plan = request.plan
-			subscription.save(update_fields=["plan", "updated_at"])
+			subscription.activate(request.plan)
 		# Any other pending request for this user is now moot.
 		SubscriptionRequest.objects.filter(
 			user=request.user,
@@ -87,7 +86,15 @@ process_request = to_async(process_request_sync)
 
 
 def _plan_display(plan: str) -> str:
-	return {"free": "Free", "plus": "Plus", "pro": "Pro"}.get(str(plan), str(plan).upper())
+	from users.plans import plan_label
+
+	return plan_label(plan)
+
+
+def _plan_days(plan: str) -> int:
+	from users.plans import plan_days
+
+	return plan_days(plan)
 
 
 async def _notify_user(bot, request, *, approved: bool) -> None:
@@ -95,7 +102,13 @@ async def _notify_user(bot, request, *, approved: bool) -> None:
 	if not telegram_id:
 		return
 	template = SUBREQ_APPROVED if approved else SUBREQ_REJECTED
-	text = template.format(plan=escape_html(_plan_display(request.plan)))
+	if approved:
+		text = template.format(
+			plan=escape_html(_plan_display(request.plan)),
+			days=_plan_days(request.plan),
+		)
+	else:
+		text = template.format(plan=escape_html(_plan_display(request.plan)))
 	try:
 		await bot.send_message(telegram_id, text)
 	except TelegramAPIError as exc:  # pragma: no cover - blocked user etc.

@@ -28,7 +28,12 @@ if __package__ in {None, ""}:
 from .bot_logging import install_db_log_handler
 from .config import BotConfig, validate_config
 from .handlers import build_router
-from .middlewares import ContextMiddleware, ErrorHandlingMiddleware, ThrottlingMiddleware
+from .middlewares import (
+	ContextMiddleware,
+	ErrorHandlingMiddleware,
+	SubscriptionGateMiddleware,
+	ThrottlingMiddleware,
+)
 from .storage import DjangoEventIsolation, DjangoStorage
 
 logger = logging.getLogger("bot.runner")
@@ -52,6 +57,9 @@ def build_dispatcher(config: Optional[BotConfig] = None) -> Dispatcher:
 	dispatcher.update.outer_middleware(ErrorHandlingMiddleware())
 	dispatcher.update.outer_middleware(ThrottlingMiddleware())
 	dispatcher.update.outer_middleware(ContextMiddleware())
+	# The subscription gate must run after the context so it can read the
+	# profile and settings, and before any handler so nothing can bypass it.
+	dispatcher.update.outer_middleware(SubscriptionGateMiddleware())
 
 	dispatcher.include_router(build_router())
 	return dispatcher

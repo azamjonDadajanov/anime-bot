@@ -13,7 +13,7 @@ Two guarantees are checked here:
 from __future__ import annotations
 
 from movies.models import MediaTitle, TelegramChannel
-from users.models import TelegramUser
+from users.models import Giveaway, TelegramUser
 
 from .. import callbacks as cb
 from ..keyboards import admin as kb
@@ -63,7 +63,7 @@ class AdminGuardTests(DispatcherTestCase):
 			self.feed(build_command("admin", user=ADMIN))
 
 		visible = self.visible()
-		for section in ("Kontent", "Qismlar", "Kanallar", "Broadcast", "Foydalanuvchilar", "Sozlamalar", "Jurnallar"):
+		for section in ("Kontent", "Qismlar", "Kanallar", "Broadcast", "Foydalanuvchilar", "Sozlamalar", "Sovg'alar", "Jurnallar"):
 			self.assertIn(section, visible)
 
 
@@ -107,6 +107,12 @@ class AdminPanelButtonTests(DispatcherTestCase):
 			status=Broadcast.Status.COMPLETED,
 			total=1,
 			sent_count=1,
+		)
+		self.giveaway = Giveaway.objects.create(
+			title="Test sovg'a",
+			reward_days=30,
+			winner_count=3,
+			status=Giveaway.Status.OPEN,
 		)
 		BotLogEntry.objects.create(level=BotLogEntry.Level.WARNING, logger="test", message="Sinov xatosi")
 		BotSettings.get_solo()
@@ -161,7 +167,7 @@ class AdminPanelButtonTests(DispatcherTestCase):
 		collect(
 			kb.value_choice_keyboard(
 				f"{cb.ADM_MEDIA}:plan",
-				[("Free", "free"), ("Plus", "plus")],
+				[("Bepul", "free"), ("Obunaga", "paid")],
 				back=f"{cb.ADM_MEDIA}:view:{self.title.pk}",
 			)
 		)
@@ -198,6 +204,13 @@ class AdminPanelButtonTests(DispatcherTestCase):
 		collect(kb.settings_menu(BotSettings.get_solo()))
 		collect(kb.settings_channel_picker([self.public]))
 		collect(kb.logs_menu())
+		collect(kb.giveaways_menu())
+		collect(kb.giveaways_list([self.giveaway], 1, 1))
+		collect(kb.giveaway_actions(self.giveaway))
+		collect(kb.giveaway_confirm_draw(self.giveaway))
+		collect(kb.giveaway_confirm_delete(self.giveaway))
+		collect(kb.giveaway_flags_keyboard(require_channels=False, require_bio_ref=False))
+		collect(kb.giveaway_flags_keyboard(require_channels=True, require_bio_ref=True))
 		return payloads
 
 	# -------------------------------------------------------------------- tests
@@ -222,11 +235,19 @@ class AdminPanelButtonTests(DispatcherTestCase):
 			(cb.ADM_BROADCAST, "Broadcast"),
 			(cb.ADM_USERS, "Foydalanuvchilar"),
 			(cb.ADM_SETTINGS, "Sozlamalar"),
+			(cb.ADM_GIVEAWAY, "Sovg'alar"),
 			(cb.ADM_LOGS, "Jurnallar"),
 		):
 			with self.subTest(section=data):
 				self.click(data)
 				self.assertIn(expected, self.visible())
+
+	def test_channels_menu_counts_public_channels_as_mandatory(self) -> None:
+		self.click(cb.ADM_CHANNELS)
+		text = self.visible()
+		# One 'required' row, but the checker enforces required + public.
+		self.assertIn("Majburiy: <b>1</b>", text)
+		self.assertIn("jami tekshiriladi: <b>2</b>", text)
 
 	def test_destructive_action_asks_for_confirmation(self) -> None:
 		self.click(f"{cb.ADM_MEDIA}:del:{self.title.pk}:1")

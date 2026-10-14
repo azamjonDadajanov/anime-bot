@@ -52,7 +52,10 @@ class BotSettings(models.Model):
 
 	require_subscription = models.BooleanField(
 		default=True,
-		help_text="Require membership of every active 'required' channel before delivery.",
+		help_text=(
+			"Require membership of every active 'required' and 'public' channel before the "
+			"bot answers anything at all."
+		),
 	)
 	auto_publish_new_content = models.BooleanField(
 		default=False,
@@ -121,6 +124,7 @@ class Broadcast(models.Model):
 		PHOTO = "photo", "Rasm"
 		VIDEO = "video", "Video"
 		DOCUMENT = "document", "Fayl"
+		AUDIO = "audio", "Audio"
 		FORWARD = "forward", "Forward"
 
 	class Status(models.TextChoices):

@@ -22,9 +22,12 @@ from aiogram.types import (
 	ChatMemberMember,
 	ChatMemberOwner,
 	ChatMemberRestricted,
+	Document,
 	Message,
+	PhotoSize,
 	Update,
 	User,
+	Video,
 )
 
 BOT_ID = 999
@@ -46,6 +49,7 @@ MESSAGE_METHODS = {
 	"SendVoice",
 	"EditMessageText",
 	"EditMessageCaption",
+	"EditMessageMedia",
 	"EditMessageReplyMarkup",
 	"CopyMessage",
 	"ForwardMessage",
@@ -223,6 +227,18 @@ def make_bot(session: Optional[FakeSession] = None) -> Bot:
 	return Bot(token=BOT_TOKEN, session=session or FakeSession())
 
 
+def fake_video(file_id: str = "video-file-id") -> Video:
+	return Video(file_id=file_id, file_unique_id=file_id, width=1280, height=720, duration=60)
+
+
+def fake_document(file_id: str = "document-file-id") -> Document:
+	return Document(file_id=file_id, file_unique_id=file_id)
+
+
+def fake_photo(file_id: str = "photo-file-id") -> PhotoSize:
+	return PhotoSize(file_id=file_id, file_unique_id=file_id, width=800, height=1200)
+
+
 def build_message(
 	text: str,
 	*,
@@ -253,14 +269,41 @@ def build_command(command: str, payload: Optional[str] = None, **kwargs: Any) ->
 	return build_message(text, **kwargs)
 
 
-def build_callback(data: str, *, user: User = USER, message_id: int = 5, update_id: int = 2, chat_id: Optional[int] = None, **extra: Any) -> Update:
+def build_callback(
+	data: str,
+	*,
+	user: User = USER,
+	message_id: int = 5,
+	update_id: int = 2,
+	chat_id: Optional[int] = None,
+	video: Optional[Video] = None,
+	document: Optional[Document] = None,
+	photo: Optional[PhotoSize] = None,
+	media_group_id: Optional[str] = None,
+	**extra: Any,
+) -> Update:
+	"""Build a callback update.
+
+	Passing ``video``/``document``/``photo`` makes the callback's message look
+	like the delivered file the inline keyboard rides on — which is exactly the
+	situation the in-place media swap inspects.
+	"""
 	chat = Chat(id=chat_id or user.id, type="private")
+	content: Dict[str, Any] = {"text": "panel"}
+	if video is not None:
+		content = {"video": video}
+	elif document is not None:
+		content = {"document": document}
+	elif photo is not None:
+		content = {"photo": [photo]}
+	if media_group_id is not None:
+		content["media_group_id"] = media_group_id
 	message = Message(
 		message_id=message_id,
 		date=NOW,
 		chat=chat,
 		from_user=BOT_USER,
-		text="panel",
+		**content,
 	)
 	return Update(
 		update_id=update_id,

@@ -43,7 +43,7 @@ function TelegramAuthPage() {
   return (
     <main className="telegram-auth-page">
       <Container size={460} className="telegram-auth-container">
-        <Text className="eyebrow">KINO TOP / TELEGRAM MINI APP</Text>
+        <Text className="eyebrow">ANICHOPAR / TELEGRAM MINI APP</Text>
         <Title order={1}>Telegram bilan davom eting</Title>
         <Text c="dimmed" size="sm" mt="sm" mb="xl">
           Mavjud akkauntni bog'lash uchun email va uning parolini kiriting. Email bo'lmasa, email maydonini bo'sh qoldirib yangi profil parolini belgilang.

@@ -79,7 +79,7 @@ export function ProfileOverviewPage() {
 
         <section className="profile-info-panel">
           <Text className="section-kicker">HISOB MA'LUMOTLARI</Text>
-          <Title order={2}>Kino Top hisobi</Title>
+          <Title order={2}>AniChopar hisobi</Title>
           <div className="profile-row"><Text c="dimmed">Hisob ID</Text><Text fw={600}>#{account.id}</Text></div>
           <div className="profile-row"><Text c="dimmed">Foydalanuvchi nomi</Text><Text fw={600}>{account.username}</Text></div>
           <div className="profile-row"><Text c="dimmed">Email</Text><Text fw={600}>{account.email || 'Kiritilmagan'}</Text></div>
