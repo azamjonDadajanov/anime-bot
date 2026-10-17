@@ -340,17 +340,24 @@ def settings_menu(settings) -> InlineKeyboardMarkup:
 		[btn(f"{state(settings.maintenance_mode)} Texnik rejim", toggle("maintenance_mode"))],
 		[btn("📣 Broadcast tezligi", f"{cb.ADM_SETTINGS}:rate")],
 		[btn("⚡ Parallel yuborish", f"{cb.ADM_SETTINGS}:conc")],
-		[btn("📡 E'lon kanali", f"{cb.ADM_SETTINGS}:chan"), btn("📝 Salomlashuv matni", f"{cb.ADM_SETTINGS}:welcome")],
-		[btn("🚫 Taqiq matni", f"{cb.ADM_SETTINGS}:denied")],
+		[btn("📡 Asosiy e'lon kanali", f"{cb.ADM_SETTINGS}:chan:publish_channel")],
+		[btn("✅ Tugallangan medialar kanali", f"{cb.ADM_SETTINGS}:chan:completed_channel")],
+		[btn("▶️ Ongoing medialar kanali", f"{cb.ADM_SETTINGS}:chan:ongoing_channel")],
+		[btn("📖 Mangalar kanali", f"{cb.ADM_SETTINGS}:chan:manga_channel")],
+		[btn("📚 Tugallangan mangalar kanali", f"{cb.ADM_SETTINGS}:chan:manga_completed_channel")],
+		[btn("📝 Salomlashuv matni", f"{cb.ADM_SETTINGS}:welcome"), btn("🚫 Taqiq matni", f"{cb.ADM_SETTINGS}:denied")],
 		[btn("🏠 Panel", cb.ADM_STATS)],
 	)
 
 
-def settings_channel_picker(channels: Sequence[TelegramChannel]) -> InlineKeyboardMarkup:
+def settings_channel_picker(
+	channels: Sequence[TelegramChannel], field: str = "publish_channel"
+) -> InlineKeyboardMarkup:
 	rows: List[List[InlineKeyboardButton]] = [
-		[btn(f"📢 {channel.title}", f"{cb.ADM_SETTINGS}:setchan:{channel.pk}")] for channel in channels
+		[btn(f"📢 {channel.title}", f"{cb.ADM_SETTINGS}:setchan:{field}:{channel.pk}")]
+		for channel in channels
 	]
-	rows.append([btn("🚫 Kanalsiz", f"{cb.ADM_SETTINGS}:setchan:0")])
+	rows.append([btn("🚫 Kanalsiz", f"{cb.ADM_SETTINGS}:setchan:{field}:0")])
 	rows.append([btn("⬅️ Orqaga", cb.ADM_SETTINGS)])
 	return keyboard(*rows)
 
@@ -423,7 +430,9 @@ def giveaways_list(items: Sequence, page: int, pages: int) -> InlineKeyboardMark
 
 
 def giveaway_actions(giveaway, *, page: int = 1) -> InlineKeyboardMarkup:
-	rows: List[List[InlineKeyboardButton]] = []
+	rows: List[List[InlineKeyboardButton]] = [
+		[btn("📢 Kanalga joylash", f"{cb.ADM_GIVEAWAY}:pub:{giveaway.pk}")],
+	]
 	if giveaway.status in (Giveaway.Status.OPEN, Giveaway.Status.DRAFT):
 		rows.append([btn("🎲 O'tkazish (g'olib aniqlash)", f"{cb.ADM_GIVEAWAY}:draw:{giveaway.pk}")])
 	if giveaway.status == Giveaway.Status.OPEN:

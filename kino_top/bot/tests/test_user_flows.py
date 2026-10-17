@@ -353,6 +353,18 @@ class BrowsingTests(DispatcherTestCase):
 		# Titles sort alphabetically, so 6-9 land on the second page (size 8).
 		self.assertIn("Page Anime 6", self.visible())
 
+	def test_see_all_results_can_paginate(self) -> None:
+		for index in range(12):
+			make_title(code=f"31{index:02d}", title=f"All Anime {index:02d}")
+
+		self.feed(build_callback("sfall"))
+		self.assertIn("All Anime 00", self.visible())
+
+		# "Barchasini ko'rish" keeps every filter empty, so ``sres:2`` must
+		# still remember the unfiltered list instead of bouncing to the menu.
+		self.feed(build_callback("sres:2"))
+		self.assertIn("All Anime 08", self.visible())
+
 	def test_mini_app_button_appears_only_when_the_url_is_configured(self) -> None:
 		with bot_env(BOT_WEBAPP_URL="https://example.test"):
 			self.feed(build_callback("search"))

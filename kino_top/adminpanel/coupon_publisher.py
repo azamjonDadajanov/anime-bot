@@ -56,3 +56,19 @@ def publish_coupon_to_channel(coupon_id: int) -> Tuple[Optional[int], Optional[s
 	except Exception as exc:  # noqa: BLE001 - network/Telegram errors must not 500
 		logger.exception("Coupon #%s could not be published.", coupon_id)
 		return None, f"Kanalga joylashda xatolik: {exc}"
+
+
+def maybe_auto_publish_coupon(coupon_id: int) -> Optional[int]:
+	"""Post a freshly created coupon when the panel's auto-publish switch is on.
+
+	Returns the posted message id, or ``None`` when auto-publishing is off or the
+	post was refused. Never raises.
+	"""
+	from .publisher import auto_publish_enabled
+
+	if not auto_publish_enabled():
+		return None
+	message_id, error = publish_coupon_to_channel(coupon_id)
+	if error:
+		logger.warning("Auto-publish of coupon #%s skipped: %s", coupon_id, error)
+	return message_id

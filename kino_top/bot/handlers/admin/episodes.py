@@ -298,7 +298,16 @@ async def finish_upload(message: Message, state: FSMContext, bot) -> None:
 	summary = ADMIN_EPISODE_SESSION_SAVED.format(
 		title=escape_html(title.title), count=len(parts), label=label
 	)
-	summary += "\n\n" + (ADMIN_EPISODE_PUBLISHED if message_id else ADMIN_EPISODE_NOT_PUBLISHED)
+	if message_id:
+		status_msg = ADMIN_EPISODE_PUBLISHED
+	else:
+		total_parts = await to_async(title.parts.count)()
+		expected = title.episode_count or (1 if title.type == "movie" else None)
+		if (title.type == "movie" or title.status == "completed") and expected and total_parts < expected:
+			status_msg = f"⏳ Barcha qismlar ({total_parts}/{expected}) to'lgach, tugallanganlar kanaliga avtomatik joylanadi."
+		else:
+			status_msg = ADMIN_EPISODE_NOT_PUBLISHED
+	summary += "\n\n" + status_msg
 	await message.answer(summary, reply_markup=ReplyKeyboardRemove())
 
 	await to_async(record_event)(

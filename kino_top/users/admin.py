@@ -10,6 +10,7 @@ from .models import (
 	ReferralReward,
 	Subscription,
 	SubscriptionRequest,
+	SupportMessage,
 	TelegramUser,
 )
 
@@ -42,6 +43,16 @@ class CouponRedemptionAdmin(admin.ModelAdmin):
 	list_filter = ("coupon",)
 	search_fields = ("coupon__code", "user__username", "telegram_id")
 	readonly_fields = ("coupon", "user", "telegram_id", "days", "created_at")
+
+
+@admin.register(SupportMessage)
+class SupportMessageAdmin(admin.ModelAdmin):
+	"""Read-only view of what users sent from the bot or the website."""
+
+	list_display = ("user", "source", "status", "created_at")
+	list_filter = ("source", "status")
+	search_fields = ("user__username", "user__email", "text", "telegram_id")
+	readonly_fields = ("user", "telegram_id", "text", "source", "status", "error", "created_at")
 
 
 @admin.register(TelegramUser)

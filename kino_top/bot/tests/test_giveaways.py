@@ -215,6 +215,67 @@ class AdminGiveawayFlowTests(DispatcherTestCase):
 		self.click(f"{cb.ADM_GIVEAWAY}:view:{giveaway.pk}")
 		self.assertIn("Mukofot", self.visible())
 
+	def test_auto_publish_announces_the_new_giveaway(self) -> None:
+		channel = make_channel(
+			chat_id=-1007770000012,
+			title="Ommaviy",
+			purpose=TelegramChannel.Purpose.PUBLIC,
+			username="news_giveaway",
+		)
+		settings = BotSettings.get_solo()
+		settings.publish_channel = channel
+		settings.auto_publish_new_content = True
+		settings.save()
+
+		self.build_giveaway(title="Auto sovg'a")
+
+		posts = [
+			method
+			for method in self.session.methods("SendMessage")
+			if int(method.chat_id) == channel.chat_id
+		]
+		self.assertEqual(len(posts), 1)
+		self.assertIn("30 kunlik obuna", posts[0].text)
+		button = posts[0].reply_markup.inline_keyboard[0][0]
+		self.assertEqual(button.text, "🎁 Qatnashish")
+		self.assertIn("t.me/", button.url)
+
+	def test_manual_publish_from_the_card(self) -> None:
+		channel = make_channel(
+			chat_id=-1007770000013,
+			title="Ommaviy",
+			purpose=TelegramChannel.Purpose.PUBLIC,
+			username="news_manual",
+		)
+		settings = BotSettings.get_solo()
+		settings.publish_channel = channel
+		settings.save()
+		giveaway = create_giveaway_sync(title="Qo'lda", reward_days=5, winner_count=1)
+
+		self.click(f"{cb.ADM_GIVEAWAY}:view:{giveaway.pk}")
+		self.session.reset()
+		self.click(f"{cb.ADM_GIVEAWAY}:pub:{giveaway.pk}")
+
+		posts = [
+			method
+			for method in self.session.methods("SendMessage")
+			if int(method.chat_id) == channel.chat_id
+		]
+		self.assertEqual(len(posts), 1)
+		self.assertIn("5 kunlik obuna", posts[0].text)
+
+	def test_manual_publish_without_a_channel_warns(self) -> None:
+		giveaway = create_giveaway_sync(title="Kanalsiz", reward_days=5, winner_count=1)
+
+		self.click(f"{cb.ADM_GIVEAWAY}:view:{giveaway.pk}")
+		self.session.reset()
+		self.click(f"{cb.ADM_GIVEAWAY}:pub:{giveaway.pk}")
+
+		alerts = " ".join(
+			str(method.text or "") for method in self.session.methods("AnswerCallbackQuery")
+		)
+		self.assertIn("E'lon kanali", alerts)
+
 	def test_deleting_requires_confirmation(self) -> None:
 		giveaway = self.build_giveaway(title="Toshadi")
 

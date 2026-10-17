@@ -15,13 +15,15 @@ from aiogram import Router
 
 from .admin import admin_router
 from .decorative import router as decorative_router
+from .storage_channel import router as storage_router
 from .user import user_router
 
-__all__ = ["build_router", "admin_router", "user_router", "decorative_router"]
+__all__ = ["build_router", "admin_router", "user_router", "decorative_router", "storage_router"]
 
 
 def build_router() -> Router:
 	root = Router(name="root")
+	root.include_router(storage_router)
 	root.include_router(decorative_router)
 	root.include_router(admin_router)
 	root.include_router(user_router)

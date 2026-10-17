@@ -17,6 +17,20 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# The AI catalogue search runs the ONNX export of the multilingual sentence
+# encoder (~470MB). Two ways to get it into the deployment:
+#
+#   docker build --build-arg AI_MODEL=1 ...   # bake it in (offline-safe)
+#   docker compose run --rm web python manage.py index_anime_embeddings \
+#       --download-model                      # once, into the `aimodels` volume
+#
+# Both work: the named volume is seeded from the image the first time it is
+# created, so a baked model ends up in the volume as well.
+ARG AI_MODEL=0
+RUN if [ "$AI_MODEL" = "1" ]; then \
+        python manage.py index_anime_embeddings --download-model; \
+    fi
+
 # Named volumes are seeded from the image, so the upload and static directories
 # must exist and be writable by the unprivileged user that runs the containers.
 # The sed strips CRs so the script also works when the repo is checked out on

@@ -120,6 +120,95 @@ def search_titles_sync(
 search_titles = to_async(search_titles_sync)
 
 
+# The AI search lives in ``movies.ai_search`` (shared with the website) and is
+# exposed here so handlers keep talking to the service layer only.
+AI_SEARCH_LIMIT = 10
+# How much of the user's taste the AI context may carry. The context rides on
+# two model calls, so it stays a few short lines — enough for "oxshashini ayt",
+# not enough to bloat every request.
+AI_CONTEXT_FAVORITES_LIMIT = 8
+AI_CONTEXT_VIEWS_LIMIT = 5
+
+
+def _context_line(title: MediaTitle) -> str:
+	genres = ", ".join(genre.name for genre in title.genres.all()[:3])
+	parts = [title.get_type_display().lower()]
+	if genres:
+		parts.append(genres)
+	return "(" + ", ".join(parts) + ")"
+
+
+def ai_user_context_sync(profile: Any) -> str:
+	"""A compact block about the user's taste for the AI (empty when unknown).
+
+	Favourites first (newest), then the last watched/read titles. Both are
+	opt-in: the caller only builds this when the user asked for it.
+	"""
+	if profile is None:
+		return ""
+	lines: List[str] = []
+	favorites = list(
+		profile.content_favorites.select_related("content")
+		.prefetch_related("content__genres")
+		.order_by("-created_at")[:AI_CONTEXT_FAVORITES_LIMIT]
+	)
+	if favorites:
+		items = ", ".join(
+			f"{row.content.title[:40]} {_context_line(row.content)}"
+			for row in favorites
+		)
+		lines.append(f"Sevimlilar: {items}")
+	auth_user = getattr(profile, "auth_user", None)
+	if auth_user is not None:
+		views = list(
+			auth_user.media_views.select_related("title")
+			.prefetch_related("title__genres")
+			.order_by("-updated_at")[:AI_CONTEXT_VIEWS_LIMIT]
+		)
+		if views:
+			seen = {row.content_id for row in favorites}
+			items = ", ".join(
+				f"{row.title.title[:40]} {_context_line(row.title)}"
+				for row in views
+				if row.title_id not in seen
+			)
+			if items:
+				lines.append(f"Oxirgi ko'rganlari: {items}")
+	return "\n".join(lines)
+
+
+ai_user_context = to_async(ai_user_context_sync)
+
+
+def ai_search_answer_sync(
+	query: str, *, limit: int = AI_SEARCH_LIMIT, context: str = ""
+) -> Dict[str, Any]:
+	"""Find titles by meaning and explain the picks (raises EmbeddingUnavailable).
+
+	Returns everything the handler renders: the ranked hits, how many titles
+	matched in total, and the reasoning model's answer (empty when no model is
+	configured or the call failed — the search still has an answer then).
+	``context`` is the optional user-taste block (see :func:`ai_user_context_sync`).
+	"""
+	from movies import ai_reasoning
+
+	from ..config import site_url
+
+	answer = ai_reasoning.answer_search(query, limit=limit, context=context)
+	return {
+		"query": answer.query,
+		"items": [hit.as_dict(site_url=site_url()) for hit in answer.hits],
+		"total": answer.total,
+		"text": answer.answer,
+		"thinking": answer.thinking,
+		"reasoning": answer.used_llm,
+		"conversational": answer.conversational,
+	}
+
+
+ai_search_answer = to_async(ai_search_answer_sync)
+
+
 def titles_by_type_sync(media_type: str, *, limit: Optional[int] = None) -> List[MediaTitle]:
 	return search_titles_sync(media_type=media_type, limit=limit)
 

@@ -102,6 +102,10 @@ export const mediaApi = {
     const { data } = await api.get('/auth/favorites/', { params })
     return data
   },
+  async toggleFavorite(slug) {
+    const { data } = await api.post('/auth/favorites/toggle/', { slug })
+    return data
+  },
   async detail(slug) {
     const { data } = await api.get(`/catalog/${encodeURIComponent(slug)}/`)
     return data
@@ -206,6 +210,28 @@ export const readingApi = {
     if (page !== undefined) payload.page = page
     if (isRead !== undefined) payload.is_read = isRead
     const { data } = await api.post('/reading/', payload)
+    return data
+  },
+}
+
+export const aiApi = {
+  // AI (semantic) catalogue search: finds titles by meaning, not by name.
+  // Subscribers only — a free account gets a 403 with `code`
+  // `subscription_required`, and an unbuilt index a 503 (`index_empty`).
+  async search(query, { type = '', limit = 0 } = {}) {
+    const payload = { query }
+    if (type) payload.type = type
+    if (limit) payload.limit = limit
+    const { data } = await api.post('/catalog/ai-search/', payload)
+    return data
+  },
+}
+
+export const supportApi = {
+  // "Adminga xabar": the message is stored server-side and then forwarded to
+  // every administrator, so `delivered` tells the panel the real outcome.
+  async send(text) {
+    const { data } = await api.post('/auth/support/', { text })
     return data
   },
 }

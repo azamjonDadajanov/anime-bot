@@ -114,6 +114,22 @@ class FakeSession(BaseSession):
 		)
 
 	# ---------------------------------------------------------------- interface
+	@staticmethod
+	def _mount(response: Any, bot: Bot) -> Any:
+		"""Attach the bot to a returned object, the way ``Bot.__call__`` does.
+
+		Without this a ``Message`` the bot itself sent cannot be edited, so any
+		flow that replaces its own message ("🤔 AI o'ylayapti…" → the answer)
+		would fail in tests while working against real Telegram.
+		"""
+		if isinstance(response, Message):
+			return response.as_(bot)
+		if isinstance(response, list):
+			for item in response:
+				if isinstance(item, Message):
+					item.as_(bot)
+		return response
+
 	async def make_request(self, bot: Bot, method: Any, timeout: Optional[int] = None) -> Any:
 		self.calls.append(method)
 		name = type(method).__name__
@@ -124,8 +140,8 @@ class FakeSession(BaseSession):
 				result = await result
 			if isinstance(result, BaseException):
 				raise result
-			return result
-		return self._default_response(method, name)
+			return self._mount(result, bot)
+		return self._mount(self._default_response(method, name), bot)
 
 	def _default_response(self, method: Any, name: str) -> Any:
 		if name in MESSAGE_METHODS:

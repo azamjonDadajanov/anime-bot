@@ -230,6 +230,29 @@ class AdminCouponFlowTests(DispatcherTestCase):
 		self.assertEqual(coupon.created_by, TelegramUser.objects.get(telegram_id=ADMIN.id).auth_user)
 		self.assertIn("SUMMER24", self.visible())
 
+	def test_auto_publish_posts_the_new_coupon(self) -> None:
+		channel = make_channel(
+			chat_id=-1007770000014,
+			title="E'lonlar",
+			purpose=TelegramChannel.Purpose.PUBLIC,
+		)
+		settings = BotSettings.get_solo()
+		settings.publish_channel = channel
+		settings.auto_publish_new_content = True
+		settings.save()
+
+		coupon = self.build_coupon(code="AUTOPUB2")
+
+		sent = [
+			method
+			for method in self.session.methods("SendMessage")
+			if getattr(method, "chat_id", None) == channel.chat_id
+		]
+		self.assertEqual(len(sent), 1)
+		self.assertIn("AUTOPUB2", sent[0].text)
+		coupon.refresh_from_db()
+		self.assertIsNotNone(coupon.posted_message_id)
+
 	def test_a_taken_code_is_refused(self) -> None:
 		self.build_coupon(code="SUMMER24")
 		self.click(f"{cb.ADM_COUPONS}:new")

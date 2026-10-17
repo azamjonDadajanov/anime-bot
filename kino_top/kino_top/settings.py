@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -57,7 +58,7 @@ ALLOWED_HOSTS = [
 
 # TLS is terminated at the edge (nginx in docker-compose.yml, or any upstream
 # proxy). Without this Django builds absolute URLs and runs CSRF checks against
-# the internal http scheme, which breaks /admin/ logins behind https.
+# the internal http scheme, which breaks /django-admin/ logins behind https.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
@@ -234,6 +235,50 @@ SUBSCRIPTION_PRICES = {
     "quarterly": env_int("SUBSCRIPTION_PRICE_QUARTERLY", 64000),
     "yearly": env_int("SUBSCRIPTION_PRICE_YEARLY", 220000),
 }
+# ---------------------------------------------------------------------------
+# AI catalogue search (semantic search over MediaTitle)
+# ---------------------------------------------------------------------------
+# The suite never touches the embedding model: ``manage.py test`` turns the
+# feature off so the 400+ existing tests stay fast and hermetic. The AI-search
+# tests opt back in with ``override_settings(AI_SEARCH_ENABLED=True)`` and a
+# fake encoder. An explicit environment variable always wins.
+TESTING = "test" in sys.argv or "pytest" in sys.argv
+AI_SEARCH_ENABLED = env_bool("AI_SEARCH_ENABLED", not TESTING)
+# Directory holding the ONNX export and tokenizer of
+# ``sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2``.
+AI_MODEL_DIR = env("AI_MODEL_DIR", str(BASE_DIR / "ai_models"))
+# File inside AI_MODEL_DIR (the repository also ships quantised exports that are
+# ~4x smaller and faster, e.g. "onnx/model_quint8_avx2.onnx").
+AI_MODEL_FILE = env("AI_MODEL_FILE", "onnx/model.onnx")
+# How many titles a search returns, and how similar a title must be (cosine
+# similarity, 0..1) to be shown at all. 0.45 is measured, not guessed: on a
+# real catalogue in-topic requests put their best titles at 0.70-0.84 and never
+# below ~0.47, while gibberish and off-topic requests ("bugungi ob-havo
+# qanday", "zzz qqq xxx") never score above 0.42. The threshold sits in that
+# gap, so an unrelated request comes back empty instead of with junk.
+AI_SEARCH_TOP_K = env_int("AI_SEARCH_TOP_K", 5)
+AI_SEARCH_MIN_SCORE = float(env("AI_SEARCH_MIN_SCORE", "0.45"))
+# --- AI reasoning (the "fikrlash" step of the AI search) ---------------------
+# The encoder above *finds* titles; this chat model explains the picks and
+# re-orders them. Optional by design: without a key the search answers from the
+# vectors alone (see movies.ai_reasoning).
+AI_LLM_ENABLED = env_bool("AI_LLM_ENABLED", True)
+# groq | gemini | openai | custom. Each preset carries its base URL and default
+# model; AI_LLM_BASE_URL/AI_LLM_MODEL override them (see movies.llm).
+AI_LLM_PROVIDER = env("AI_LLM_PROVIDER", "groq")
+AI_LLM_API_KEY = env("AI_LLM_API_KEY", "")
+AI_LLM_MODEL = env("AI_LLM_MODEL", "")
+AI_LLM_BASE_URL = env("AI_LLM_BASE_URL", "")
+# Seconds to wait for *one* provider before moving to the next one in the chain.
+AI_LLM_TIMEOUT = env_int("AI_LLM_TIMEOUT", 8)
+# Seconds for the whole chain. The per-provider timeout is capped by what is left
+# of this, so four dead providers cost the deadline (once) and never four
+# timeouts in a row — the search falls back to its vector results instead.
+AI_LLM_DEADLINE = env_int("AI_LLM_DEADLINE", 12)
+# Ask the provider for a strict JSON object (Groq/OpenAI support it; a gateway
+# that does not would error, so it is opt-in).
+AI_LLM_JSON_MODE = env_bool("AI_LLM_JSON_MODE", False)
+
 BOT_PAGE_SIZE = env_int("BOT_PAGE_SIZE", 8)
 BOT_LOG_CHANNEL_ID = env("BOT_LOG_CHANNEL_ID", "")
 BOT_LOG_LEVEL = env("BOT_LOG_LEVEL", "INFO")

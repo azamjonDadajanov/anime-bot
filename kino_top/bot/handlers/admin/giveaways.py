@@ -38,6 +38,7 @@ from ...keyboards.admin import (
 )
 from ...keyboards.common import cancel_keyboard
 from ...services.giveaways import run_draw_async
+from ...services.publishing import maybe_auto_publish_giveaway, publish_giveaway
 from ...states import AdminGiveawayStates
 from ...texts import (
 	ADMIN_GIVEAWAY_ASK_DAYS,
@@ -56,6 +57,8 @@ from ...texts import (
 	ADMIN_GIVEAWAY_INVALID,
 	ADMIN_GIVEAWAY_LIST,
 	ADMIN_GIVEAWAY_NOT_OPEN,
+	ADMIN_GIVEAWAY_NOT_PUBLISHED,
+	ADMIN_GIVEAWAY_PUBLISHED,
 	ADMIN_GIVEAWAY_STATUS_LABELS,
 	ADMIN_GIVEAWAYS_MENU,
 	NOT_FOUND,
@@ -302,7 +305,7 @@ async def toggle_bio(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(AdminGiveawayStates.flags, F.data == f"{cb.ADM_GIVEAWAY}:create")
-async def finalize_builder(callback: CallbackQuery, state: FSMContext) -> None:
+async def finalize_builder(callback: CallbackQuery, state: FSMContext, bot) -> None:
 	data = await state.get_data()
 	try:
 		giveaway = await create_giveaway(
@@ -319,18 +322,36 @@ async def finalize_builder(callback: CallbackQuery, state: FSMContext) -> None:
 		return
 
 	await state.clear()
+	# Announce the raffle publicly right away when auto-publishing is on.
+	message_id = await maybe_auto_publish_giveaway(bot, giveaway)
 	await to_async(record_event)(
 		"INFO",
 		f"Giveaway '{giveaway.title}' created by {callback.from_user.id} "
 		f"({giveaway.reward_days} days, {giveaway.winner_count} winners).",
 		telegram_id=callback.from_user.id,
 	)
+	created_text = ADMIN_GIVEAWAY_CREATED.format(card=await giveaway_card(giveaway))
+	if message_id:
+		created_text += "\n\n" + ADMIN_GIVEAWAY_PUBLISHED
 	await render(
 		callback,
-		ADMIN_GIVEAWAY_CREATED.format(card=await giveaway_card(giveaway)),
+		created_text,
 		markup=giveaway_actions(giveaway),
 		edit=True,
 	)
+
+
+@router.callback_query(F.data.startswith(f"{cb.ADM_GIVEAWAY}:pub:"))
+async def publish(callback: CallbackQuery, bot) -> None:
+	giveaway = await _load(callback, 0)
+	if giveaway is None:
+		return
+	message_id = await publish_giveaway(bot, giveaway)
+	if message_id:
+		await callback.answer(ADMIN_GIVEAWAY_PUBLISHED[:200])
+	else:
+		await callback.answer(ADMIN_GIVEAWAY_NOT_PUBLISHED[:200], show_alert=True)
+	await render(callback, await giveaway_card(giveaway), markup=giveaway_actions(giveaway), edit=True)
 
 
 @router.callback_query(F.data.startswith(f"{cb.ADM_GIVEAWAY}:open:"))

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from bot.models import BotLogEntry, BotSettings, Broadcast
+from games.models import AnimeVerification, MonthlyPrize, QuizAttempt, QuizQuestion
 from movies.models import Genre, MediaPart, MediaTitle, TelegramChannel, TelegramMedia
 from users.coupons import generate_code, is_valid_code, normalize_code
 from users.models import Coupon, CouponRedemption, Subscription, SubscriptionRequest, TelegramUser
@@ -392,6 +393,18 @@ class BotSettingsSerializer(serializers.ModelSerializer):
 	publish_channel_title = serializers.CharField(
 		source="publish_channel.title", read_only=True, default=None
 	)
+	completed_channel_title = serializers.CharField(
+		source="completed_channel.title", read_only=True, default=None
+	)
+	ongoing_channel_title = serializers.CharField(
+		source="ongoing_channel.title", read_only=True, default=None
+	)
+	manga_channel_title = serializers.CharField(
+		source="manga_channel.title", read_only=True, default=None
+	)
+	manga_completed_channel_title = serializers.CharField(
+		source="manga_completed_channel.title", read_only=True, default=None
+	)
 
 	class Meta:
 		model = BotSettings
@@ -400,6 +413,14 @@ class BotSettingsSerializer(serializers.ModelSerializer):
 			"auto_publish_new_content",
 			"publish_channel",
 			"publish_channel_title",
+			"completed_channel",
+			"completed_channel_title",
+			"ongoing_channel",
+			"ongoing_channel_title",
+			"manga_channel",
+			"manga_channel_title",
+			"manga_completed_channel",
+			"manga_completed_channel_title",
 			"welcome_text",
 			"access_denied_text",
 			"broadcast_rate_per_second",
@@ -427,3 +448,165 @@ class BotLogAdminSerializer(serializers.ModelSerializer):
 			"created_at",
 		]
 		read_only_fields = fields
+
+
+# ---------------------------------------------------------------------------
+# Games (anime rating quiz)
+# ---------------------------------------------------------------------------
+
+
+class QuizQuestionAdminSerializer(serializers.ModelSerializer):
+	title_title = serializers.CharField(source="title.title", read_only=True)
+	title_type = serializers.CharField(source="title.type", read_only=True)
+
+	class Meta:
+		model = QuizQuestion
+		fields = [
+			"id",
+			"title",
+			"title_title",
+			"title_type",
+			"text",
+			"choices",
+			"correct_index",
+			"is_active",
+			"created_at",
+		]
+		read_only_fields = ["id", "created_at"]
+
+	def validate_choices(self, value):
+		if not isinstance(value, (list, tuple)) or len(value) < 2:
+			raise serializers.ValidationError("Kamida 2 ta variant kerak.")
+		if len(value) > 6:
+			raise serializers.ValidationError("Ko'pi bilan 6 ta variant.")
+		return [str(item) for item in value]
+
+	def validate_correct_index(self, value):
+		choices = self.initial_data.get("choices") or (self.instance.choices if self.instance else [])
+		if choices and not (0 <= int(value) < len(choices)):
+			raise serializers.ValidationError("To'g'ri javob indeksi variantlar chegarasida bo'lishi kerak.")
+		return int(value)
+
+
+class QuizAttemptAdminSerializer(serializers.ModelSerializer):
+	username = serializers.CharField(source="user.username", read_only=True, default=None)
+	telegram_id = serializers.SerializerMethodField()
+	title_title = serializers.CharField(source="title.title", read_only=True)
+	correct = serializers.SerializerMethodField()
+
+	class Meta:
+		model = QuizAttempt
+		fields = [
+			"id",
+			"user",
+			"username",
+			"telegram_id",
+			"title",
+			"title_title",
+			"question_ids",
+			"choice_orders",
+			"answers",
+			"correct",
+			"elapsed_ms",
+			"started_at",
+			"finished_at",
+			"passed",
+			"points_awarded",
+			"is_suspicious",
+		]
+		read_only_fields = [
+			"id",
+			"user",
+			"title",
+			"question_ids",
+			"choice_orders",
+			"answers",
+			"elapsed_ms",
+			"started_at",
+			"finished_at",
+			"passed",
+			"points_awarded",
+		]
+
+	def get_telegram_id(self, obj) -> int | None:
+		profile = getattr(obj.user, "telegram_profile", None)
+		return getattr(profile, "telegram_id", None)
+
+	def get_correct(self, obj) -> int:
+		if not obj.finished_at or not obj.answers:
+			return 0
+		from games.models import QuizQuestion
+
+		questions = QuizQuestion.objects.in_bulk(obj.question_ids or [])
+		orders = list(obj.choice_orders or [])
+		correct = 0
+		for index, question_id in enumerate(obj.question_ids or []):
+			question = questions.get(question_id)
+			if question is None or index >= len(obj.answers):
+				continue
+			answer = int(obj.answers[index])
+			order = orders[index] if index < len(orders) else None
+			if order and 0 <= answer < len(order):
+				answer = int(order[answer])
+			if answer == question.correct_index:
+				correct += 1
+		return correct
+
+
+class AnimeVerificationAdminSerializer(serializers.ModelSerializer):
+	username = serializers.CharField(source="user.username", read_only=True, default=None)
+	telegram_id = serializers.SerializerMethodField()
+	title_title = serializers.CharField(source="title.title", read_only=True)
+
+	class Meta:
+		model = AnimeVerification
+		fields = [
+			"id",
+			"user",
+			"username",
+			"telegram_id",
+			"title",
+			"title_title",
+			"points",
+			"verified_at",
+		]
+		read_only_fields = ["id", "verified_at"]
+
+	def get_telegram_id(self, obj) -> int | None:
+		profile = getattr(obj.user, "telegram_profile", None)
+		return getattr(profile, "telegram_id", None)
+
+	def validate(self, attrs):
+		user = attrs.get("user") or (self.instance.user if self.instance else None)
+		title = attrs.get("title") or (self.instance.title if self.instance else None)
+		if user is not None and title is not None:
+			qs = AnimeVerification.objects.filter(user=user, title=title)
+			if self.instance:
+				qs = qs.exclude(pk=self.instance.pk)
+			if qs.exists():
+				raise serializers.ValidationError("Bu foydalanuvchi uchun bu anime allaqachon tasdiqlangan.")
+		return attrs
+
+
+class MonthlyPrizeAdminSerializer(serializers.ModelSerializer):
+	username = serializers.CharField(source="user.username", read_only=True, default=None)
+	telegram_id = serializers.SerializerMethodField()
+
+	class Meta:
+		model = MonthlyPrize
+		fields = [
+			"id",
+			"year",
+			"month",
+			"user",
+			"username",
+			"telegram_id",
+			"points",
+			"days",
+			"awarded_at",
+		]
+		read_only_fields = ["id", "awarded_at"]
+
+	def get_telegram_id(self, obj) -> int | None:
+		profile = getattr(obj.user, "telegram_profile", None)
+		return getattr(profile, "telegram_id", None)

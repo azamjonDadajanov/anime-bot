@@ -62,6 +62,22 @@ def watch_via_bot(user, title, times: int = 3) -> None:
 		MediaView.record(user, title, part=None, source=MediaView.Source.BOT)
 
 
+def as_presented(original_answers, choice_orders) -> list:
+	"""Map original choice indices to the shuffled indices the user saw."""
+	presented = []
+	for order, original in zip(choice_orders, original_answers):
+		presented.append(list(order).index(original))
+	return presented
+
+
+def original_answers_for(attempt) -> list:
+	questions = QuizQuestion.objects.in_bulk(attempt.question_ids)
+	return as_presented(
+		[questions[qid].correct_index for qid in attempt.question_ids],
+		attempt.choice_orders,
+	)
+
+
 class GameServiceTests(TestCase):
 	def setUp(self):
 		self.user = make_user()
@@ -88,22 +104,47 @@ class GameServiceTests(TestCase):
 		payload = start_attempt_sync(self.user, self.title.pk)
 		self.assertIn("attempt_id", payload)
 		self.assertEqual(len(payload["questions"]), 5)
+		self.assertEqual(payload["pass_score"], 4)
 		for question in payload["questions"]:
 			self.assertNotIn("correct_index", question)
 			self.assertNotIn("correct_choice", question)
 			self.assertEqual(len(question["choices"]), 4)
 
+	def test_start_shuffles_choices_as_a_permutation(self) -> None:
+		payload = start_attempt_sync(self.user, self.title.pk)
+		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
+		questions = QuizQuestion.objects.in_bulk(attempt.question_ids)
+		for question_id, order, sent in zip(
+			attempt.question_ids, attempt.choice_orders, payload["questions"]
+		):
+			self.assertEqual(sorted(order), list(range(len(questions[question_id].choices))))
+			expected = [str(questions[question_id].choices[i]) for i in order]
+			self.assertEqual(sent["choices"], expected)
+
+	def test_per_title_quiz_size_limits_the_quiz(self) -> None:
+		self.title.quiz_size = 3
+		self.title.save(update_fields=["quiz_size"])
+		make_questions(self.title, count=10)
+
+		payload = start_attempt_sync(self.user, self.title.pk)
+		self.assertEqual(len(payload["questions"]), 3)
+		self.assertEqual(payload["pass_score"], 3)  # ceil(3 * 4/5)
+
+		titles = eligible_titles(self.user)["unlocked"]
+		self.assertEqual(titles[0]["quiz_size"], 3)
+		self.assertTrue(titles[0]["ready"])
+
 	def test_submit_scoring_and_verification(self) -> None:
 		payload = start_attempt_sync(self.user, self.title.pk)
 		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
-		question_ids = attempt.question_ids
-		questions = QuizQuestion.objects.in_bulk(question_ids)
+		originals = [
+			QuizQuestion.objects.get(pk=qid).correct_index
+			for qid in attempt.question_ids
+		]
 
 		# 4 correct, 1 wrong → pass.
-		answers = []
-		for index, question_id in enumerate(question_ids):
-			correct = questions[question_id].correct_index
-			answers.append((correct + 1) % 4 if index == 4 else correct)
+		answers = as_presented(originals, attempt.choice_orders)
+		answers[4] = (answers[4] + 1) % 4
 
 		result = submit_attempt_sync(self.user, attempt.pk, answers, elapsed_ms=60_000)
 		self.assertEqual(result["correct"], 4)
@@ -125,11 +166,15 @@ class GameServiceTests(TestCase):
 	def test_failed_quiz_cannot_be_retried(self) -> None:
 		payload = start_attempt_sync(self.user, self.title.pk)
 		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
-		question_ids = attempt.question_ids
-		questions = QuizQuestion.objects.in_bulk(question_ids)
+		originals = [
+			QuizQuestion.objects.get(pk=qid).correct_index
+			for qid in attempt.question_ids
+		]
+		answers = as_presented(
+			[(index + 1) % 4 for index in originals], attempt.choice_orders
+		)
 
 		# All wrong → fail, but still one-shot.
-		answers = [(questions[qid].correct_index + 1) % 4 for qid in question_ids]
 		result = submit_attempt_sync(self.user, attempt.pk, answers, elapsed_ms=60_000)
 		self.assertEqual(result["correct"], 0)
 		self.assertFalse(result["verified"])
@@ -153,8 +198,7 @@ class GameServiceTests(TestCase):
 	def test_verified_title_is_not_offered_again(self) -> None:
 		payload = start_attempt_sync(self.user, self.title.pk)
 		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
-		questions = QuizQuestion.objects.in_bulk(attempt.question_ids)
-		answers = [questions[qid].correct_index for qid in attempt.question_ids]
+		answers = original_answers_for(attempt)
 		submit_attempt_sync(self.user, attempt.pk, answers, elapsed_ms=60_000)
 
 		payload = eligible_titles(self.user)
@@ -188,8 +232,7 @@ class GameServiceTests(TestCase):
 	def test_fast_answers_are_suspicious_and_score_zero(self) -> None:
 		payload = start_attempt_sync(self.user, self.title.pk)
 		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
-		questions = QuizQuestion.objects.in_bulk(attempt.question_ids)
-		answers = [questions[qid].correct_index for qid in attempt.question_ids]
+		answers = original_answers_for(attempt)
 
 		# 5 questions * 3s minimum = 15s; 1s total is impossible.
 		result = submit_attempt_sync(self.user, attempt.pk, answers, elapsed_ms=1_000)

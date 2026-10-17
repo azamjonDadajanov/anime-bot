@@ -3,19 +3,25 @@ import {
   Group,
   Loader,
   NumberInput,
+  Select,
   Stack,
   Switch,
   Textarea,
   Title,
 } from '@mantine/core'
 import { useEffect, useState } from 'react'
-import { adminSettingsApi } from '../api/adminApi'
+import { adminChannelApi, adminSettingsApi } from '../api/adminApi'
 import { ErrorAlert, SectionHeading, SuccessAlert } from '../components/adminShared'
 import { formatError, inputHandler, numberHandler } from '../utils/formUtils'
 
 const EMPTY = {
   require_subscription: true,
   auto_publish_new_content: false,
+  publish_channel: null,
+  completed_channel: null,
+  ongoing_channel: null,
+  manga_channel: null,
+  manga_completed_channel: null,
   protect_content: true,
   maintenance_mode: false,
   welcome_text: '',
@@ -25,8 +31,28 @@ const EMPTY = {
   log_channel_id: '',
 }
 
+function toForm(data) {
+  return {
+    require_subscription: Boolean(data.require_subscription),
+    auto_publish_new_content: Boolean(data.auto_publish_new_content),
+    publish_channel: data.publish_channel ? Number(data.publish_channel) : null,
+    completed_channel: data.completed_channel ? Number(data.completed_channel) : null,
+    ongoing_channel: data.ongoing_channel ? Number(data.ongoing_channel) : null,
+    manga_channel: data.manga_channel ? Number(data.manga_channel) : null,
+    manga_completed_channel: data.manga_completed_channel ? Number(data.manga_completed_channel) : null,
+    protect_content: Boolean(data.protect_content),
+    maintenance_mode: Boolean(data.maintenance_mode),
+    welcome_text: data.welcome_text || '',
+    access_denied_text: data.access_denied_text || '',
+    broadcast_rate_per_second: data.broadcast_rate_per_second ?? 25,
+    broadcast_concurrency: data.broadcast_concurrency ?? 5,
+    log_channel_id: data.log_channel_id ?? '',
+  }
+}
+
 export default function SettingsPage() {
   const [form, setForm] = useState(EMPTY)
+  const [channels, setChannels] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -38,17 +64,7 @@ export default function SettingsPage() {
       .get()
       .then((data) => {
         if (!active) return
-        setForm({
-          require_subscription: Boolean(data.require_subscription),
-          auto_publish_new_content: Boolean(data.auto_publish_new_content),
-          protect_content: Boolean(data.protect_content),
-          maintenance_mode: Boolean(data.maintenance_mode),
-          welcome_text: data.welcome_text || '',
-          access_denied_text: data.access_denied_text || '',
-          broadcast_rate_per_second: data.broadcast_rate_per_second ?? 25,
-          broadcast_concurrency: data.broadcast_concurrency ?? 5,
-          log_channel_id: data.log_channel_id ?? '',
-        })
+        setForm(toForm(data))
       })
       .catch((err) => {
         if (active) setError(formatError(err, 'Sozlamalarni yuklashda xatolik.'))
@@ -61,6 +77,27 @@ export default function SettingsPage() {
     }
   }, [])
 
+  useEffect(() => {
+    let active = true
+    // Announcements can only go to a channel marked "Ommaviy kanal".
+    adminChannelApi
+      .list()
+      .then((items) => {
+        if (active) setChannels(items.filter((item) => item.purpose === 'public'))
+      })
+      .catch(() => {
+        if (active) setChannels([])
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const channelOptions = channels.map((channel) => ({
+    value: String(channel.id),
+    label: channel.title,
+  }))
+
   async function handleSubmit(event) {
     event.preventDefault()
     setSaving(true)
@@ -70,6 +107,11 @@ export default function SettingsPage() {
       const payload = {
         require_subscription: form.require_subscription,
         auto_publish_new_content: form.auto_publish_new_content,
+        publish_channel: form.publish_channel ?? null,
+        completed_channel: form.completed_channel ?? null,
+        ongoing_channel: form.ongoing_channel ?? null,
+        manga_channel: form.manga_channel ?? null,
+        manga_completed_channel: form.manga_completed_channel ?? null,
         protect_content: form.protect_content,
         maintenance_mode: form.maintenance_mode,
         welcome_text: form.welcome_text,
@@ -81,18 +123,7 @@ export default function SettingsPage() {
           : Number(form.log_channel_id),
       }
       const updated = await adminSettingsApi.update(payload)
-      setForm((prev) => ({
-        ...prev,
-        require_subscription: Boolean(updated.require_subscription),
-        auto_publish_new_content: Boolean(updated.auto_publish_new_content),
-        protect_content: Boolean(updated.protect_content),
-        maintenance_mode: Boolean(updated.maintenance_mode),
-        welcome_text: updated.welcome_text || '',
-        access_denied_text: updated.access_denied_text || '',
-        broadcast_rate_per_second: updated.broadcast_rate_per_second ?? 25,
-        broadcast_concurrency: updated.broadcast_concurrency ?? 5,
-        log_channel_id: updated.log_channel_id ?? '',
-      }))
+      setForm(toForm(updated))
       setSuccess('Sozlamalar saqlandi.')
     } catch (err) {
       setError(formatError(err, "Saqlashda xatolik."))
@@ -124,6 +155,66 @@ export default function SettingsPage() {
             label="Yangi kontentni avtomatik e'lon qilish"
             checked={form.auto_publish_new_content}
             onChange={(event) => setForm((prev) => ({ ...prev, auto_publish_new_content: event.currentTarget.checked }))}
+          />
+          <Select
+            label="Asosiy e'lon kanali (Standart)"
+            description="Maxsus kanal belgilanmagan hollarda e'lonlar shu umumiy kanalga chiqadi."
+            placeholder="Kanal tanlanmagan"
+            data={channelOptions}
+            value={form.publish_channel === null ? null : String(form.publish_channel)}
+            onChange={(value) =>
+              setForm((prev) => ({ ...prev, publish_channel: value ? Number(value) : null }))
+            }
+            clearable
+            searchable
+          />
+          <Select
+            label="Tugallangan medialar kanali"
+            description="Tugallangan anime, serial yoki kinolar (barcha qismlari yuklanganda) shu kanalga chiqadi."
+            placeholder="Asosiy kanalga yuboriladi"
+            data={channelOptions}
+            value={form.completed_channel === null ? null : String(form.completed_channel)}
+            onChange={(value) =>
+              setForm((prev) => ({ ...prev, completed_channel: value ? Number(value) : null }))
+            }
+            clearable
+            searchable
+          />
+          <Select
+            label="Ongoing medialar kanali"
+            description="Ongoing medialarga har bir yangi qism qo'shilganda shu kanalga chiqadi."
+            placeholder="Asosiy kanalga yuboriladi"
+            data={channelOptions}
+            value={form.ongoing_channel === null ? null : String(form.ongoing_channel)}
+            onChange={(value) =>
+              setForm((prev) => ({ ...prev, ongoing_channel: value ? Number(value) : null }))
+            }
+            clearable
+            searchable
+          />
+          <Select
+            label="Mangalar kanali (Ongoing)"
+            description="Mangalarga yangi bob qo'shilganda shu kanalga chiqadi."
+            placeholder="Ongoing / Asosiy kanalga yuboriladi"
+            data={channelOptions}
+            value={form.manga_channel === null ? null : String(form.manga_channel)}
+            onChange={(value) =>
+              setForm((prev) => ({ ...prev, manga_channel: value ? Number(value) : null }))
+            }
+            clearable
+            searchable
+          />
+          <Select
+            label="Tugallangan mangalar kanali"
+            description="Tugallangan mangalar (barcha boblari yuklanganda yoki tugallanganda) shu kanalga chiqadi."
+            placeholder="Mangalar / Tugallanganlar kanaliga yuboriladi"
+            data={channelOptions}
+            value={form.manga_completed_channel === null ? null : String(form.manga_completed_channel)}
+            onChange={(value) =>
+              setForm((prev) => ({ ...prev, manga_completed_channel: value ? Number(value) : null }))
+            }
+            clearable
+            searchable
           />
           <Switch
             label="Kontentni himoyalash (forward/cheklash)"

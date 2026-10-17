@@ -85,6 +85,16 @@ async def _filters(state: FSMContext) -> dict:
 	}
 
 
+async def _see_all(state: FSMContext) -> bool:
+	"""True when the active result list came from "Barchasini ko'rish".
+
+	That mode intentionally stores no query/type/genre filters, so pagination
+	cannot rely on the filters alone to tell "there is a remembered search".
+	"""
+	data = await state.get_data()
+	return bool(data.get("last_all"))
+
+
 async def send_search_results(
 	target,
 	*,
@@ -134,7 +144,7 @@ async def send_search_results(
 async def open_search(callback: CallbackQuery, state: FSMContext) -> None:
 	"""Open the search screen and drop any filter left from a previous search."""
 	await state.set_state(UserSearchStates.query)
-	await state.update_data(last_query="", last_type="", last_genre="")
+	await state.update_data(last_query="", last_type="", last_genre="", last_all=False)
 	await render(callback, SEARCH_PROMPT, markup=search_keyboard(), edit=True)
 
 
@@ -147,7 +157,7 @@ async def search_by_type(callback: CallbackQuery, state: FSMContext) -> None:
 		await render(callback, NOT_FOUND, markup=search_keyboard(), edit=True)
 		return
 	await state.set_state(UserSearchStates.query)
-	await state.update_data(last_query="", last_type=media_type, last_genre="")
+	await state.update_data(last_query="", last_type=media_type, last_genre="", last_all=False)
 	await send_search_results(callback, state=state, page=page, edit=True)
 
 
@@ -178,7 +188,7 @@ async def search_by_genre(callback: CallbackQuery, state: FSMContext) -> None:
 		await render(callback, NOT_FOUND, markup=search_keyboard(), edit=True)
 		return
 	await state.set_state(UserSearchStates.query)
-	await state.update_data(last_query="", last_type="", last_genre=genre.name)
+	await state.update_data(last_query="", last_type="", last_genre=genre.name, last_all=False)
 	await send_search_results(callback, state=state, page=page, edit=True)
 
 
@@ -186,7 +196,7 @@ async def search_by_genre(callback: CallbackQuery, state: FSMContext) -> None:
 async def search_everything(callback: CallbackQuery, state: FSMContext) -> None:
 	"""The \"see everything\" button: list the whole catalogue, unfiltered."""
 	await state.set_state(UserSearchStates.query)
-	await state.update_data(last_query="", last_type="", last_genre="")
+	await state.update_data(last_query="", last_type="", last_genre="", last_all=True)
 	await send_search_results(callback, state=state, page=1, edit=True)
 
 
@@ -208,7 +218,7 @@ async def search_by_text(
 			return
 
 	# A typed query refines the type/genre filter chosen on the search screen.
-	await state.update_data(last_query=query)
+	await state.update_data(last_query=query, last_all=False)
 	await send_search_results(message, state=state)
 
 
@@ -217,9 +227,10 @@ async def paginate_search(callback: CallbackQuery, state: FSMContext) -> None:
 	parts = _split(callback.data)
 	page = _page(parts[1] if len(parts) > 1 else None)
 	filters = await _filters(state)
-	if not any(filters.values()):
+	if not any(filters.values()) and not await _see_all(state):
 		# No remembered search: re-enter the input flow instead of leaving the
-		# user on a dead prompt with no way back.
+		# user on a dead prompt with no way back. "Barchasini ko'rish" keeps
+		# every filter empty on purpose, so it is tracked via ``last_all``.
 		await state.set_state(UserSearchStates.query)
 		await render(callback, SEARCH_PROMPT, markup=search_keyboard(), edit=True)
 		return

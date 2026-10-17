@@ -91,6 +91,11 @@ class QuizAttempt(models.Model):
 		related_name="game_attempts",
 	)
 	question_ids = models.JSONField(default=list, blank=True)
+	choice_orders = models.JSONField(
+		default=list,
+		blank=True,
+		help_text="Har uchun variantlar tartibi (tasodifiy aralashtirilgan indekslar).",
+	)
 	answers = models.JSONField(default=list, blank=True)
 	elapsed_ms = models.PositiveIntegerField(default=0)
 	started_at = models.DateTimeField(auto_now_add=True)

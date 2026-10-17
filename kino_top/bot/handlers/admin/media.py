@@ -523,7 +523,12 @@ async def apply_choice(callback: CallbackQuery, state: FSMContext) -> None:
 	if value not in {option[0] for option in CHOICE_FIELDS[field]}:
 		await callback.answer(ADMIN_INVALID_INPUT)
 		return
+	old_status = title.status
 	await update_title(title, **{field: value})
+	if field == "status" and old_status != MediaTitle.Status.COMPLETED and value == MediaTitle.Status.COMPLETED:
+		from ...services.publishing import publish_completed_title
+
+		await publish_completed_title(callback.bot, title)
 	await state.update_data(edit_title_id=None, edit_field="")
 	await render(callback, await admin_card_text(title), markup=media_actions(title), edit=True)
 

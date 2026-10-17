@@ -7,11 +7,14 @@ import BroadcastPage from './pages/BroadcastPage'
 import ChannelsPage from './pages/ChannelsPage'
 import CouponsPage from './pages/CouponsPage'
 import DashboardPage from './pages/DashboardPage'
+import GameRatingsPage from './pages/GameRatingsPage'
 import GenresPage from './pages/GenresPage'
 import IncomePage from './pages/IncomePage'
 import LogsPage from './pages/LogsPage'
 import { MediaFormPage, MediaListPage, MediaPartsPage } from './pages/MediaPages'
+import MediaQuizPage from './pages/MediaQuizPage'
 import PodcastPage from './pages/PodcastPage'
+import QuizQuestionsPage from './pages/QuizQuestionsPage'
 import SettingsPage from './pages/SettingsPage'
 import SubscriptionsPage from './pages/SubscriptionsPage'
 import UsersPage, { UserDetailPage } from './pages/UsersPage'
@@ -34,6 +37,7 @@ export default function AdminApp() {
           <Route path="media/new" element={<MediaFormPage />} />
           <Route path="media/:slug" element={<MediaPartsPage />} />
           <Route path="media/:slug/edit" element={<MediaFormPage />} />
+          <Route path="media/:slug/quiz" element={<MediaQuizPage />} />
           <Route path="parts" element={<MediaListPage />} />
           <Route path="manga" element={<MediaListPage typeFilter="manga" />} />
           <Route path="podcast" element={<PodcastPage />} />
@@ -44,6 +48,8 @@ export default function AdminApp() {
           <Route path="income" element={<IncomePage />} />
           <Route path="genres" element={<GenresPage />} />
           <Route path="coupons" element={<CouponsPage />} />
+          <Route path="quiz" element={<QuizQuestionsPage />} />
+          <Route path="game-ratings" element={<GameRatingsPage />} />
           <Route path="channels" element={<ChannelsPage />} />
           <Route path="logs" element={<LogsPage />} />
           <Route path="settings" element={<SettingsPage />} />

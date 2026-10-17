@@ -7,6 +7,7 @@ this module — the game lives on the website.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -52,6 +53,34 @@ def quiz_size() -> int:
 
 def pass_score() -> int:
 	return max(1, min(quiz_size(), int(getattr(settings, "GAME_PASS_SCORE", 4))))
+
+
+def pass_score_for(size: int) -> int:
+	"""Pass threshold for a quiz of ``size`` questions.
+
+	Keeps the global ``GAME_PASS_SCORE / GAME_QUIZ_SIZE`` ratio (4/5 by
+	default), so a 10-question quiz still needs 8 correct answers.
+	"""
+	size = max(1, int(size or 1))
+	ratio = pass_score() / quiz_size()
+	return max(1, min(size, math.ceil(size * ratio)))
+
+
+def title_quiz_size(title, *, available: Optional[int] = None) -> int:
+	"""How many questions the user answers for ``title`` after watching it.
+
+	Per-title override (``MediaTitle.quiz_size``) wins over the global
+	default and is clamped to the number of active questions.
+	"""
+	try:
+		size = int(getattr(title, "quiz_size", 0) or 0)
+	except (TypeError, ValueError):
+		size = 0
+	if size <= 0:
+		size = quiz_size()
+	if available is not None:
+		size = min(size, max(1, int(available)))
+	return max(1, size)
 
 
 def min_parts() -> int:
@@ -167,6 +196,8 @@ def eligible_titles(user, query: str = "") -> dict:
 				continue
 			if bot_views_for(user, title) < min_parts():
 				continue
+			active = QuizQuestion.objects.filter(title=title, is_active=True).count()
+			needed = title_quiz_size(title)
 			unlocked.append(
 				{
 					"id": title.pk,
@@ -174,13 +205,9 @@ def eligible_titles(user, query: str = "") -> dict:
 					"type": title.type,
 					"bot_views": bot_views_for(user, title),
 					"points": title_points(title),
-					"questions": QuizQuestion.objects.filter(
-						title=title, is_active=True
-					).count(),
-					"ready": QuizQuestion.objects.filter(
-						title=title, is_active=True
-					).count()
-					>= quiz_size(),
+					"questions": active,
+					"quiz_size": needed,
+					"ready": active >= needed,
 				}
 			)
 
@@ -238,27 +265,41 @@ def start_attempt_sync(user, title_id: int, *, rng: Optional[random.Random] = No
 		)
 
 	pool = list(QuizQuestion.objects.filter(title=title, is_active=True))
-	if len(pool) < quiz_size():
+	if not pool:
 		raise GameError(NO_QUESTIONS, "Bu anime uchun savollar tayyor emas.")
 
-	chosen = rng.sample(pool, quiz_size())
+	size = title_quiz_size(title, available=len(pool))
+	if len(pool) < size:
+		size = len(pool)
+	chosen = rng.sample(pool, size)
+
+	# Savollar va variantlar har safar tasodifiy tartibda ko'rsatiladi:
+	# savollar sample, variantlar esa shuffle orqali aralashtiriladi.
+	questions_payload = []
+	choice_orders = []
+	for question in chosen:
+		order = list(range(len(question.choices)))
+		rng.shuffle(order)
+		choice_orders.append(order)
+		questions_payload.append(
+			{
+				"id": question.pk,
+				"text": question.text,
+				"choices": [str(question.choices[index]) for index in order],
+			}
+		)
+
 	attempt = QuizAttempt.objects.create(
 		user=user,
 		title=title,
 		question_ids=[question.pk for question in chosen],
+		choice_orders=choice_orders,
 	)
 	return {
 		"attempt_id": attempt.pk,
 		"title": {"id": title.pk, "title": title.title},
-		"questions": [
-			{
-				"id": question.pk,
-				"text": question.text,
-				"choices": [str(choice) for choice in question.choices],
-			}
-			for question in chosen
-		],
-		"pass_score": pass_score(),
+		"questions": questions_payload,
+		"pass_score": pass_score_for(len(chosen)),
 	}
 
 
@@ -295,12 +336,20 @@ def submit_attempt_sync(
 		raise GameError(BAD_INPUT, "Javoblar noto'g'ri.")
 
 	questions = QuizQuestion.objects.in_bulk(question_ids)
+	orders = list(attempt.choice_orders or [])
 	correct = 0
 	for index, question_id in enumerate(question_ids):
 		question = questions.get(question_id)
 		if question is None:
 			continue
-		if answers[index] == int(question.correct_index):
+		answer = int(answers[index])
+		# Foydalanuvchi ko'rgan variant tartibidan asl indeksga qaytamiz.
+		order = orders[index] if index < len(orders) else None
+		if order:
+			if not 0 <= answer < len(order):
+				continue
+			answer = int(order[answer])
+		if answer == int(question.correct_index):
 			correct += 1
 
 	total = len(question_ids) or 1
@@ -313,7 +362,7 @@ def submit_attempt_sync(
 	if suspicious:
 		points = 0
 
-	verified = (correct >= pass_score()) and not suspicious
+	verified = (correct >= pass_score_for(total)) and not suspicious
 
 	attempt.answers = answers
 	attempt.elapsed_ms = elapsed_ms

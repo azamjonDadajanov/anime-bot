@@ -35,6 +35,12 @@ SUB_CHECK = "subchk"
 SUBSCRIPTION = "subs"
 # Coupons: the user's "enter a promo code" screen.
 COUPON = "coupon"
+# Support: the user's "write to the administrators" screen.
+SUPPORT = "support"
+# AI search: the user's semantic search screen (subscribers only).
+AI_SEARCH = "ai"
+# AI search: opt in/out of sending the user's favourites/history to the model.
+AI_FAV = "aifav"
 # Referrals: invite menu and manual milestone claims (``refc:<milestone>``).
 REF = "ref"
 REF_CLAIM = "refc"

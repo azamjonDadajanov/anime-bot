@@ -40,10 +40,23 @@ TEXT_FIELDS = {"welcome": "welcome_text", "denied": "access_denied_text"}
 
 
 async def settings_text(settings) -> str:
-	# Resolve the FK through the ORM bridge, never the lazy descriptor (that would
-	# query the database from the event loop).
 	channel = await get_channel(settings.publish_channel_id) if settings.publish_channel_id else None
-	return ADMIN_SETTINGS_MENU.format(
+	completed_ch = (
+		await get_channel(settings.completed_channel_id) if settings.completed_channel_id else None
+	)
+	ongoing_ch = (
+		await get_channel(settings.ongoing_channel_id) if settings.ongoing_channel_id else None
+	)
+	manga_ch = (
+		await get_channel(settings.manga_channel_id) if settings.manga_channel_id else None
+	)
+	manga_comp_ch = (
+		await get_channel(settings.manga_completed_channel_id)
+		if settings.manga_completed_channel_id
+		else None
+	)
+
+	base = ADMIN_SETTINGS_MENU.format(
 		require_subscription=on_off(settings.require_subscription),
 		auto_publish=on_off(settings.auto_publish_new_content),
 		publish_channel=escape_html(channel.title) if channel else "—",
@@ -52,6 +65,14 @@ async def settings_text(settings) -> str:
 		rate=settings.broadcast_rate_per_second,
 		concurrency=settings.broadcast_concurrency,
 	)
+	extra = [
+		"",
+		f"✅ Tugallangan medialar: <b>{escape_html(completed_ch.title) if completed_ch else '— (Asosiy)'}</b>",
+		f"▶️ Ongoing medialar: <b>{escape_html(ongoing_ch.title) if ongoing_ch else '— (Asosiy)'}</b>",
+		f"📖 Mangalar: <b>{escape_html(manga_ch.title) if manga_ch else '— (Asosiy)'}</b>",
+		f"📚 Tugallangan mangalar: <b>{escape_html(manga_comp_ch.title) if manga_comp_ch else '— (Mangalar)'}</b>",
+	]
+	return base + "\n" + "\n".join(extra)
 
 
 @router.callback_query(F.data == cb.ADM_SETTINGS)
@@ -140,13 +161,24 @@ async def save_numeric(message: Message, state: FSMContext) -> None:
 	await message.answer(await settings_text(settings), reply_markup=settings_menu(settings))
 
 
-@router.callback_query(F.data == f"{cb.ADM_SETTINGS}:chan")
+ALLOWED_CHANNEL_FIELDS = {
+	"publish_channel",
+	"completed_channel",
+	"ongoing_channel",
+	"manga_channel",
+	"manga_completed_channel",
+}
+
+
+@router.callback_query(F.data.startswith(f"{cb.ADM_SETTINGS}:chan"))
 async def choose_channel(callback: CallbackQuery) -> None:
+	parts = callback.data.split(":")
+	field = parts[2] if len(parts) > 2 and parts[2] in ALLOWED_CHANNEL_FIELDS else "publish_channel"
 	channels = await public_channels(active_only=False)
 	await render(
 		callback,
 		ADMIN_SETTINGS_SELECT_CHANNEL,
-		markup=settings_channel_picker(channels),
+		markup=settings_channel_picker(channels, field=field),
 		edit=True,
 	)
 
@@ -154,7 +186,13 @@ async def choose_channel(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith(f"{cb.ADM_SETTINGS}:setchan:"))
 async def set_channel(callback: CallbackQuery, profile) -> None:
 	args = cb.section_args(callback.data)
-	channel_pk = parse_int(args[0] if args else None, minimum=0)
+	if len(args) == 1:
+		field = "publish_channel"
+		channel_pk = parse_int(args[0], minimum=0)
+	else:
+		field = args[0] if args[0] in ALLOWED_CHANNEL_FIELDS else "publish_channel"
+		channel_pk = parse_int(args[1] if len(args) > 1 else None, minimum=0)
+
 	if channel_pk is None:
 		await callback.answer(ADMIN_INVALID_INPUT)
 		return
@@ -162,10 +200,10 @@ async def set_channel(callback: CallbackQuery, profile) -> None:
 	if channel_pk and channel is None:
 		await render(callback, NOT_FOUND, edit=True)
 		return
-	await update_settings(publish_channel=channel)
+	await update_settings(**{field: channel})
 	await to_async(record_event)(
 		"INFO",
-		f"Publish channel set to {channel_pk or 'none'} by {profile.telegram_id}.",
+		f"{field} set to {channel_pk or 'none'} by {profile.telegram_id}.",
 		telegram_id=profile.telegram_id,
 	)
 	settings = await get_settings()

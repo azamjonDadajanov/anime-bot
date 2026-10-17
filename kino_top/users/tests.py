@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
@@ -15,7 +16,15 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from movies.models import MediaPart, MediaTitle, MediaView, ReadingProgress
 
-from .models import FavoriteContent, Subscription, SubscriptionRequest, TelegramUser
+from .models import (
+	FavoriteContent,
+	Subscription,
+	SubscriptionRequest,
+	SupportMessage,
+	TelegramUser,
+)
+from .reminders import EXPIRED, EXPIRING, REMIND_AFTER_DAYS, reminder_stage
+from .support import MAX_LENGTH as SUPPORT_MAX_LENGTH
 from .telegram_auth import get_or_create_telegram_user
 
 
@@ -565,6 +574,59 @@ class FavoriteApiTests(TestCase):
 
 		self.assertEqual(list(user.favorites.all()), [anime])
 
+	def test_toggle_favorite_adds_then_removes(self):
+		user = get_user_model().objects.create_user(username="fav-toggle", password="x")
+		TelegramUser.objects.create(telegram_id=555666777, auth_user=user)
+		MediaTitle.objects.create(
+			type=MediaTitle.MediaType.ANIME,
+			title="Toggle Anime",
+			slug="toggle-anime",
+		)
+		client = APIClient()
+		client.force_authenticate(user)
+
+		added = client.post("/api/auth/favorites/toggle/", {"slug": "toggle-anime"}, format="json")
+		self.assertEqual(added.status_code, 200)
+		self.assertTrue(added.data["is_favorite"])
+		self.assertEqual(
+			list(user.telegram_profile.favorites.values_list("slug", flat=True)),
+			["toggle-anime"],
+		)
+
+		removed = client.post("/api/auth/favorites/toggle/", {"slug": "toggle-anime"}, format="json")
+		self.assertEqual(removed.status_code, 200)
+		self.assertFalse(removed.data["is_favorite"])
+		self.assertEqual(list(user.telegram_profile.favorites.all()), [])
+
+	def test_toggle_favorite_requires_telegram_profile(self):
+		user = get_user_model().objects.create_user(username="fav-noprofile", password="x")
+		client = APIClient()
+		client.force_authenticate(user)
+
+		response = client.post("/api/auth/favorites/toggle/", {"slug": "anything"}, format="json")
+		self.assertEqual(response.status_code, 400)
+
+	def test_detail_endpoint_reports_is_favorite(self):
+		user = get_user_model().objects.create_user(username="fav-detail", password="x")
+		profile = TelegramUser.objects.create(telegram_id=444555666, auth_user=user)
+		title = MediaTitle.objects.create(
+			type=MediaTitle.MediaType.ANIME,
+			title="Detail Anime",
+			slug="detail-anime",
+		)
+		profile.favorites.add(title)
+		client = APIClient()
+		client.force_authenticate(user)
+
+		response = client.get("/api/catalog/detail-anime/")
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(response.data["is_favorite"])
+
+		anonymous = APIClient()
+		public = anonymous.get("/api/catalog/detail-anime/")
+		self.assertEqual(public.status_code, 200)
+		self.assertFalse(public.data["is_favorite"])
+
 
 def _tiny_png() -> bytes:
 	"""A valid 1x1 PNG, the smallest image Django's ImageField accepts."""
@@ -775,3 +837,307 @@ class SubscriptionApiTests(TestCase):
 			).status_code,
 			401,
 		)
+
+
+SUPPORT_URL = "/api/auth/support/"
+
+
+def fake_telegram_client(captured, *, status_code=200):
+	"""Stand-in for ``httpx.Client`` recording every Bot API request."""
+
+	class _Response:
+		def __init__(self):
+			self.status_code = status_code
+			self.text = "ok" if status_code == 200 else "rejected"
+
+	class _Client:
+		def __init__(self, *args, **kwargs):
+			pass
+
+		def __enter__(self):
+			return self
+
+		def __exit__(self, *exc):
+			return False
+
+		def post(self, url, data=None, files=None):
+			captured.append((url, data or {}))
+			return _Response()
+
+	return _Client
+
+
+class SupportMessageApiTests(TestCase):
+	"""The website's "Adminga xabar" endpoint."""
+
+	def setUp(self):
+		self.client = APIClient()
+		self.user = get_user_model().objects.create_user(
+			username="support-user", password="support-secret-4829"
+		)
+		self.client.force_authenticate(self.user)
+
+	def test_a_message_is_stored_and_forwarded_to_every_admin(self):
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="111,222", BOT_TOKEN=BOT_TOKEN):
+			response = self.client.post(
+				SUPPORT_URL, {"text": "Obuna to'lovim tasdiqlanmadi"}, format="json"
+			)
+
+		self.assertEqual(response.status_code, 201)
+		self.assertTrue(response.data["delivered"])
+		message = SupportMessage.objects.get()
+		self.assertEqual(message.text, "Obuna to'lovim tasdiqlanmadi")
+		self.assertEqual(message.source, SupportMessage.Source.WEB)
+		self.assertEqual(message.status, SupportMessage.Status.SENT)
+		self.assertEqual(message.user, self.user)
+		self.assertEqual(len(captured), 2)
+		self.assertEqual({data["chat_id"] for _url, data in captured}, {111, 222})
+		self.assertIn("Obuna to'lovim tasdiqlanmadi", captured[0][1]["text"])
+		self.assertIn("support-user", captured[0][1]["text"])
+
+	def test_a_telegram_outage_keeps_the_message_and_says_so(self):
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client",
+			fake_telegram_client(captured, status_code=500),
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			response = self.client.post(SUPPORT_URL, {"text": "Yuborilmaydigan"}, format="json")
+
+		self.assertEqual(response.status_code, 201)
+		self.assertFalse(response.data["delivered"])
+		message = SupportMessage.objects.get()
+		self.assertEqual(message.status, SupportMessage.Status.FAILED)
+		self.assertIn("500", message.error)
+
+	def test_missing_admin_configuration_is_not_delivered(self):
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="", BOT_ADMIN_IDS="", BOT_TOKEN=BOT_TOKEN):
+			response = self.client.post(SUPPORT_URL, {"text": "Adminsiz"}, format="json")
+
+		self.assertEqual(response.status_code, 201)
+		self.assertFalse(response.data["delivered"])
+		self.assertEqual(captured, [])
+		self.assertEqual(SupportMessage.objects.get().status, SupportMessage.Status.FAILED)
+
+	def test_the_message_is_trimmed_and_the_length_is_capped(self):
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client([])
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			trimmed = self.client.post(SUPPORT_URL, {"text": "  salom  "}, format="json")
+
+		self.assertEqual(trimmed.status_code, 201)
+		self.assertEqual(SupportMessage.objects.get().text, "salom")
+
+		too_long = self.client.post(
+			SUPPORT_URL, {"text": "x" * (SUPPORT_MAX_LENGTH + 1)}, format="json"
+		)
+
+		self.assertEqual(too_long.status_code, 400)
+		self.assertEqual(SupportMessage.objects.count(), 1)
+
+	def test_an_empty_message_is_rejected(self):
+		response = self.client.post(SUPPORT_URL, {"text": "   "}, format="json")
+
+		self.assertEqual(response.status_code, 400)
+		self.assertEqual(SupportMessage.objects.count(), 0)
+
+	def test_a_second_message_within_a_minute_is_rate_limited(self):
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client([])
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			self.client.post(SUPPORT_URL, {"text": "birinchi"}, format="json")
+			second = self.client.post(SUPPORT_URL, {"text": "ikkinchi"}, format="json")
+
+		self.assertEqual(second.status_code, 429)
+		self.assertGreaterEqual(second.data["retry_after"], 1)
+		self.assertEqual(SupportMessage.objects.count(), 1)
+
+	def test_sending_requires_authentication(self):
+		anonymous = APIClient()
+
+		self.assertEqual(
+			anonymous.post(SUPPORT_URL, {"text": "salom"}, format="json").status_code, 401
+		)
+		self.assertEqual(SupportMessage.objects.count(), 0)
+
+
+class SubscriptionReminderTests(TestCase):
+	"""The reminder stage rule, the cron command and the panel payload."""
+
+	def setUp(self):
+		self.user = get_user_model().objects.create_user(
+			username="reminder-user", password="reminder-secret-4829"
+		)
+		subscription = Subscription.objects.get_or_create(user=self.user)[0]
+		subscription.plan = Subscription.Plan.MONTHLY
+		subscription.save(update_fields=["plan", "updated_at"])
+		self.subscription = subscription
+
+	def _set_expiry(self, **delta):
+		Subscription.objects.filter(pk=self.subscription.pk).update(
+			expires_at=timezone.now() + timedelta(**delta)
+		)
+		self.subscription.refresh_from_db()
+
+	def _api_client(self):
+		"""A client whose user is re-read, so ``user.subscription`` is not stale.
+
+		Attaching the subscription cached it on ``self.user``; ``.update()`` in
+		:meth:`_set_expiry` bypasses that cache, exactly like a long-lived caller
+		would. Every request in production loads the user fresh.
+		"""
+		client = APIClient()
+		client.force_authenticate(get_user_model().objects.get(pk=self.user.pk))
+		return client
+
+	def _link_telegram(self, telegram_id=987654):
+		profile = get_or_create_telegram_user(
+			{"id": telegram_id, "first_name": "Reminder", "username": "reminder"}
+		)
+		profile.auth_user = self.user
+		profile.save(update_fields=["auth_user", "updated_at"])
+		return profile
+
+	def test_stage_is_empty_while_the_plan_is_far_from_ending(self):
+		self._set_expiry(days=30)
+
+		self.assertEqual(reminder_stage(self.subscription), "")
+
+	def test_stage_is_expiring_inside_the_window(self):
+		self._set_expiry(days=2)
+
+		self.assertEqual(reminder_stage(self.subscription), EXPIRING)
+
+	def test_stage_is_expired_just_after_the_end(self):
+		self._set_expiry(days=-2)
+
+		self.assertEqual(reminder_stage(self.subscription), EXPIRED)
+
+	def test_a_long_expired_plan_is_not_reminded(self):
+		self._set_expiry(days=-(REMIND_AFTER_DAYS + 5))
+
+		self.assertEqual(reminder_stage(self.subscription), "")
+
+	def test_a_free_plan_never_gets_a_reminder(self):
+		self._set_expiry(days=1)
+		Subscription.objects.filter(pk=self.subscription.pk).update(plan="free")
+		self.subscription.refresh_from_db()
+
+		self.assertEqual(reminder_stage(self.subscription), "")
+
+	def test_activating_a_plan_restarts_the_reminder_cycle(self):
+		self._set_expiry(days=2)
+		self.subscription.reminder_stage = EXPIRING
+		self.subscription.save(update_fields=["reminder_stage", "updated_at"])
+
+		self.subscription.activate("monthly")
+
+		self.assertEqual(self.subscription.reminder_stage, "")
+		self.assertIsNone(self.subscription.reminder_sent_at)
+
+	def test_the_command_sends_one_reminder_per_stage(self):
+		self._link_telegram()
+		self._set_expiry(days=2)
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			call_command("send_subscription_reminders")
+			call_command("send_subscription_reminders")
+
+		self.assertEqual(len(captured), 1, "the second run must be a no-op")
+		self.assertIn("/sendMessage", captured[0][0])
+		self.assertEqual(captured[0][1]["chat_id"], 987654)
+		self.assertIn("tugab qolmoqda", captured[0][1]["text"])
+		self.subscription.refresh_from_db()
+		self.assertEqual(self.subscription.reminder_stage, EXPIRING)
+		self.assertIsNotNone(self.subscription.reminder_sent_at)
+
+	def test_the_command_moves_on_to_the_expired_stage(self):
+		self._link_telegram()
+		self._set_expiry(days=2)
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			call_command("send_subscription_reminders")
+			self._set_expiry(days=-1)
+			call_command("send_subscription_reminders")
+
+		self.assertEqual(len(captured), 2)
+		self.assertIn("muddati tugadi", captured[1][1]["text"])
+		self.subscription.refresh_from_db()
+		self.assertEqual(self.subscription.reminder_stage, EXPIRED)
+
+	def test_a_failed_delivery_is_retried_on_the_next_run(self):
+		self._link_telegram()
+		self._set_expiry(days=2)
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client([], status_code=500)
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			call_command("send_subscription_reminders")
+
+		self.subscription.refresh_from_db()
+		self.assertEqual(self.subscription.reminder_stage, "")
+		captured = []
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			call_command("send_subscription_reminders")
+
+		self.assertEqual(len(captured), 1)
+
+	def test_dry_run_changes_nothing(self):
+		self._link_telegram()
+		self._set_expiry(days=2)
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			call_command("send_subscription_reminders", "--dry-run")
+
+		self.assertEqual(captured, [])
+		self.subscription.refresh_from_db()
+		self.assertEqual(self.subscription.reminder_stage, "")
+
+	def test_an_account_without_telegram_is_skipped(self):
+		self._set_expiry(days=2)
+		captured = []
+
+		with mock.patch(
+			"users.telegram_notify.httpx.Client", fake_telegram_client(captured)
+		), override_settings(ADMIN_IDS="111", BOT_TOKEN=BOT_TOKEN):
+			call_command("send_subscription_reminders")
+
+		self.assertEqual(captured, [])
+
+	def test_the_plan_catalogue_reports_the_reminder(self):
+		self._set_expiry(days=1)
+
+		response = self._api_client().get("/api/auth/subscription/plans/")
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(response.data["current_active"])
+		self.assertEqual(response.data["reminder"]["stage"], EXPIRING)
+		self.assertEqual(response.data["reminder"]["days"], 1)
+
+	def test_the_plan_catalogue_has_no_reminder_outside_the_window(self):
+		self._set_expiry(days=60)
+
+		response = self._api_client().get("/api/auth/subscription/plans/")
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(response.data["current_active"])
+		self.assertIsNone(response.data["reminder"])

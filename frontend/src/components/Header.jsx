@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { profileApi } from '../apis/api'
 import { useAuth } from '../apis/useAuth'
 import SearchModal from './SearchModal'
+import SupportModal from './SupportModal'
 
 function ThemeButton() {
   const { colorScheme, setColorScheme } = useMantineColorScheme()
@@ -33,6 +34,7 @@ function ThemeButton() {
 
 function Header({ user }) {
   const [searchOpened, setSearchOpened] = useState(false)
+  const [supportOpened, setSupportOpened] = useState(false)
 
   useEffect(() => {
     function handleKeydown(event) {
@@ -70,6 +72,18 @@ function Header({ user }) {
           </button>
 
           {user && (
+            <button
+              className="header-icon-button"
+              type="button"
+              aria-label="Adminga xabar yozish"
+              title="Adminga xabar"
+              onClick={() => setSupportOpened(true)}
+            >
+              <i className="bi bi-envelope" aria-hidden="true" />
+            </button>
+          )}
+
+          {user && (
             <Link className="header-user" to="/profile" title="Profil">
               <span className="header-avatar" aria-hidden="true">{initial}</span>
               <span className="header-user-name">{user.username}</span>
@@ -80,6 +94,7 @@ function Header({ user }) {
         </div>
       </div>
       <SearchModal opened={searchOpened} onClose={() => setSearchOpened(false)} />
+      <SupportModal opened={supportOpened} onClose={() => setSupportOpened(false)} />
     </header>
   )
 }

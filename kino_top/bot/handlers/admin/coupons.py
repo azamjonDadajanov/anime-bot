@@ -33,7 +33,7 @@ from ...keyboards.admin import (
 	coupons_menu,
 )
 from ...keyboards.common import cancel_keyboard
-from ...services.publishing import publish_coupon
+from ...services.publishing import maybe_auto_publish_coupon, publish_coupon
 from ...states import AdminCouponStates
 from ...texts import (
 	ADMIN_COUPON_ASK_CODE,
@@ -180,7 +180,7 @@ async def receive_uses(message: Message, state: FSMContext) -> None:
 
 
 @router.message(AdminCouponStates.code)
-async def receive_code(message: Message, state: FSMContext) -> None:
+async def receive_code(message: Message, state: FSMContext, bot) -> None:
 	data = await state.get_data()
 	days = data.get("coupon_days")
 	uses = data.get("coupon_uses")
@@ -203,16 +203,18 @@ async def receive_code(message: Message, state: FSMContext) -> None:
 		return
 
 	await state.clear()
+	# Announce the coupon publicly right away when auto-publishing is on.
+	message_id = await maybe_auto_publish_coupon(bot, coupon)
 	await to_async(record_event)(
 		"INFO",
 		f"Coupon {coupon.code} created by {message.from_user.id} "
 		f"({coupon.days} days, {coupon.max_uses} uses).",
 		telegram_id=message.from_user.id,
 	)
-	await message.answer(
-		ADMIN_COUPON_CREATED.format(card=coupon_card(coupon)),
-		reply_markup=coupon_actions(coupon),
-	)
+	created_text = ADMIN_COUPON_CREATED.format(card=coupon_card(coupon))
+	if message_id:
+		created_text += "\n\n" + ADMIN_COUPON_PUBLISHED
+	await message.answer(created_text, reply_markup=coupon_actions(coupon))
 
 
 @router.callback_query(F.data.startswith(f"{cb.ADM_COUPONS}:pub:"))

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Alert, Badge, Button, Group, Loader, Text, Title } from '@mantine/core'
+import { useState, useEffect, useMemo } from 'react'
+import { Alert, Badge, Button, Group, Loader, Tabs, Text, Title } from '@mantine/core'
 import { Link, useParams } from 'react-router-dom'
 import { hasAccessToken, mediaApi } from '../apis/api'
 import { computeResume, loadTitleProgress, orderParts } from '../reading'
@@ -25,6 +25,8 @@ export function MediaDetailPage() {
   const [error, setError] = useState('')
   const [errorSlug, setErrorSlug] = useState('')
   const [progress, setProgress] = useState({})
+  const [isFavorite, setIsFavorite] = useState(false)
+  const [favoriteBusy, setFavoriteBusy] = useState(false)
   const loading = loadedSlug !== slug
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export function MediaDetailPage() {
       .then((data) => {
         if (!active) return
         setItem(data)
+        setIsFavorite(Boolean(data.is_favorite))
         setError('')
         setLoadedSlug(slug)
       })
@@ -74,10 +77,51 @@ export function MediaDetailPage() {
   const isManga = item.type === 'manga'
   const parts = isManga ? orderParts(item.parts || []) : (item.parts || [])
   const resume = isManga ? computeResume(progress, parts) : null
+
+  // Group parts by season number
+  const seasons = useMemo(() => {
+    if (!parts.length) return []
+    const groups = new Map()
+    parts.forEach((part) => {
+      const sNum = part.season_number != null ? Number(part.season_number) : 1
+      const key = String(sNum)
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          seasonNumber: sNum,
+          label: `${sNum}-fasl`,
+          parts: [],
+        })
+      }
+      groups.get(key).parts.push(part)
+    })
+    return Array.from(groups.values()).sort((a, b) => a.seasonNumber - b.seasonNumber)
+  }, [parts])
+
+  const [activeSeason, setActiveSeason] = useState(null)
+
+  useEffect(() => {
+    if (seasons.length > 0 && (!activeSeason || !seasons.some((s) => s.key === activeSeason))) {
+      setActiveSeason(seasons[0].key)
+    }
+  }, [seasons, activeSeason])
+
+  const currentSeason = seasons.find((s) => s.key === activeSeason) || seasons[0]
+  const currentParts = currentSeason ? currentSeason.parts : []
+
   const telegramUrl = (partId) => `https://t.me/adgfdsfbot?start=part_${partId}`
   const rememberPart = (partId) => {
     if (!hasAccessToken()) return
     mediaApi.recordView(slug, partId).catch(() => {})
+  }
+
+  function toggleFavorite() {
+    if (!hasAccessToken() || favoriteBusy) return
+    setFavoriteBusy(true)
+    mediaApi.toggleFavorite(slug)
+      .then((data) => setIsFavorite(Boolean(data.is_favorite)))
+      .catch(() => {})
+      .finally(() => setFavoriteBusy(false))
   }
 
   return (
@@ -102,6 +146,22 @@ export function MediaDetailPage() {
             {item.language && <Text><i className="bi bi-translate" aria-hidden="true" /> {item.language}</Text>}
             <Text><i className="bi bi-collection" aria-hidden="true" /> {parts.length} qism</Text>
           </Group>
+          {hasAccessToken() && (
+            <Group className="manga-cta">
+              <Button
+                variant={isFavorite ? 'filled' : 'light'}
+                color={isFavorite ? 'red' : 'gray'}
+                size="md"
+                loading={favoriteBusy}
+                onClick={toggleFavorite}
+                leftSection={
+                  <i className={isFavorite ? 'bi bi-heart-fill' : 'bi bi-heart'} aria-hidden="true" />
+                }
+              >
+                {isFavorite ? "Sevimlilardan olib tashlash" : "Sevimlilarga qo'shish"}
+              </Button>
+            </Group>
+          )}
           {isManga && parts.length > 0 && (
             <Group className="manga-cta">
               <Button
@@ -123,58 +183,87 @@ export function MediaDetailPage() {
         <div className="parts-heading">
           <div>
             <Text className="section-kicker">{isManga ? "O'QISH" : 'TOMOSHA QILISH'}</Text>
-            <Title order={2}>Barcha qismlar</Title>
+            <Title order={2}>Qismlar</Title>
           </div>
-          <Text c="dimmed" size="sm">{parts.length} ta qism</Text>
+          <Text c="dimmed" size="sm">
+            {currentSeason ? `${currentSeason.label} · ${currentParts.length} ta qism` : `${parts.length} ta qism`}
+          </Text>
         </div>
+
         {!parts.length ? (
           <div className="empty-state compact-empty">
             <i className="bi bi-hourglass-split" aria-hidden="true" />
             <Text>Qismlar hali qo'shilmagan.</Text>
           </div>
-        ) : isManga ? (
-          <div className="parts-list">
-            {parts.map((part) => {
-              const isRead = Boolean(progress[part.id]?.isRead)
-              return (
-                <Link
-                  className="part-link"
-                  to={`/read/${slug}/${part.number}`}
-                  key={part.id}
-                  onClick={() => rememberPart(part.id)}
-                >
-                  <span className="part-play"><i className="bi bi-book" aria-hidden="true" /></span>
-                  <span className="part-copy">
-                    <b>{part.season_number ? `${part.season_number}-fasl · ` : ''}{part.number}-qism</b>
-                    <span>{part.title || item.title}</span>
-                  </span>
-                  {isRead
-                    ? <i className="bi bi-check-circle-fill part-read" aria-label="O'qilgan" />
-                    : <i className="bi bi-chevron-right part-open" aria-hidden="true" />}
-                </Link>
-              )
-            })}
-          </div>
         ) : (
-          <div className="parts-list">
-            {parts.map((part) => (
-              <a
-                className="part-link"
-                href={telegramUrl(part.id)}
-                target="_blank"
-                rel="noreferrer"
-                key={part.id}
-                onClick={() => rememberPart(part.id)}
+          <>
+            {seasons.length > 0 && (
+              <Tabs
+                value={activeSeason}
+                onChange={setActiveSeason}
+                variant="pills"
+                radius="md"
+                className="season-tabs"
               >
-                <span className="part-play"><i className="bi bi-play-fill" aria-hidden="true" /></span>
-                <span className="part-copy">
-                  <b>{part.season_number ? `${part.season_number}-fasl · ` : ''}{part.number}-qism</b>
-                  <span>{part.title || item.title}</span>
-                </span>
-                <i className="bi bi-telegram part-telegram" aria-hidden="true" />
-              </a>
-            ))}
-          </div>
+                <Tabs.List>
+                  {seasons.map((season) => (
+                    <Tabs.Tab
+                      key={season.key}
+                      value={season.key}
+                      leftSection={<i className="bi bi-collection-play" aria-hidden="true" />}
+                    >
+                      {season.label} ({season.parts.length})
+                    </Tabs.Tab>
+                  ))}
+                </Tabs.List>
+              </Tabs>
+            )}
+
+            {isManga ? (
+              <div className="parts-list">
+                {currentParts.map((part) => {
+                  const isRead = Boolean(progress[part.id]?.isRead)
+                  return (
+                    <Link
+                      className="part-link"
+                      to={`/read/${slug}/${part.number}`}
+                      key={part.id}
+                      onClick={() => rememberPart(part.id)}
+                    >
+                      <span className="part-play"><i className="bi bi-book" aria-hidden="true" /></span>
+                      <span className="part-copy">
+                        <b>{part.number}-qism</b>
+                        <span>{part.title || item.title}</span>
+                      </span>
+                      {isRead
+                        ? <i className="bi bi-check-circle-fill part-read" aria-label="O'qilgan" />
+                        : <i className="bi bi-chevron-right part-open" aria-hidden="true" />}
+                    </Link>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="parts-list">
+                {currentParts.map((part) => (
+                  <a
+                    className="part-link"
+                    href={telegramUrl(part.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                    key={part.id}
+                    onClick={() => rememberPart(part.id)}
+                  >
+                    <span className="part-play"><i className="bi bi-play-fill" aria-hidden="true" /></span>
+                    <span className="part-copy">
+                      <b>{part.number}-qism</b>
+                      <span>{part.title || item.title}</span>
+                    </span>
+                    <i className="bi bi-telegram part-telegram" aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </section>
     </main>

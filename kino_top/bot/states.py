@@ -25,6 +25,18 @@ class UserCouponStates(StatesGroup):
 	code = State()
 
 
+class UserSupportStates(StatesGroup):
+	"""Waiting for the message the user wants the administrators to read."""
+
+	message = State()
+
+
+class UserAIStates(StatesGroup):
+	"""Waiting for the free-text request the AI search has to answer."""
+
+	query = State()
+
+
 class AdminMediaStates(StatesGroup):
 	search = State()
 	select_type = State()

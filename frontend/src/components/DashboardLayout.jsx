@@ -1,6 +1,7 @@
 import { Loader } from '@mantine/core'
 import { NavLink, Navigate } from 'react-router-dom'
 import { useAuth } from '../apis/useAuth'
+import AiSearchChat from './AiSearchChat'
 import Header from './Header'
 
 function DashboardLayout({ children }) {
@@ -22,15 +23,14 @@ function DashboardLayout({ children }) {
           <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/subscription">
             <i className="bi bi-ticket-perforated top-nav-icon" aria-hidden="true" /><span>Obuna</span>
           </NavLink>
-          <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/game">
-            <i className="bi bi-controller top-nav-icon" aria-hidden="true" /><span>O'yin</span>
-          </NavLink>
-          <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/profile">
-            <i className="bi bi-person top-nav-icon" aria-hidden="true" /><span>Profil</span>
+          <NavLink className={({ isActive }) => `top-nav-link${isActive ? ' active' : ''}`} to="/rating">
+            <i className="bi bi-trophy top-nav-icon" aria-hidden="true" /><span>Reyting</span>
           </NavLink>
         </div>
       </nav>
       <div className="dashboard-shell">{children}</div>
+      {/* AI search: a launcher in the bottom-right corner on every page. */}
+      <AiSearchChat />
     </>
   )
 }

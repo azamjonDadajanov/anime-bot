@@ -17,7 +17,7 @@ from drf_spectacular.utils import extend_schema
 from movies.models import MediaTitle, MediaView, ReadingProgress
 from movies.serializers import MediaTitleSerializer
 
-from .models import FavoriteContent, Subscription, SubscriptionRequest, UserSettings
+from .models import FavoriteContent, Subscription, SubscriptionRequest, SupportMessage, UserSettings
 
 from .serializers import (
 	CurrentUserSerializer,
@@ -27,10 +27,12 @@ from .serializers import (
 	RegisterSerializer,
 	SubscriptionRequestCreateSerializer,
 	SubscriptionRequestSerializer,
+	SupportMessageSerializer,
 	TelegramMiniAppSerializer,
 	TelegramWidgetSerializer,
 	UserSettingsSerializer,
 )
+from .support import TOO_SOON, EMPTY, send_support_message_sync
 from .telegram_auth import (
 	create_telegram_tokens,
 	get_or_create_telegram_user,
@@ -105,6 +107,32 @@ class FavoriteListView(generics.ListAPIView):
 
 
 @extend_schema(tags=["Authentication"])
+class FavoriteToggleView(APIView):
+	"""Add/remove a catalog title from the caller's favourites (by slug)."""
+
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, slug: str = ""):
+		profile = getattr(request.user, "telegram_profile", None)
+		if profile is None:
+			return Response({"detail": "Telegram profil bog'lanmagan."}, status=400)
+
+		slug = (slug or request.data.get("slug") or "").strip()
+		if not slug:
+			return Response({"detail": "slug majburiy."}, status=400)
+
+		title = get_object_or_404(MediaTitle, slug=slug)
+		link = FavoriteContent.objects.filter(user=profile, content=title).first()
+		if link is not None:
+			link.delete()
+			is_favorite = False
+		else:
+			FavoriteContent.objects.create(user=profile, content=title)
+			is_favorite = True
+		return Response({"slug": slug, "is_favorite": is_favorite})
+
+
+@extend_schema(tags=["Authentication"])
 class TelegramMiniAppLoginView(generics.GenericAPIView):
 	serializer_class = TelegramMiniAppSerializer
 	permission_classes = [AllowAny]
@@ -157,6 +185,8 @@ class SubscriptionPlansView(APIView):
 			.order_by("-created_at")
 			.first()
 		)
+		from .reminders import reminder_payload
+
 		return Response({
 			"current_plan": current,
 			"current_active": bool(subscription and subscription.is_active),
@@ -164,6 +194,9 @@ class SubscriptionPlansView(APIView):
 			"card_number": card_number(),
 			"plans": all_plan_details(),
 			"pending_request": SubscriptionRequestSerializer(pending).data if pending else None,
+			# The same rule the bot's cron reminders use, so the panel never
+			# promises something the Telegram message would not.
+			"reminder": reminder_payload(subscription),
 		})
 
 
@@ -470,6 +503,56 @@ class UserSettingsView(APIView):
 		serializer.is_valid(raise_exception=True)
 		serializer.save()
 		return Response(serializer.data)
+
+
+@extend_schema(request=SupportMessageSerializer, tags=["Support"])
+class SupportMessageView(APIView):
+	"""(POST) Send a message from the website to the administrators.
+
+	The row is stored first and delivered second, so a Telegram outage never
+	loses what the user wrote: ``delivered`` tells the panel whether the message
+	actually reached an administrator.
+	"""
+
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		serializer = SupportMessageSerializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		result = send_support_message_sync(
+			request.user,
+			serializer.validated_data["text"],
+			source=SupportMessage.Source.WEB,
+		)
+		if result.status == EMPTY:
+			return Response(
+				{"detail": "Xabar matni bo'sh bo'lmasligi kerak."},
+				status=status.HTTP_400_BAD_REQUEST,
+			)
+		if result.status == TOO_SOON:
+			return Response(
+				{
+					"detail": (
+						"Oldingi xabaringiz yuborilgan. Iltimos, bir daqiqadan so'ng "
+						"qayta yuboring."
+					),
+					"retry_after": result.retry_after,
+				},
+				status=status.HTTP_429_TOO_MANY_REQUESTS,
+			)
+		return Response(
+			{
+				"id": result.message.pk,
+				"status": result.message.status,
+				"delivered": result.delivered,
+				"detail": (
+					"Xabaringiz administratorlarga yuborildi."
+					if result.delivered
+					else "Xabar saqlandi, lekin hozircha yuborilmadi. Keyinroq urinib ko'ring."
+				),
+			},
+			status=status.HTTP_201_CREATED,
+		)
 
 
 @extend_schema(tags=["Subscription"])

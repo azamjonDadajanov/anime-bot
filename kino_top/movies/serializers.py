@@ -31,6 +31,7 @@ class MediaTitleSerializer(serializers.ModelSerializer):
 			"cover_content_type",
 			"release_year",
 			"status",
+			"quiz_size",
 			"created_at",
 			"updated_at",
 		]
@@ -61,9 +62,20 @@ class MediaPartSerializer(serializers.ModelSerializer):
 
 class MediaTitleDetailSerializer(MediaTitleSerializer):
 	parts = MediaPartSerializer(many=True, read_only=True)
+	is_favorite = serializers.SerializerMethodField()
 
 	class Meta(MediaTitleSerializer.Meta):
-		fields = [*MediaTitleSerializer.Meta.fields, "parts"]
+		fields = [*MediaTitleSerializer.Meta.fields, "parts", "is_favorite"]
+
+	def get_is_favorite(self, obj) -> bool:
+		"""True when the authenticated caller has this title in favourites."""
+		request = self.context.get("request")
+		if request is None or not request.user or not request.user.is_authenticated:
+			return False
+		profile = getattr(request.user, "telegram_profile", None)
+		if profile is None:
+			return False
+		return obj.user_favorites.filter(user=profile).exists()
 
 
 class TelegramMediaSerializer(serializers.ModelSerializer):
@@ -133,6 +145,59 @@ class MediaLookupSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = MediaTitle
 		fields = ["id", "type", "title", "slug", "genres", "code", "synopsis", "episode_count", "quality_options", "default_quality", "language", "required_plan", "rating", "cover_content_type", "parts"]
+
+
+class AISearchQuerySerializer(serializers.Serializer):
+	"""The request the user phrases in their own words."""
+
+	query = serializers.CharField(
+		max_length=300,
+		trim_whitespace=True,
+		allow_blank=False,
+		error_messages={
+			"required": "Savol matnini kiriting.",
+			"blank": "Savol matnini kiriting.",
+			"max_length": "Savol 300 belgidan oshmasligi kerak.",
+		},
+	)
+
+
+class AISearchResultSerializer(serializers.Serializer):
+	"""One ranked title: the link plus the sentence shown under it.
+
+	Declared explicitly (it is built from a ``SearchHit``, not from a model)
+	so the OpenAPI schema documents exactly what the clients receive.
+	"""
+
+	id = serializers.IntegerField()
+	title = serializers.CharField()
+	slug = serializers.CharField()
+	type = serializers.CharField()
+	type_display = serializers.CharField()
+	code = serializers.CharField()
+	release_year = serializers.IntegerField(allow_null=True)
+	rating = serializers.IntegerField()
+	genres = serializers.ListField(child=serializers.CharField())
+	summary = serializers.CharField()
+	url = serializers.CharField()
+	score = serializers.FloatField()
+
+
+class AISearchResponseSerializer(serializers.Serializer):
+	query = serializers.CharField()
+	count = serializers.IntegerField()
+	# Every match above the similarity threshold, ``count`` of which are in
+	# ``results``: ``has_more`` tells the client whether asking again with a
+	# larger ``limit`` would return anything new.
+	total = serializers.IntegerField()
+	has_more = serializers.BooleanField()
+	# The reasoning model's answer to the user and its short "fikrlash" trace.
+	# Both are empty strings (and ``reasoning`` false) when no model is
+	# configured or the call failed — the results are still valid then.
+	answer = serializers.CharField()
+	thinking = serializers.CharField()
+	reasoning = serializers.BooleanField()
+	results = AISearchResultSerializer(many=True)
 
 
 class ReadingProgressSerializer(serializers.ModelSerializer):

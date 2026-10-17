@@ -14,6 +14,8 @@ const NAV_ITEMS = [
   { to: '/admin/income', icon: 'bi-cash-coin', label: 'Tushumlar' },
   { to: '/admin/genres', icon: 'bi-tags', label: 'Janrlar' },
   { to: '/admin/coupons', icon: 'bi-percent', label: 'Kuponlar' },
+  { to: '/admin/quiz', icon: 'bi-question-circle', label: "O'yin savollari" },
+  { to: '/admin/game-ratings', icon: 'bi-trophy', label: 'O\'yin reytingi' },
   { to: '/admin/channels', icon: 'bi-megaphone', label: 'Kanallar' },
   { to: '/admin/logs', icon: 'bi-journal-text', label: 'Jurnallar' },
   { to: '/admin/settings', icon: 'bi-gear', label: 'Sozlamalar' },

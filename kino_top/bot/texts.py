@@ -45,6 +45,44 @@ SEARCH_ALL_TITLE = "📚 <b>Barcha kontent</b> — {page}/{pages}"
 SEARCH_GENRE_LIST = "🎭 <b>Janr bo'yicha qidiruv</b>\n\nJanrni tanlang:"
 SEARCH_EMPTY_RESULTS = "📭 Hozircha bu bo'limda kontent yo'q."
 
+# --- AI search (semantic, subscribers only) -----------------------------------
+AI_SEARCH_PROMPT = (
+	"🤖 <b>AI qidiruv</b>\n\n"
+	"Qidirayotganingizni o'z so'zingiz bilan yozing — masalan:\n"
+	"<i>menga sarguzasht va qo'rqinchli animelar ayt</i>\n\n"
+	"AI bazadagi kontentni nomi emas, ma'nosi bo'yicha topadi.\n"
+	"«🎯 Sevimlilar» tugmasini yoqsangiz, sevimlilaringiz va oxirgi "
+	"ko'rganlaringiz ham tahlilga qo'shiladi — «sevimlim mosini top» "
+	"kabi so'rovlar uchun.\n"
+	"Bekor qilish uchun «⬅️ Qidiruvga qaytish» tugmasini bosing."
+)
+AI_SEARCH_FAVS_ON = "✅ Endi sevimlilaringiz va oxirgi ko'rganlaringiz AI tahliliga qo'shiladi."
+AI_SEARCH_FAVS_OFF = "❌ Sevimlilar AI tahliliga qo'shilmaydi."
+AI_SEARCH_THINKING = (
+	"🤔 <b>AI o'ylayapti…</b>\n\n"
+	"So'rovingizni tahlil qilib, katalogdan eng mos kontentlarni tanlayapti."
+)
+AI_SEARCH_RESULTS = "🤖 <b>{query}</b> uchun AI topgan natijalar:"
+AI_SEARCH_MORE = (
+	"➕ Jami <b>{total} ta</b> mos kontent topildi — quyida eng mos {shown} tasi "
+	"ko'rsatildi."
+)
+AI_SEARCH_EMPTY = (
+	"😔 <b>{query}</b> bo'yicha mos kontent topilmadi.\n"
+	"So'rovni boshqacha yozib ko'ring (masalan, janr va kayfiyatni qo'shib)."
+)
+AI_SEARCH_REQUIRED = (
+	"🔒 <b>AI qidiruv faqat obunachilar uchun</b>\n\n"
+	"Bu qidiruv qidiruv modelini ishlatadi, shuning uchun faol obuna kerak.\n"
+	"«🎫 Obuna» bo'limidan tarifni tanlang."
+)
+AI_SEARCH_UNAVAILABLE = (
+	"🛠 AI qidiruv hozircha ishga tushmagan.\n"
+	"Administratorlarga «✉️ Adminga xabar» orqali xabar bering yoki oddiy "
+	"qidiruvdan foydalaning."
+)
+AI_SEARCH_ERROR = "⚠️ AI qidiruvda xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
+
 CATALOG_TITLE = "📚 <b>Katalog</b>\n\nKategoriyani tanlang:"
 GENRE_LIST = "🎭 <b>Janrlar</b>\n\nJanrni tanlang:"
 CATALOG_EMPTY = "📭 Hozircha bu bo'limda kontent yo'q."
@@ -459,6 +497,30 @@ ADMIN_COUPON_NOT_PUBLISHED = (
 )
 ADMIN_COUPON_TOGGLED = "✅ Kupon holati: <b>{state}</b>"
 
+# --- support (write to the administrators) ------------------------------------
+SUPPORT_PROMPT = (
+	"✉️ <b>Adminga xabar</b>\n\n"
+	"Savol, taklif yoki muammoingizni yozib yuboring — xabar barcha "
+	"administratorlarga yetib boradi.\n\n"
+	"Bekor qilish uchun «🏠 Asosiy menyu» tugmasini bosing."
+)
+SUPPORT_SENT = (
+	"✅ <b>Xabaringiz yuborildi!</b>\n\n"
+	"Administratorlar tez orada javob berishadi."
+)
+SUPPORT_FAILED = (
+	"⚠️ Xabaringiz saqlandi, lekin administratorlarga hozircha yuborilmadi.\n"
+	"Iltimos, birozdan so'ng qayta yuboring."
+)
+SUPPORT_TOO_SOON = (
+	"⏳ Oldingi xabaringiz endigina yuborildi.\n"
+	"Iltimos, {seconds} soniyadan so'ng qayta yozing."
+)
+SUPPORT_EMPTY = (
+	"❌ Bo'sh xabar yuborilmadi.\n"
+	"Iltimos, savolingizni matn ko'rinishida yozing."
+)
+
 # --- referrals -----------------------------------------------------------------
 REFERRAL_MENU = (
 	"👥 <b>Do'stlarni taklif qilish</b>\n\n"
@@ -489,6 +551,15 @@ REFERRAL_JOINED = (
 )
 
 # --- giveaways -----------------------------------------------------------------
+# Posted to a public channel so non-subscribers can join the raffle.
+GIVEAWAY_POST = (
+	"🎁 <b>{title}</b>\n\n"
+	"🏆 Sovrin: <b>{days} kunlik obuna</b>\n"
+	"👥 G'oliblar: <b>{winners}</b> ta\n"
+	"{conditions}\n\n"
+	"Qatnashish uchun pastdagi tugmani bosing — sovrin soni cheklangan!"
+)
+GIVEAWAY_POST_NO_CONDITIONS = "📌 Shartlar: faqat faol obunachilar uchun"
 GIVEAWAY_WINNER_DM = (
 	"🎉 <b>Sovg'a g'olibi!</b>\n\n"
 	"«{title}» sovg'asida yutib oldingiz!\n"
@@ -512,6 +583,10 @@ ADMIN_GIVEAWAY_ASK_MIN_VIEWS = (
 	"Shart bo'lmasa <code>0</code> yuboring."
 )
 ADMIN_GIVEAWAY_CREATED = "✅ <b>Sovg'a yaratildi!</b>\n\n{card}"
+ADMIN_GIVEAWAY_PUBLISHED = "📢 Sovg'a ommaviy kanalga joylandi."
+ADMIN_GIVEAWAY_NOT_PUBLISHED = (
+	"⚠️ E'lon kanali tanlanmagan. «Sozlamalar → E'lon kanali» bo'limida tanlang."
+)
 ADMIN_GIVEAWAY_CARD = (
 	"🎁 <b>{title}</b>\n\n"
 	"🎁 Mukofot: <b>{days} kun</b>\n"

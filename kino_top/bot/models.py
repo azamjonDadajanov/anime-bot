@@ -70,6 +70,42 @@ class BotSettings(models.Model):
 		limit_choices_to={"purpose": "public"},
 		help_text="Default public channel used for announcements and episode posts.",
 	)
+	completed_channel = models.ForeignKey(
+		"movies.TelegramChannel",
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="+",
+		limit_choices_to={"purpose": "public"},
+		help_text="Tugallangan medialar (anime, kino, serial) uchun e'lon kanali.",
+	)
+	ongoing_channel = models.ForeignKey(
+		"movies.TelegramChannel",
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="+",
+		limit_choices_to={"purpose": "public"},
+		help_text="Davom etayotgan (ongoing) medialar uchun e'lon kanali.",
+	)
+	manga_channel = models.ForeignKey(
+		"movies.TelegramChannel",
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="+",
+		limit_choices_to={"purpose": "public"},
+		help_text="Mangalar (ongoing) uchun e'lon kanali.",
+	)
+	manga_completed_channel = models.ForeignKey(
+		"movies.TelegramChannel",
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="+",
+		limit_choices_to={"purpose": "public"},
+		help_text="Tugallangan mangalar uchun e'lon kanali.",
+	)
 	welcome_text = models.TextField(
 		blank=True,
 		default="",

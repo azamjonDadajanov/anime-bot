@@ -7,6 +7,7 @@ import TelegramAuthPage from './pages/TelegramAuthPage'
 import HomePage from './pages/HomePage'
 import FavoritesPage from './pages/FavoritesPage'
 import AnimeGamePage from './pages/AnimeGamePage'
+import RatingPage from './pages/RatingPage'
 import MediaDetailPage from './pages/MediaDetailPage'
 import CatalogSectionPage from './pages/CatalogSectionPage'
 import MangaReaderPage from './pages/MangaReaderPage'
@@ -49,6 +50,7 @@ export default function App() {
           />
         ))}
         <Route path="/favorites" element={<DashboardLayout><FavoritesPage /></DashboardLayout>} />
+        <Route path="/rating" element={<DashboardLayout><RatingPage /></DashboardLayout>} />
         <Route path="/game" element={<DashboardLayout><AnimeGamePage /></DashboardLayout>} />
         <Route path="/media/:slug" element={<DashboardLayout><MediaDetailPage /></DashboardLayout>} />
         <Route path="/read/:slug/:number?" element={<MangaReaderPage />} />

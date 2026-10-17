@@ -104,6 +104,12 @@ class Subscription(models.Model):
 	plan = models.CharField(max_length=16, choices=Plan.choices, default=Plan.FREE)
 	started_at = models.DateTimeField(null=True, blank=True)
 	expires_at = models.DateTimeField(null=True, blank=True)
+	# Subscription reminders (see ``users.reminders``): the stage already sent
+	# for the *current* window, so the daily cron never repeats itself, and when
+	# it went out. Both are cleared whenever the window is (re)written, which
+	# starts a fresh reminder cycle.
+	reminder_stage = models.CharField(max_length=16, blank=True, default="")
+	reminder_sent_at = models.DateTimeField(null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
 	class Meta:
@@ -118,6 +124,13 @@ class Subscription(models.Model):
 		if self.plan == self.Plan.FREE:
 			return False
 		return self.expires_at is not None and self.expires_at > timezone.now()
+
+	REMINDER_FIELDS = ("reminder_stage", "reminder_sent_at")
+
+	def reset_reminder(self) -> None:
+		"""Forget the reminder already sent for the out-going window."""
+		self.reminder_stage = ""
+		self.reminder_sent_at = None
 
 	def grant_days(self, days: int, at=None) -> None:
 		"""Extend access by ``days`` (used by coupons).
@@ -138,7 +151,16 @@ class Subscription(models.Model):
 				self.plan = self.Plan.COUPON
 		base = self.expires_at if extends else at
 		self.expires_at = base + timedelta(days=days)
-		self.save(update_fields=["plan", "started_at", "expires_at", "updated_at"])
+		self.reset_reminder()
+		self.save(
+			update_fields=[
+				"plan",
+				"started_at",
+				"expires_at",
+				"updated_at",
+				*self.REMINDER_FIELDS,
+			]
+		)
 
 	def activate(self, plan: str, at=None) -> None:
 		"""Switch to ``plan`` for its full period.
@@ -160,7 +182,17 @@ class Subscription(models.Model):
 				self.started_at = at
 			base = self.expires_at if extends else at
 			self.expires_at = base + timedelta(days=days)
-		self.save(update_fields=["plan", "started_at", "expires_at", "updated_at"])
+		# A new window deserves new reminders, even when only the end date moved.
+		self.reset_reminder()
+		self.save(
+			update_fields=[
+				"plan",
+				"started_at",
+				"expires_at",
+				"updated_at",
+				*self.REMINDER_FIELDS,
+			]
+		)
 
 
 class Coupon(models.Model):
@@ -459,3 +491,48 @@ class GiveawayWinner(models.Model):
 
 	def __str__(self) -> str:
 		return f"{self.giveaway_id} - {self.telegram_id} ({self.days} kun)"
+
+
+class SupportMessage(models.Model):
+	"""A message a user sent to the administrators from the bot or the website.
+
+	The row is the durable record of the request: the website and the polling
+	bot are separate processes, so the message is forwarded over the Bot API
+	(see ``users.telegram_notify``) and the outcome is kept here — an
+	undelivered message is never silently lost.
+	"""
+
+	class Source(models.TextChoices):
+		BOT = "bot", "Bot"
+		WEB = "web", "Sayt"
+
+	class Status(models.TextChoices):
+		PENDING = "pending", "Yuborilmoqda"
+		SENT = "sent", "Yuborildi"
+		FAILED = "failed", "Yuborilmadi"
+
+	user = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.CASCADE,
+		related_name="support_messages",
+	)
+	telegram_id = models.PositiveBigIntegerField(null=True, blank=True)
+	text = models.TextField()
+	source = models.CharField(max_length=4, choices=Source.choices, default=Source.WEB)
+	status = models.CharField(
+		max_length=8, choices=Status.choices, default=Status.PENDING
+	)
+	error = models.CharField(max_length=255, blank=True, default="")
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		indexes = [models.Index(fields=["-created_at"], name="support_created_idx")]
+
+	def __str__(self) -> str:
+		return f"{self.get_source_display()} → admin ({self.user_id}): {self.text[:40]}"
+
+	def mark_delivered(self, delivered: bool, error: str = "") -> None:
+		self.status = self.Status.SENT if delivered else self.Status.FAILED
+		self.error = (error or "")[:255]
+		self.save(update_fields=["status", "error"])

@@ -39,6 +39,8 @@ export function SubscriptionPage() {
   const currentExpiresAt = subscription?.expires_at || null
 
   const [plans, setPlans] = useState([])
+  // Server-computed expiry reminder (same rule as the bot's scheduled DMs).
+  const [reminder, setReminder] = useState(null)
   const [cardNumber, setCardNumber] = useState('')
   const [pendingRequest, setPendingRequest] = useState(null)
   const [activePlan, setActivePlan] = useState(currentActive)
@@ -58,6 +60,7 @@ export function SubscriptionPage() {
     try {
       const data = await subscriptionApi.plans()
       setPlans(data.plans || [])
+      setReminder(data.reminder || null)
       setCardNumber(data.card_number || '')
       setPendingRequest(data.pending_request || null)
       setActivePlan(Boolean(data.current_active))
@@ -125,6 +128,23 @@ export function SubscriptionPage() {
       )}
 
       {loadError && <Alert color="red" mb="lg">{loadError}</Alert>}
+
+      {reminder && (
+        <Alert
+          color={reminder.stage === 'expired' ? 'red' : 'yellow'}
+          icon={
+            <i
+              className={`bi ${reminder.stage === 'expired' ? 'bi-exclamation-octagon' : 'bi-hourglass-split'}`}
+              aria-hidden="true"
+            />
+          }
+          mb="lg"
+        >
+          {reminder.stage === 'expired'
+            ? `Obunangiz ${new Date(reminder.expires_at).toLocaleDateString()} da tugagan. Kontentni yana ochish uchun tarifni tanlang.`
+            : `Obunangiz ${reminder.days} kundan keyin (${new Date(reminder.expires_at).toLocaleDateString()}) tugaydi. Uzaytirish uchun tarifni tanlang.`}
+        </Alert>
+      )}
       {!loading && !loadError && plans.length === 0 && (
         <Alert color="yellow" mb="lg">Tariflar topilmadi.</Alert>
       )}

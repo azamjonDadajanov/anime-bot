@@ -1,3 +1,4 @@
+import array
 import secrets
 
 from django.conf import settings
@@ -106,6 +107,11 @@ class MediaTitle(models.Model):
 		max_length=10,
 		choices=Status.choices,
 		default=Status.UPCOMING,
+	)
+	quiz_size = models.PositiveSmallIntegerField(
+		null=True,
+		blank=True,
+		help_text="Ko'rgach javob beriladigan savollar soni (bo'sh = global sozlama).",
 	)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
@@ -310,3 +316,132 @@ class ReadingProgress(models.Model):
 
 	def __str__(self):
 		return f"{self.user} - {self.part} - {self.page}-sahifa"
+
+
+class TitleEmbedding(models.Model):
+	"""Vector of one catalogue title in the multilingual sentence space.
+
+	Kept in its own table instead of on ``MediaTitle`` so the vector is written
+	only by the indexer, never travels with the catalogue payloads, and a missing
+	row simply means "not indexed yet". ``on_delete=CASCADE`` is what removes the
+	vector when its title disappears.
+
+	``document_hash`` is the digest of the text the vector was built from, so
+	the indexer can tell an untouched title from an edited one (a renamed title,
+	a new genre, a rewritten synopsis) and re-embed only the latter.
+	"""
+
+	title = models.OneToOneField(
+		MediaTitle,
+		on_delete=models.CASCADE,
+		related_name="ai_embedding",
+	)
+	# Which encoder produced the vector: a deployment that switches model gets a
+	# clean re-index instead of comparing incomparable vectors.
+	model_name = models.CharField(max_length=120)
+	dim = models.PositiveSmallIntegerField(default=384)
+	document_hash = models.CharField(max_length=64)
+	vector = models.BinaryField()
+	indexed_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["title_id"]
+		indexes = [models.Index(fields=["model_name"], name="titleembedding_model_idx")]
+
+	def __str__(self):
+		return f"{self.title} ({self.model_name})"
+
+	@staticmethod
+	def pack(vector) -> bytes:
+		"""Pack a sequence of floats into the bytes stored in ``vector``."""
+		return array.array("f", [float(value) for value in vector]).tobytes()
+
+	def to_vector(self) -> list:
+		"""The stored floats as a plain list (without pulling in numpy)."""
+		if not self.vector:
+			return []
+		values = array.array("f")
+		values.frombytes(bytes(self.vector))
+		return values.tolist()
+
+	@property
+	def dimensions(self) -> int:
+		"""Float count actually stored (0 when the column is empty)."""
+		return len(bytes(self.vector or b"")) // array.array("f").itemsize
+
+
+class AIProvider(models.Model):
+	"""One chat model the AI search's reasoning step may call, in preference order.
+
+	The reasoning step must survive a provider running out of quota, so it is
+	not configured in one place but as a *chain* of rows: ``movies.llm`` reads
+	them with a function and tries them one at a time (see
+	:func:`movies.llm.provider_chain`). A row is also where the runtime state
+	lives — measured latency, failure count, cooldown — so every gunicorn worker
+	and the bot process share the same picture of which provider still works, and
+	nothing has to be redeployed to add a key or re-order the chain.
+
+	``priority`` is the operator's preference (lower first); ``avg_latency_ms``
+	breaks ties in favour of the provider that already proved fast. A timeout or
+	a "rate limit" answer sets ``cooldown_until``, so the next request skips it
+	instead of paying for the same failure again.
+	"""
+
+	class Kind(models.TextChoices):
+		GROQ = "groq", "Groq"
+		GEMINI = "gemini", "Google Gemini"
+		OPENAI = "openai", "OpenAI"
+		CUSTOM = "custom", "Boshqa (OpenAI-mos)"
+
+	name = models.CharField(max_length=60, unique=True, help_text="Masalan: Groq (asosiy)")
+	kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.GROQ)
+	api_key = models.CharField(
+		max_length=200,
+		blank=True,
+		help_text="Bo'sh bo'lsa bu provayder ishlatilmaydi (AI_LLM_API_KEY .env'dan olinadi).",
+	)
+	model = models.CharField(
+		max_length=120, blank=True, help_text="Bo'sh = provayderning standart modeli."
+	)
+	base_url = models.CharField(
+		max_length=200, blank=True, help_text="Bo'sh = provayderning standart manzili."
+	)
+	priority = models.PositiveSmallIntegerField(
+		default=100, help_text="Kichik raqam avval uriniladi."
+	)
+	is_active = models.BooleanField(default=True)
+	# --- runtime state (written by movies.llm after every call) ---------------
+	avg_latency_ms = models.PositiveIntegerField(default=0)
+	success_count = models.PositiveIntegerField(default=0)
+	failure_count = models.PositiveIntegerField(default=0)
+	cooldown_until = models.DateTimeField(null=True, blank=True)
+	last_error = models.CharField(max_length=200, blank=True)
+	last_used_at = models.DateTimeField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ["priority", "avg_latency_ms", "id"]
+		verbose_name = "AI provayder"
+		verbose_name_plural = "AI provayderlar"
+
+	def __str__(self):
+		return f"{self.name} ({self.kind})"
+
+	@property
+	def cooling_down(self) -> bool:
+		"""True while this provider is being skipped after a failure."""
+		from django.utils import timezone as _timezone
+
+		return bool(self.cooldown_until and self.cooldown_until > _timezone.now())
+
+	@property
+	def masked_key(self) -> str:
+		"""The key as it is safe to display (never the whole secret)."""
+		value = (self.api_key or "").strip()
+		if not value:
+			return "—"
+		if len(value) <= 8:
+			return "•" * len(value)
+		return f"{value[:4]}…{value[-4:]}"
+

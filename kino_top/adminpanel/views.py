@@ -13,17 +13,19 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bot.models import BotLogEntry, BotSettings, Broadcast
+from games.models import AnimeVerification, MonthlyPrize, QuizAttempt, QuizQuestion
 from movies.models import Genre, MediaPart, MediaTitle, TelegramChannel, TelegramMedia
 from users.models import Coupon, Subscription, SubscriptionRequest, TelegramUser
 from users.plans import PLAN_ORDER, plan_price
 
 from .broadcast_runner import start_broadcast_async
-from .coupon_publisher import publish_coupon_to_channel
+from .coupon_publisher import maybe_auto_publish_coupon, publish_coupon_to_channel
 from .models import Income
 from .permissions import IsStaffAdmin
 from .serializers import (
 	AdminUserDetailSerializer,
 	AdminUserSerializer,
+	AnimeVerificationAdminSerializer,
 	BotLogAdminSerializer,
 	BotSettingsSerializer,
 	BroadcastAdminSerializer,
@@ -33,6 +35,9 @@ from .serializers import (
 	CouponWriteSerializer,
 	GenreAdminSerializer,
 	IncomeSerializer,
+	MonthlyPrizeAdminSerializer,
+	QuizAttemptAdminSerializer,
+	QuizQuestionAdminSerializer,
 	SubscriptionRequestAdminSerializer,
 	UserBlockSerializer,
 	UserPlanUpdateSerializer,
@@ -335,6 +340,10 @@ class AdminCouponViewSet(viewsets.ModelViewSet):
 		serializer = self.get_serializer(data=request.data)
 		serializer.is_valid(raise_exception=True)
 		coupon = serializer.save()
+		# Post the promotion to the public channel right away when the
+		# administrator enabled auto-publishing (never fails the request).
+		maybe_auto_publish_coupon(coupon.pk)
+		coupon.refresh_from_db()
 		return Response(self._payload(coupon), status=status.HTTP_201_CREATED)
 
 	def update(self, request, *args, **kwargs):
@@ -503,3 +512,179 @@ class AdminLogListView(generics.ListAPIView):
 		if level:
 			queryset = queryset.filter(level=level)
 		return queryset
+
+
+# ---------------------------------------------------------------------------
+# Games: quiz questions, leaderboard, attempts, verifications, monthly prizes
+# ---------------------------------------------------------------------------
+
+
+@extend_schema(tags=["Admin"])
+class AdminQuizQuestionViewSet(viewsets.ModelViewSet):
+	"""Quiz savollarini to'liq boshqarish (CRUD)."""
+
+	queryset = QuizQuestion.objects.select_related("title")
+	serializer_class = QuizQuestionAdminSerializer
+	permission_classes = [IsStaffAdmin]
+	pagination_class = AdminPagination
+
+	def get_queryset(self):
+		queryset = super().get_queryset()
+		search = self.request.query_params.get("search", "").strip()
+		if search:
+			queryset = queryset.filter(Q(text__icontains=search) | Q(title__title__icontains=search))
+		title_id = self.request.query_params.get("title", "").strip()
+		if title_id.isdigit():
+			queryset = queryset.filter(title_id=int(title_id))
+		is_active = self.request.query_params.get("is_active", "").strip()
+		if is_active == "1":
+			queryset = queryset.filter(is_active=True)
+		elif is_active == "0":
+			queryset = queryset.filter(is_active=False)
+		return queryset
+
+
+@extend_schema(tags=["Admin"])
+class AdminGameLeaderboardView(APIView):
+	"""O'yin reytingi: barcha o'yinchilarning ballari va darajalari."""
+
+	permission_classes = [IsStaffAdmin]
+
+	def get(self, request):
+		from django.contrib.auth import get_user_model
+
+		from games.services import level_for, user_points
+
+		rows = (
+			QuizAttempt.objects.filter(is_suspicious=False, finished_at__isnull=False)
+			.values("user_id")
+			.annotate(points=Sum("points_awarded"), attempts=Count("id"))
+			.order_by("-points", "user_id")
+		)
+		limit = min(max(int(request.query_params.get("limit", 100) or 100), 1), 500)
+		results = []
+		for index, row in enumerate(rows[:limit], start=1):
+			profile = get_user_model().objects.filter(pk=row["user_id"]).select_related("telegram_profile").first()
+			name = ""
+			telegram_id = None
+			if profile is not None:
+				telegram = getattr(profile, "telegram_profile", None)
+				telegram_id = getattr(telegram, "telegram_id", None)
+				name = (
+					getattr(telegram, "first_name", "")
+					or getattr(profile, "username", "")
+					or str(row["user_id"])
+				)
+			verified = AnimeVerification.objects.filter(user_id=row["user_id"]).count()
+			level = level_for(int(row["points"] or 0))
+			results.append({
+				"rank": index,
+				"user_id": row["user_id"],
+				"telegram_id": telegram_id,
+				"name": name,
+				"points": int(row["points"] or 0),
+				"attempts": int(row["attempts"] or 0),
+				"verified": verified,
+				"level": level["level"],
+				"level_name": level["name"],
+			})
+		total_players = rows.count()
+		return Response({"results": results, "count": total_players})
+
+
+@extend_schema(tags=["Admin"])
+class AdminQuizAttemptViewSet(viewsets.ModelViewSet):
+	"""O'yin urinishlari: ko'rish, tahrirlash (suspect belgilash), o'chirish."""
+
+	queryset = QuizAttempt.objects.select_related("user__telegram_profile", "title")
+	serializer_class = QuizAttemptAdminSerializer
+	permission_classes = [IsStaffAdmin]
+	pagination_class = AdminPagination
+	http_method_names = ["get", "patch", "delete", "head", "options"]
+
+	def get_queryset(self):
+		queryset = super().get_queryset()
+		search = self.request.query_params.get("search", "").strip()
+		if search:
+			queryset = queryset.filter(
+				Q(user__username__icontains=search)
+				| Q(title__title__icontains=search)
+				| Q(user__telegram_profile__telegram_id__icontains=search)
+			)
+		title_id = self.request.query_params.get("title", "").strip()
+		if title_id.isdigit():
+			queryset = queryset.filter(title_id=int(title_id))
+		suspicious = self.request.query_params.get("suspicious", "").strip()
+		if suspicious == "1":
+			queryset = queryset.filter(is_suspicious=True)
+		elif suspicious == "0":
+			queryset = queryset.filter(is_suspicious=False)
+		passed = self.request.query_params.get("passed", "").strip()
+		if passed == "1":
+			queryset = queryset.filter(passed=True)
+		elif passed == "0":
+			queryset = queryset.filter(passed=False)
+		return queryset
+
+
+@extend_schema(tags=["Admin"])
+class AdminAnimeVerificationViewSet(viewsets.ModelViewSet):
+	"""Tasdiqlangan animelar: qo'shish, o'chirish, tahrirlash."""
+
+	queryset = AnimeVerification.objects.select_related("user__telegram_profile", "title")
+	serializer_class = AnimeVerificationAdminSerializer
+	permission_classes = [IsStaffAdmin]
+	pagination_class = AdminPagination
+
+	def get_queryset(self):
+		queryset = super().get_queryset()
+		search = self.request.query_params.get("search", "").strip()
+		if search:
+			queryset = queryset.filter(
+				Q(user__username__icontains=search)
+				| Q(title__title__icontains=search)
+				| Q(user__telegram_profile__telegram_id__icontains=search)
+			)
+		title_id = self.request.query_params.get("title", "").strip()
+		if title_id.isdigit():
+			queryset = queryset.filter(title_id=int(title_id))
+		return queryset
+
+
+@extend_schema(tags=["Admin"])
+class AdminMonthlyPrizeViewSet(viewsets.ModelViewSet):
+	"""Oylik mukofotlar: CRUD + avtomatik berish."""
+
+	queryset = MonthlyPrize.objects.select_related("user__telegram_profile")
+	serializer_class = MonthlyPrizeAdminSerializer
+	permission_classes = [IsStaffAdmin]
+	pagination_class = AdminPagination
+
+	def get_queryset(self):
+		queryset = super().get_queryset()
+		year = self.request.query_params.get("year", "").strip()
+		if year.isdigit():
+			queryset = queryset.filter(year=int(year))
+		month = self.request.query_params.get("month", "").strip()
+		if month.isdigit():
+			queryset = queryset.filter(month=int(month))
+		return queryset
+
+	@extend_schema(request=None, tags=["Admin"])
+	@action(detail=False, methods=["post"])
+	def award(self, request):
+		"""Berilgan yil/oy uchun eng faol obunasisiz o'yinchiga mukofot bering."""
+		from games.services import award_monthly_prize_sync
+
+		try:
+			year = int(request.data.get("year") or timezone.now().year)
+			month = int(request.data.get("month") or timezone.now().month)
+		except (TypeError, ValueError):
+			return Response({"detail": "Yil va oy noto'g'ri."}, status=400)
+		if not 1 <= month <= 12:
+			return Response({"detail": "Oy 1..12 bo'lishi kerak."}, status=400)
+
+		prize = award_monthly_prize_sync(year, month)
+		if prize is None:
+			return Response({"detail": f"{year}-{month:02d} uchun mukofot allaqachon berilgan yoki nomzod yo'q."}, status=400)
+		return Response(MonthlyPrizeAdminSerializer(prize).data, status=status.HTTP_201_CREATED)

@@ -12,7 +12,10 @@ Two deliberate exceptions keep the flow usable without weakening the rule:
   the same prompt;
 * the media callbacks (``watch:``/``wt:``/``q:``) are allowed through because
   their handlers already enforce access *and* remember the requested episode,
-  so pressing ``✅ Tekshirish`` right after joining delivers it.
+  so pressing ``✅ Tekshirish`` right after joining delivers it;
+* the ``✉️ Adminga xabar`` screen stays open (button *and* the message that
+  follows it) because "I joined but the bot still refuses me" is exactly the
+  question an administrator has to answer.
 
 The prompt lists only the channels the user has not joined yet. Administrators
 are never gated, and a channel the bot cannot inspect never blocks anyone
@@ -30,6 +33,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 from .. import callbacks as cb
 from ..keyboards.common import subscribe_keyboard
 from ..services.access import missing_channels
+from ..states import UserSupportStates
 from ..texts import SUBSCRIPTION_REQUIRED
 from .context import inner_event
 
@@ -38,7 +42,10 @@ logger = logging.getLogger(__name__)
 # Callbacks handled even while the gate is closed (see the module docstring).
 # Referral screens stay reachable so a user *without* a subscription can invite
 # friends and claim the milestone reward that gives them one.
-ALLOWED_WHILE_CLOSED = (cb.SUB_CHECK, cb.REF)
+ALLOWED_WHILE_CLOSED = (cb.SUB_CHECK, cb.REF, cb.SUPPORT)
+# The text the user types after pressing "✉️ Adminga xabar" is part of the same
+# allowed screen, so the gate must not swallow it.
+SUPPORT_STATE = UserSupportStates.message.state
 REF_CLAIM_PREFIX = f"{cb.REF_CLAIM}:"
 MEDIA_CALLBACK_PREFIXES = (f"{cb.WATCH}:", f"{cb.WATCH_TITLE}:", f"{cb.QUALITY}:")
 
@@ -80,6 +87,9 @@ class SubscriptionGateMiddleware(BaseMiddleware):
 			if payload.data and str(payload.data).startswith(REF_CLAIM_PREFIX):
 				# Milestone claims re-validate counts inside the service.
 				return await handler(event, data)
+		elif data.get("raw_state") == SUPPORT_STATE:
+			# The support prompt is already on screen; let the answer through.
+			return await handler(event, data)
 
 		missing = await missing_channels(bot, profile.telegram_id)
 		if not missing:

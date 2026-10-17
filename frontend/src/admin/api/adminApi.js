@@ -246,6 +246,68 @@ export const adminSettingsApi = {
   },
 }
 
+export const adminQuizApi = {
+  async list(params = {}) {
+    const { data } = await api.get('/admin/quiz-questions/', { params })
+    return data
+  },
+  async create(payload) {
+    const { data } = await api.post('/admin/quiz-questions/', payload)
+    return data
+  },
+  async update(id, payload) {
+    const { data } = await api.patch(`/admin/quiz-questions/${id}/`, payload)
+    return data
+  },
+  async remove(id) {
+    await api.delete(`/admin/quiz-questions/${id}/`)
+  },
+}
+
+export const adminGameApi = {
+  async leaderboard(params = {}) {
+    const { data } = await api.get('/admin/game/leaderboard/', { params })
+    return data
+  },
+  async attempts(params = {}) {
+    const { data } = await api.get('/admin/quiz-attempts/', { params })
+    return data
+  },
+  async updateAttempt(id, payload) {
+    const { data } = await api.patch(`/admin/quiz-attempts/${id}/`, payload)
+    return data
+  },
+  async removeAttempt(id) {
+    await api.delete(`/admin/quiz-attempts/${id}/`)
+  },
+  async verifications(params = {}) {
+    const { data } = await api.get('/admin/verifications/', { params })
+    return data
+  },
+  async createVerification(payload) {
+    const { data } = await api.post('/admin/verifications/', payload)
+    return data
+  },
+  async removeVerification(id) {
+    await api.delete(`/admin/verifications/${id}/`)
+  },
+  async prizes(params = {}) {
+    const { data } = await api.get('/admin/monthly-prizes/', { params })
+    return data
+  },
+  async createPrize(payload) {
+    const { data } = await api.post('/admin/monthly-prizes/', payload)
+    return data
+  },
+  async removePrize(id) {
+    await api.delete(`/admin/monthly-prizes/${id}/`)
+  },
+  async awardPrize(payload) {
+    const { data } = await api.post('/admin/monthly-prizes/award/', payload)
+    return data
+  },
+}
+
 export const adminLogApi = {
   async list(params = {}) {
     const { data } = await api.get('/admin/logs/', { params })

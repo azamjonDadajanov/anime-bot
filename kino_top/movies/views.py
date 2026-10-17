@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
@@ -13,9 +14,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# The most titles one AI search may return in a single response. The search is
+# exact, so this is a payload/rendering cap, not a technical one: a client that
+# wants the rest of its matches asks again with a larger ``limit``.
+AI_SEARCH_MAX_RESULTS = 30
+
+from . import ai_reasoning, ai_search, embeddings
 from .models import MediaPart, MediaTitle, MediaView, ReadingProgress, TelegramChannel, TelegramMedia
 from .permissions import IsAdminOrReadOnly
 from .serializers import (
+	AISearchQuerySerializer,
+	AISearchResponseSerializer,
 	MediaLookupSerializer,
 	MediaPartSerializer,
 	MediaTitleSerializer,
@@ -78,6 +87,22 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 			queryset = queryset.prefetch_related("genres", "parts", "parts__telegram_media")
 		return queryset
 
+	def perform_create(self, serializer):
+		title = serializer.save()
+		# Web orqali yangi kontent qo'shilganda ommaviy kanalga e'lon qilinadi
+		# (faqat "Avtomatik e'lon" yoqilgan bo'lsa).
+		from adminpanel.publisher import auto_publish_title
+
+		auto_publish_title(title.pk)
+
+	def perform_update(self, serializer):
+		old_status = self.get_object().status
+		title = serializer.save()
+		if old_status != MediaTitle.Status.COMPLETED and title.status == MediaTitle.Status.COMPLETED:
+			from adminpanel.publisher import auto_publish_completed
+
+			auto_publish_completed(title.pk)
+
 	@extend_schema(responses=MediaLookupSerializer, tags=["Catalog"])
 	@action(
 		detail=False,
@@ -110,6 +135,95 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 			part = MediaPart.objects.filter(pk=part_id, content=title).first()
 		view = MediaView.record(request.user, title, part=part, source=MediaView.Source.SITE)
 		return Response({"status": "ok", "view_id": view.pk if view else None})
+
+	@extend_schema(
+		request=AISearchQuerySerializer,
+		responses={200: AISearchResponseSerializer},
+		tags=["Catalog"],
+	)
+	@action(
+		detail=False,
+		methods=["post"],
+		url_path="ai-search",
+		permission_classes=[IsAuthenticated],
+	)
+	def ai_search(self, request):
+		"""Find titles by meaning instead of by name (subscribers only).
+
+		The request is embedded with the multilingual sentence encoder and ranked
+		against the vectors of every indexed title, so "sarguzasht va qo'rqinchli
+		animelar" matches adventure/horror titles even though no such word appears
+		in their names or genres. Each result carries the link and a one-sentence
+		summary; the model cannot answer a question the catalogue does not cover,
+		so an unrelated request comes back empty rather than misleading.
+		"""
+		serializer = AISearchQuerySerializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		if not ai_search.user_can_search(request.user):
+			return Response(
+				{
+					"code": "subscription_required",
+					"detail": ai_search.SUBSCRIPTION_REQUIRED_TEXT,
+				},
+				status=status.HTTP_403_FORBIDDEN,
+			)
+		if not ai_search.enabled() or not embeddings.is_ready():
+			return Response(
+				{"code": "ai_unavailable", "detail": ai_search.INDEX_UNAVAILABLE_TEXT},
+				status=status.HTTP_503_SERVICE_UNAVAILABLE,
+			)
+		if ai_search.index_is_empty():
+			# The model is there but nothing was ever embedded: a deployment that
+			# has not run `index_anime_embeddings` yet. Say so instead of
+			# answering "nothing found", which would look like a broken search.
+			return Response(
+				{"code": "index_empty", "detail": ai_search.INDEX_UNAVAILABLE_TEXT},
+				status=status.HTTP_503_SERVICE_UNAVAILABLE,
+			)
+		try:
+			limit = int(request.data.get("limit") or 0) or None
+		except (TypeError, ValueError):
+			limit = None
+		media_type = str(request.data.get("type") or "").strip()
+		if media_type and media_type not in MediaTitle.MediaType.values:
+			media_type = ""
+		try:
+			# Retrieval (encoder) runs always; the reasoning model adds the
+			# explanation and re-orders the picks, and is skipped entirely when
+			# no key is configured or the provider is unreachable.
+			answer = ai_reasoning.answer_search(
+				serializer.validated_data["query"],
+				limit=min(limit or ai_search.top_k(), AI_SEARCH_MAX_RESULTS),
+				media_type=media_type,
+			)
+		except embeddings.EmbeddingUnavailable as exc:
+			logger.warning("AI search is unavailable: %s", exc)
+			return Response(
+				{"code": "ai_unavailable", "detail": ai_search.INDEX_UNAVAILABLE_TEXT},
+				status=status.HTTP_503_SERVICE_UNAVAILABLE,
+			)
+		site_url = getattr(settings, "BOT_SITE_URL", "") or ""
+		results = [hit.as_dict(site_url=site_url) for hit in answer.hits]
+		return Response(
+			{
+				"query": answer.query,
+				"count": len(results),
+				# Every title above the similarity threshold, so the client can say
+				# how many matches exist beyond the returned page.
+				"total": answer.total,
+				"has_more": answer.has_more,
+				# The reasoning model's own words (empty when it is not configured
+				# or failed), plus its "fikrlash" trace.
+				"answer": answer.answer,
+				"thinking": answer.thinking,
+				"reasoning": answer.used_llm,
+				# True when the model answered a conversational question instead
+				# of searching: ``results`` is empty on purpose and the client
+				# should show ``answer`` alone, without the "nothing found" copy.
+				"conversational": answer.conversational,
+				"results": results,
+			}
+		)
 
 	def _serialize(self, request, queryset):
 		paginator = CatalogPagination()
@@ -182,6 +296,14 @@ class MediaPartViewSet(viewsets.ModelViewSet):
 		if content_id:
 			queryset = queryset.filter(content_id=content_id)
 		return queryset
+
+	def perform_create(self, serializer):
+		part = serializer.save()
+		# Web orqali yangi qism qo'shilganda ommaviy kanalga e'lon qilinadi
+		# (faqat "Avtomatik e'lon" yoqilgan bo'lsa).
+		from adminpanel.publisher import auto_publish_part
+
+		auto_publish_part(part.content_id, part.pk)
 
 	@extend_schema(tags=["Catalog"])
 	@action(detail=True, methods=["get", "delete"], url_path="pdf")

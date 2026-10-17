@@ -1,17 +1,21 @@
-"""Notify bot administrators about new subscription payment requests.
+"""Deliver messages from the web process through the Telegram Bot API.
 
 The website and the long-polling bot are separate processes, but the Bot API is
 stateless: any process holding the token can deliver a message. The inline
-keyboard uses the same ``a:<section>:<action>`` callback convention as the admin
-panel, so whichever administrator presses a button is handled by the running
-bot.
+keyboard of a payment request uses the same ``a:<section>:<action>`` callback
+convention as the admin panel, so whichever administrator presses a button is
+handled by the running bot.
+
+Three callers share this module: new payment requests, user support messages
+(``users.support``) and subscription expiry reminders (``users.reminders``).
 """
 
 from __future__ import annotations
 
+import html
 import json
 import logging
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 
 import httpx
 from django.conf import settings
@@ -73,6 +77,92 @@ def _telegram_photo(request) -> str:
 	if notes.startswith("telegram_photo:"):
 		return notes.split(":", 1)[1]
 	return ""
+
+
+def send_telegram_message(
+	chat_id: int, text: str, *, parse_mode: str = "HTML"
+) -> Tuple[bool, str]:
+	"""Send one Bot API message to ``chat_id``.
+
+	Returns ``(delivered, error)``: callers that keep a durable record (support
+	messages, reminders) store the reason a delivery failed instead of losing it.
+	"""
+	token = bot_token()
+	if not token:
+		logger.warning("Cannot send a Telegram message: BOT_TOKEN is empty.")
+		return False, "BOT_TOKEN is empty"
+	try:
+		with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+			response = client.post(
+				f"{API_BASE}/bot{token}/sendMessage",
+				data={"chat_id": chat_id, "text": text, "parse_mode": parse_mode},
+			)
+	except httpx.HTTPError as exc:  # pragma: no cover - network failure
+		logger.warning("Telegram message to %s failed: %s", chat_id, exc)
+		return False, str(exc)
+	if response.status_code == 200:
+		return True, ""
+	logger.warning(
+		"Telegram rejected the message for %s: %s %s",
+		chat_id,
+		response.status_code,
+		response.text[:300],
+	)
+	return False, f"{response.status_code} {response.text[:200]}"
+
+
+def _escape(value) -> str:
+	"""Escape the markup characters Telegram's HTML mode understands.
+
+	Apostrophes and quotes stay readable: ``quote=True`` would turn an ordinary
+	"to'lovim" into ``to&#x27;lovim`` in the administrator's chat.
+	"""
+	return html.escape(str(value or ""), quote=False)
+
+
+def _support_caption(message) -> str:
+	"""Header, sender and body of a user's support message."""
+	profile = getattr(message.user, "telegram_profile", None)
+	if profile is not None:
+		name = profile.first_name or profile.username or str(profile.telegram_id)
+		who = f"{_escape(name)} (<code>{profile.telegram_id}</code>)"
+	else:
+		account = (
+			getattr(message.user, "username", "")
+			or getattr(message.user, "email", "")
+			or f"user #{message.user_id}"
+		)
+		who = f"{_escape(account)} (sayt hisobi)"
+	source = "Bot" if message.source == "bot" else "Sayt"
+	return (
+		"✉️ <b>Foydalanuvchi xabari</b>\n\n"
+		f"👤 Kimdan: {who}\n"
+		f"📍 Manba: {source}\n"
+		f"🕒 {message.created_at:%d.%m.%Y %H:%M}\n\n"
+		f"{_escape(message.text)}"
+	)
+
+
+def notify_admins_user_message(message) -> Tuple[bool, str]:
+	"""Forward a stored support message to every administrator.
+
+	Returns ``(delivered, error)`` where ``error`` describes the last failure, so
+	:meth:`users.models.SupportMessage.mark_delivered` can record it.
+	"""
+	caption = _support_caption(message)
+	targets = admin_ids()
+	if not targets:
+		logger.warning("Cannot notify admins: ADMIN_IDS is empty.")
+		return False, "ADMIN_IDS is empty"
+	delivered = False
+	error = ""
+	for chat_id in targets:
+		ok, reason = send_telegram_message(chat_id, caption)
+		if ok:
+			delivered = True
+		else:
+			error = reason
+	return delivered, error
 
 
 def notify_admins_new_request(request) -> bool:

@@ -6,7 +6,8 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from movies.models import MediaTitle
 from movies.serializers import MediaTitleSerializer
 
-from .models import Subscription, SubscriptionRequest, UserSettings
+from .models import Subscription, SubscriptionRequest, SupportMessage, UserSettings
+from .support import MAX_LENGTH as SUPPORT_MAX_LENGTH
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -131,6 +132,24 @@ class SubscriptionRequestSerializer(serializers.ModelSerializer):
 			"updated_at",
 		]
 		read_only_fields = ["id", "status", "notes", "created_at", "updated_at"]
+
+
+class SupportMessageSerializer(serializers.ModelSerializer):
+	"""The website's "message the administrators" form."""
+
+	class Meta:
+		model = SupportMessage
+		fields = ["text"]
+
+	def validate_text(self, value):
+		text = (value or "").strip()
+		if not text:
+			raise serializers.ValidationError("Xabar matni bo'sh bo'lmasligi kerak.")
+		if len(text) > SUPPORT_MAX_LENGTH:
+			raise serializers.ValidationError(
+				f"Xabar {SUPPORT_MAX_LENGTH} belgidan oshmasligi kerak."
+			)
+		return text
 
 
 class SubscriptionRequestCreateSerializer(serializers.ModelSerializer):

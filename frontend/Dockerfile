@@ -24,8 +24,9 @@ RUN npm run build
 # --------------------------------------------------------------------------
 FROM nginx:1.27-alpine AS runtime
 
-# The reverse proxy for /api, /admin, /static and /media lives in this file, so
-# the SPA and the API are always the same origin.
+# The reverse proxy for /api, /django-admin, /static and /media lives in this
+# file, so the SPA and the API are always the same origin. /admin belongs to the
+# SPA (the React panel), never to Django.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 

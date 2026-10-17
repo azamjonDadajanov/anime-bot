@@ -1,0 +1,660 @@
+"""Chat client for the AI search's reasoning step — with automatic failover.
+
+One provider is a single point of failure: its free tier runs out, its key gets
+rate limited, its endpoint hiccups. So the reasoning step is not tied to a
+provider but to a **chain** of them:
+
+* the chain comes from the ``AIProvider`` table (see :func:`provider_chain`), so
+  an operator can change keys, add a second provider or re-order them without a
+  redeploy — and each entry carries its own key, model and base URL;
+* providers are tried **one at a time, in order**, stopping at the first answer.
+  Nothing is ever sent to two providers at once: the question is asked of the
+  cheapest/fastest one, and only a failure moves to the next;
+* the fastest-known provider goes first (``avg_latency_ms`` is an average of the
+  real calls it served), so a working setup keeps answering in one hop;
+* a provider that answered "rate limit" / "quota" is put on a cooldown (kept in
+  the database, so every gunicorn worker and the bot process see it) and skipped
+  until it expires — the next request does not pay for the failure again.
+
+Everything is time-boxed: ``AI_LLM_TIMEOUT`` per attempt and ``AI_LLM_DEADLINE``
+for the whole chain, so a dead provider costs seconds, never the user's patience.
+If *no* provider answers, :class:`LLMUnavailable` is raised and the search falls
+back to its vector results (see :mod:`movies.ai_reasoning`).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, Dict, List, Optional, Sequence
+
+from django.conf import settings
+from django.db import DatabaseError
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+# Presets: base URL and the model to use when the row (or ``AI_LLM_MODEL``) does
+# not name one. Kept in one place so adding a provider stays a data change.
+PRESETS: Dict[str, Dict[str, str]] = {
+	"groq": {
+		"base_url": "https://api.groq.com/openai/v1",
+		# Multilingual, fast, and offers JSON object/schema modes.
+		"model": "qwen/qwen3.8-27b",
+	},
+	"gemini": {
+		"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+		# The cheap, high-volume Gemini tier (has a free tier as well).
+		"model": "gemini-3.5-flash-lite",
+	},
+	"openai": {
+		"base_url": "https://api.openai.com/v1",
+		"model": "gpt-6-luna",
+	},
+	"custom": {
+		"base_url": "",
+		"model": "",
+	},
+}
+
+DEFAULT_PROVIDER = "groq"
+DEFAULT_TIMEOUT = 10
+# The whole chain, not one attempt: three dead providers must not add up to a
+# minute of waiting.
+DEFAULT_DEADLINE = 20
+# How long a provider is skipped after it says "rate limit" / "quota". A
+# ``Retry-After`` header wins when the provider sends one.
+QUOTA_COOLDOWN_SECONDS = 300
+# A network error or a 5xx: skip it briefly so the next search is not slowed
+# down by the same outage, but come back soon in case it was a blip.
+TRANSIENT_COOLDOWN_SECONDS = 60
+# Exponential moving average weight for the measured latency (keeps a single
+# slow call from re-ordering the chain).
+LATENCY_ALPHA = 0.35
+MAX_COOLDOWN_SECONDS = 1800
+# Quota/limit answers that mean "try the next provider", not "the request is bad".
+QUOTA_STATUS_CODES = frozenset({402, 429})
+# Sent as the User-Agent on every call. Cloudflare (in front of Groq and other
+# gateways) rejects urllib's default ``Python-urllib/3.x`` with HTTP 403 Error
+# 1010 before the request ever reaches the API, so a browser-like string is used.
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+
+class LLMUnavailable(RuntimeError):
+	"""No provider could answer, or none is configured at all.
+
+	Callers treat it as "answer from the vector search alone" — the search keeps
+	working, it just does not get an explanation.
+	"""
+
+
+class ProviderError(LLMUnavailable):
+	"""One provider refused or broke down; the chain moves on to the next.
+
+	``quota`` separates "this provider is out of room right now" (skip it for
+	minutes) from "this call went wrong" (skip it for a moment), which is what
+	the cooldown lengths are based on. ``retry_after`` is the provider's own
+	suggestion in seconds when it sends one.
+	"""
+
+	def __init__(self, message: str, *, quota: bool = False, retry_after: Optional[int] = None):
+		super().__init__(message)
+		self.quota = quota
+		self.retry_after = retry_after
+
+
+@dataclass(frozen=True)
+class ProviderConfig:
+	"""One attempt candidate: where to send it and with which credentials."""
+
+	name: str
+	kind: str
+	api_key: str
+	model: str
+	base_url: str
+	priority: int = 100
+	row_id: Optional[int] = None
+
+	@property
+	def label(self) -> str:
+		return self.name or f"{self.kind}:{self.model}"
+
+	@property
+	def key(self) -> str:
+		"""How this candidate is remembered inside one process (see the cooldowns)."""
+		if self.row_id is not None:
+			return f"row:{self.row_id}"
+		return f"env:{self.kind}"
+
+
+# --------------------------------------------------------------------------- #
+# Settings helpers
+# --------------------------------------------------------------------------- #
+def _int_setting(name: str, default: int) -> int:
+	try:
+		value = int(getattr(settings, name, default) or default)
+	except (TypeError, ValueError):
+		value = default
+	return value
+
+
+def timeout() -> int:
+	return max(3, min(60, _int_setting("AI_LLM_TIMEOUT", DEFAULT_TIMEOUT)))
+
+
+def deadline() -> int:
+	return max(timeout(), min(120, _int_setting("AI_LLM_DEADLINE", DEFAULT_DEADLINE)))
+
+
+def json_mode() -> bool:
+	"""Whether to ask for a strict JSON object.
+
+	Opt-in: Groq and OpenAI support it, but a gateway that does not would answer
+	with a 400 — and the prompt already asks for JSON, which the parser handles
+	either way.
+	"""
+	return bool(getattr(settings, "AI_LLM_JSON_MODE", False))
+
+
+def env_provider() -> ProviderConfig:
+	"""The single provider described by the environment (the pre-table setup).
+
+	Used when ``AIProvider`` has no active row, so an existing deployment that
+	only sets ``AI_LLM_API_KEY`` keeps working untouched.
+	"""
+	kind = str(getattr(settings, "AI_LLM_PROVIDER", "") or DEFAULT_PROVIDER).strip().lower()
+	if kind not in PRESETS:
+		kind = DEFAULT_PROVIDER
+	preset = PRESETS[kind]
+	return ProviderConfig(
+		name=kind,
+		kind=kind,
+		api_key=str(getattr(settings, "AI_LLM_API_KEY", "") or "").strip(),
+		model=str(getattr(settings, "AI_LLM_MODEL", "") or "").strip() or preset["model"],
+		base_url=(str(getattr(settings, "AI_LLM_BASE_URL", "") or "").strip() or preset["base_url"]).rstrip("/"),
+	)
+
+
+def _configured(config: ProviderConfig) -> bool:
+	return bool(config.api_key and config.model and config.base_url)
+
+
+def _monotonic() -> float:
+	"""The clock every wait in this module reads (a single point to fake in tests)."""
+	return time.monotonic()
+
+
+# --------------------------------------------------------------------------- #
+# In-process cooldowns
+# --------------------------------------------------------------------------- #
+# The database cooldown is what every worker shares, but it costs a write and a
+# read to notice. The worker that just hit a limit already knows, so it keeps the
+# same information in memory: the very next request in this process skips that
+# provider without paying for the failed call again. Keys are
+# :attr:`ProviderConfig.key`.
+_LOCAL_COOLDOWN: Dict[str, float] = {}
+_LOCAL_LOCK = threading.Lock()
+
+
+def cooldown_left(key: str) -> float:
+	"""Seconds this process will still skip ``key`` for (0 when it is usable)."""
+	with _LOCAL_LOCK:
+		until = _LOCAL_COOLDOWN.get(key, 0.0)
+	left = until - _monotonic()
+	return left if left > 0 else 0.0
+
+
+def set_cooldown(key: str, seconds: int) -> None:
+	"""Skip ``key`` for ``seconds`` in this process (never longer than the cap)."""
+	if not key:
+		return
+	seconds = max(1, min(MAX_COOLDOWN_SECONDS, int(seconds)))
+	with _LOCAL_LOCK:
+		_LOCAL_COOLDOWN[key] = _monotonic() + seconds
+
+
+def clear_cooldown(key: str) -> None:
+	"""Forget the in-process cooldown of ``key`` (it just answered)."""
+	with _LOCAL_LOCK:
+		_LOCAL_COOLDOWN.pop(key, None)
+
+
+def reset_cooldowns() -> None:
+	"""Forget every in-process cooldown (an operator fixed something; tests)."""
+	with _LOCAL_LOCK:
+		_LOCAL_COOLDOWN.clear()
+
+
+def soonest_cooldown_seconds() -> Optional[int]:
+	"""Seconds until a skipped provider is worth asking again (None if none is)."""
+	from .models import AIProvider
+
+	waits: List[float] = []
+	try:
+		now = timezone.now()
+		row = (
+			AIProvider.objects.filter(cooldown_until__gt=now)
+			.order_by("cooldown_until")
+			.values_list("cooldown_until", flat=True)
+			.first()
+		)
+	except DatabaseError:  # pragma: no cover - a DB mid-migration
+		row = None
+	if row is not None:
+		waits.append((row - now).total_seconds())
+	with _LOCAL_LOCK:
+		waits.extend(until - _monotonic() for until in _LOCAL_COOLDOWN.values())
+	positive = [value for value in waits if value > 0]
+	return int(max(1, min(positive))) if positive else None
+
+
+def no_provider_message() -> str:
+	"""Why the chain is empty: nothing is configured, or everyone is out of room.
+
+	The second case is the failover working as intended — and it is reported
+	with a wait, so the caller (and the operator reading a log) can tell the two
+	apart without guessing.
+	"""
+	wait = soonest_cooldown_seconds()
+	if wait is not None:
+		# No em dash: this string ends up in management-command output, and a
+		# cp1252 console (Windows) cannot print one.
+		return (
+			f"Barcha AI provayderlar limitda: {wait} soniyadan keyin avtomatik "
+			"qayta uriniladi."
+		)
+	return "LLM sozlanmagan (AI_LLM_API_KEY yoki faol AI provayder qatori kerak)."
+
+
+# --------------------------------------------------------------------------- #
+# The chain (a function over the database, not a hardcoded list)
+# --------------------------------------------------------------------------- #
+def provider_chain(*, include_cooling: bool = False) -> List[ProviderConfig]:
+	"""Every provider that may be tried, fastest usable one first.
+
+	Order is ``priority`` (an operator's preference) and then the measured
+	``avg_latency_ms`` (so a fast provider that already proved itself goes
+	first). Providers on cooldown are skipped unless ``include_cooling`` is set,
+	which the management command uses to *show* them — a cooldown lives both in
+	the row (shared by every worker) and in this process (so the worker that hit
+	the limit does not ask that provider a second time).
+
+	Reading the rows here — rather than in the caller — means the whole feature
+	asks one function "who can answer?", and a deployment with no rows falls
+	back to the environment-configured provider.
+	"""
+	from .models import AIProvider
+
+	now = timezone.now()
+	configs: List[ProviderConfig] = []
+	try:
+		rows = list(
+			AIProvider.objects.filter(is_active=True).order_by(
+				"priority", "avg_latency_ms", "id"
+			)
+		)
+	except DatabaseError as exc:  # pragma: no cover - a DB mid-migration
+		# The table may not exist yet (a fresh deployment, or the bot process
+		# starting before ``migrate``). Reasoning is optional, so fall back to
+		# the environment instead of breaking the search.
+		logger.warning("AI providers could not be read (%s); using .env settings.", exc)
+		rows = []
+	for row in rows:
+		if include_cooling:
+			pass
+		elif row.cooldown_until and row.cooldown_until > now:
+			continue
+		elif cooldown_left(f"row:{row.pk}") > 0:
+			continue
+		preset = PRESETS.get(row.kind, PRESETS["custom"])
+		config = ProviderConfig(
+			name=row.name,
+			kind=row.kind,
+			api_key=(row.api_key or "").strip(),
+			model=(row.model or "").strip() or preset["model"],
+			base_url=(row.base_url or "").strip().rstrip("/") or preset["base_url"],
+			priority=int(row.priority or 100),
+			row_id=row.pk,
+		)
+		if _configured(config):
+			configs.append(config)
+	if configs:
+		return configs
+	fallback = env_provider()
+	if not _configured(fallback):
+		return []
+	if not include_cooling and cooldown_left(fallback.key) > 0:
+		return []
+	return [fallback]
+
+
+def is_configured() -> bool:
+	"""True when at least one usable provider exists (DB chain or environment)."""
+	if not bool(getattr(settings, "AI_LLM_ENABLED", True)):
+		return False
+	return bool(provider_chain())
+
+
+# The reasoning cache keys on *which* models may answer, and recomputing that
+# from the database on every (also cached) search would be a needless query on
+# the hot path. Thirty seconds is far below any human-noticeable staleness for
+# a configuration that changes when an operator edits a row.
+_SIGNATURE_TTL_SECONDS = 30
+_SIGNATURE: Dict[str, Any] = {"at": 0.0, "value": ()}
+
+
+def chain_signature() -> tuple:
+	"""A cheap identity of the current chain: ``((name, model), ...)``.
+
+	Two answers produced by different models are not interchangeable, so the
+	reasoning cache must notice a provider change. Cached for
+	:data:`_SIGNATURE_TTL_SECONDS` to keep the search path free of extra queries.
+	"""
+	now = time.monotonic()
+	value = _SIGNATURE.get("value")
+	if value and now - float(_SIGNATURE.get("at") or 0) < _SIGNATURE_TTL_SECONDS:
+		return value
+	signature = tuple((config.label, config.model) for config in provider_chain())
+	_SIGNATURE["at"] = now
+	_SIGNATURE["value"] = signature
+	return signature
+
+
+def reset_signature_cache() -> None:
+	"""Drop the cached chain signature (tests, or right after an edit)."""
+	_SIGNATURE["at"] = 0.0
+	_SIGNATURE["value"] = ()
+
+
+def configuration() -> Dict[str, Any]:
+	"""A safe description for the management command; never returns a key.
+
+	``usable`` is the chain the next search would actually try, so a provider
+	that is cooling down is listed but not counted as available.
+	"""
+	chain = provider_chain(include_cooling=True)
+	usable = provider_chain()
+	usable_keys = {config.key for config in usable}
+	return {
+		"configured": bool(usable),
+		"usable": len(usable),
+		"next_retry_in": soonest_cooldown_seconds(),
+		"providers": [
+			{
+				"name": config.label,
+				"kind": config.kind,
+				"model": config.model,
+				"base_url": config.base_url,
+				"priority": config.priority,
+				"key_set": bool(config.api_key),
+				"usable": config.key in usable_keys,
+			}
+			for config in chain
+		],
+		"timeout": timeout(),
+		"deadline": deadline(),
+		"from_database": any(config.row_id for config in chain),
+	}
+
+
+def health() -> List[Dict[str, Any]]:
+	"""Per-provider runtime state (used by ``--status`` and the admin)."""
+	from .models import AIProvider
+
+	now = timezone.now()
+	rows = []
+	for row in AIProvider.objects.order_by("priority", "avg_latency_ms", "id"):
+		rows.append(
+			{
+				"name": row.name,
+				"kind": row.kind,
+				"model": row.model or PRESETS.get(row.kind, PRESETS["custom"])["model"],
+				"is_active": row.is_active,
+				"key_set": bool(row.api_key),
+				"priority": row.priority,
+				"avg_latency_ms": row.avg_latency_ms,
+				"success_count": row.success_count,
+				"failure_count": row.failure_count,
+				"cooling_down": bool(row.cooldown_until and row.cooldown_until > now),
+				"cooldown_until": row.cooldown_until,
+				"last_error": row.last_error,
+			}
+		)
+	return rows
+
+
+def _record_success(row_id: Optional[int], elapsed_ms: int) -> None:
+	"""Fold one good call into the row's measured latency (best effort)."""
+	from .models import AIProvider
+
+	if row_id is None:
+		return
+	# Bookkeeping must never cost an answer: a locked table, a replica in
+	# recovery or a missing migration cannot turn a working reply into an error.
+	try:
+		row = AIProvider.objects.filter(pk=row_id).first()
+		if row is None:
+			return
+		previous = int(row.avg_latency_ms or 0)
+		average = (
+			int(previous * (1 - LATENCY_ALPHA) + elapsed_ms * LATENCY_ALPHA)
+			if previous
+			else int(elapsed_ms)
+		)
+		AIProvider.objects.filter(pk=row_id).update(
+			avg_latency_ms=average,
+			success_count=int(row.success_count or 0) + 1,
+			last_used_at=timezone.now(),
+			cooldown_until=None,
+			last_error="",
+		)
+	except DatabaseError as exc:
+		logger.warning("AI provider %s could not be updated: %s", row_id, exc)
+
+
+def _record_failure(
+	row_id: Optional[int], message: str, *, cooldown_seconds: Optional[int]
+) -> None:
+	"""Count a failure and put the row on cooldown (best effort)."""
+	logger.warning("AI provider %s failed: %s", row_id, str(message)[:200])
+	from .models import AIProvider
+
+	if row_id is None:
+		return
+	until = None
+	if cooldown_seconds:
+		seconds = max(5, min(MAX_COOLDOWN_SECONDS, int(cooldown_seconds)))
+		until = timezone.now() + timedelta(seconds=seconds)
+	try:
+		row = AIProvider.objects.filter(pk=row_id).first()
+		if row is None:
+			return
+		AIProvider.objects.filter(pk=row_id).update(
+			failure_count=int(row.failure_count or 0) + 1,
+			last_error=str(message)[:200],
+			cooldown_until=until,
+			last_used_at=timezone.now(),
+		)
+	except DatabaseError as exc:
+		logger.warning("AI provider %s could not be updated: %s", row_id, exc)
+
+
+def _retry_after_seconds(headers) -> Optional[int]:
+	"""``Retry-After`` in seconds when the provider bothers to send one."""
+	raw = (headers or {}).get("Retry-After") if headers is not None else None
+	try:
+		value = int(str(raw).strip())
+	except (TypeError, ValueError):
+		return None
+	return value if value > 0 else None
+
+
+# --------------------------------------------------------------------------- #
+# One attempt
+# --------------------------------------------------------------------------- #
+def _attempt(
+	config: ProviderConfig,
+	messages: Sequence[Dict[str, str]],
+	*,
+	max_tokens: int,
+	temperature: float,
+	seconds: int,
+) -> str:
+	"""Send one request; failures raise :class:`ProviderError` with a reason."""
+	payload: Dict[str, Any] = {
+		"model": config.model,
+		"messages": list(messages),
+		# Deterministic enough that the same request does not produce a different
+		# explanation every time.
+		"temperature": float(temperature),
+		"max_tokens": int(max_tokens),
+	}
+	if json_mode():
+		payload["response_format"] = {"type": "json_object"}
+	request = urllib.request.Request(
+		f"{config.base_url}/chat/completions",
+		data=json.dumps(payload).encode("utf-8"),
+		headers={
+			"Content-Type": "application/json",
+			"Accept": "application/json",
+			"Authorization": f"Bearer {config.api_key}",
+			# urllib's default ``Python-urllib/3.x`` trips the Cloudflare bot
+			# filter in front of some providers (Groq answers HTTP 403 Error
+			# 1010). A browser-like string is treated as a normal client.
+			"User-Agent": USER_AGENT,
+		},
+		method="POST",
+	)
+	try:
+		with urllib.request.urlopen(request, timeout=max(3, int(seconds))) as response:
+			body = json.loads(response.read().decode("utf-8", "replace"))
+	except urllib.error.HTTPError as exc:
+		detail = ""
+		try:
+			detail = exc.read().decode("utf-8", "replace")[:200]
+		except Exception:  # noqa: BLE001 - the error body is best effort
+			detail = ""
+		raise ProviderError(
+			f"{config.label} HTTP {exc.code}: {detail}",
+			quota=exc.code in QUOTA_STATUS_CODES,
+			retry_after=_retry_after_seconds(exc.headers),
+		) from exc
+	except urllib.error.URLError as exc:
+		raise ProviderError(f"{config.label} javob bermadi: {exc.reason}") from exc
+	except (TimeoutError, OSError) as exc:
+		raise ProviderError(f"{config.label} bilan aloqa uzildi: {exc}") from exc
+	except json.JSONDecodeError as exc:
+		raise ProviderError(f"{config.label} noto'g'ri javob qaytardi.") from exc
+
+	try:
+		return str(body["choices"][0]["message"]["content"] or "")
+	except (KeyError, IndexError, TypeError) as exc:
+		raise ProviderError(f"{config.label} javobida 'choices' yo'q.") from exc
+
+
+def chat(
+	messages: Sequence[Dict[str, str]],
+	*,
+	max_tokens: int = 700,
+	temperature: float = 0.2,
+	timeout_seconds: Optional[int] = None,
+) -> str:
+	"""One chat completion, tried over the whole provider chain.
+
+	Providers are attempted strictly one after another (never in parallel, and
+	the request is never sent to two of them: the first answer wins and the walk
+	stops there). A provider that reports a limit is put on cooldown — in this
+	process and in the database, so every worker skips it — and the next one is
+	asked; the deadline caps the total wait.
+
+	When *every* provider is on cooldown the call does not touch the network at
+	all: it fails immediately with the wait it knows about, which is what keeps a
+	search during an outage as fast as one during normal operation. Raises
+	:class:`LLMUnavailable` when nobody answers.
+	"""
+	chain = provider_chain()
+	if not chain:
+		# No network attempt is made in this case: the answer comes from the
+		# vectors alone, in milliseconds.
+		raise LLMUnavailable(no_provider_message())
+
+	per_attempt = timeout() if timeout_seconds is None else max(3, int(timeout_seconds))
+	hard_deadline = _monotonic() + deadline()
+	errors: List[str] = []
+
+	for position, config in enumerate(chain):
+		# What is left of the chain's budget, not another full timeout: two hard
+		# providers cost the deadline, never twice the per-attempt timeout.
+		remaining = hard_deadline - _monotonic()
+		if remaining <= 1:
+			errors.append("vaqt chegarasi tugadi")
+			break
+		started = _monotonic()
+		try:
+			text = _attempt(
+				config,
+				messages,
+				max_tokens=max_tokens,
+				temperature=temperature,
+				seconds=int(min(per_attempt, remaining)),
+			)
+		except LLMUnavailable as exc:
+			is_quota = bool(getattr(exc, "quota", False))
+			retry_after = getattr(exc, "retry_after", None)
+			cooldown = (
+				(retry_after or QUOTA_COOLDOWN_SECONDS)
+				if is_quota
+				else TRANSIENT_COOLDOWN_SECONDS
+			)
+			# Both cooldowns are set before the next provider is tried: this
+			# process skips the failed one from the next request on, and every
+			# other worker learns about it from the row.
+			set_cooldown(config.key, cooldown)
+			_record_failure(config.row_id, str(exc), cooldown_seconds=cooldown)
+			errors.append(str(exc))
+			logger.info(
+				"AI provider %s failed (%s), trying the next of %s",
+				config.label,
+				"limit" if is_quota else "error",
+				len(chain) - position - 1,
+			)
+			continue
+		elapsed_ms = int((_monotonic() - started) * 1000)
+		clear_cooldown(config.key)
+		_record_success(config.row_id, elapsed_ms)
+		logger.debug("AI answer from %s in %sms", config.label, elapsed_ms)
+		return text
+
+	raise LLMUnavailable("; ".join(errors) or "Hech bir provayder javob bermadi.")
+
+
+def parse_json_object(text: str) -> Dict[str, Any]:
+	"""Pull the JSON object out of a model answer.
+
+	Models wrap JSON in prose or a ``` fence often enough that being strict here
+	would throw away good answers; the first ``{...}`` block is extracted and
+	parsed. Raises :class:`LLMUnavailable` when there is nothing usable.
+	"""
+	raw = str(text or "").strip()
+	if raw.startswith("```"):
+		raw = raw.strip("`")
+		if "\n" in raw:
+			raw = raw.split("\n", 1)[1]
+		raw = raw.replace("```", "")
+	start = raw.find("{")
+	end = raw.rfind("}")
+	if start == -1 or end <= start:
+		raise LLMUnavailable("Javobda JSON topilmadi.")
+	try:
+		parsed = json.loads(raw[start : end + 1])
+	except json.JSONDecodeError as exc:
+		raise LLMUnavailable(f"JSON o'qilmadi: {exc}") from exc
+	if not isinstance(parsed, dict):
+		raise LLMUnavailable("JSON obyekt emas.")
+	return parsed

@@ -244,13 +244,14 @@ export function AnimeGamePage() {
                 </Group>
                 <Text size="sm" c="dimmed" mb="md">
                   {item.points} ball · {item.bot_views} marta ochilgan
+                  {item.quiz_size ? ` · ${item.quiz_size} savol` : ''}
                 </Text>
                 <Button
                   fullWidth
                   disabled={!item.ready}
                   onClick={() => startQuiz(item.id)}
                 >
-                  {item.ready ? "Boshlash" : `Savollar tayyor emas (${item.questions}/5)`}
+                  {item.ready ? 'Boshlash' : `Savollar tayyor emas (${item.questions}/${item.quiz_size || 5})`}
                 </Button>
               </Card>
             ))}

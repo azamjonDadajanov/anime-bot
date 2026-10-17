@@ -13,6 +13,7 @@ Callback contract (kept short for Telegram's 64 byte limit):
 * manga titles use a plain ``url`` button to the website reader
 * ``favt:<title_pk>:<page>:<origin>``
 * ``subchk`` — re-check mandatory subscription
+* ``support`` — write a message to the administrators
 
 The parts navigator attached under a delivered part reuses ``watch:<part_pk>``,
 so every number and both arrows simply request that part's media again.
@@ -21,14 +22,14 @@ so every number and both arrows simply request that part's media again.
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import quote
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .. import callbacks as cb
 from ..config import game_url, webapp_url
-from ..utils import chunked
+from ..utils import chunked, truncate
 from .common import btn, keyboard, pagination_row
 
 # The parts navigator under a delivered part: five numbers per row, two rows a
@@ -40,6 +41,13 @@ PARTS_PER_PAGE = PARTS_PER_ROW * 2
 # Mini App screen that authenticates through Telegram and lets a new visitor
 # create a profile (see the website's /telegram-auth route).
 AUTH_WEBAPP_PATH = "/telegram-auth"
+
+# Result lists produced by the AI search carry this origin, so the title card's
+# back button returns to the AI prompt (see :func:`origin_callback`).
+AI_ORIGIN = "ai"
+# Telegram renders ten keycap emojis reliably; the label of the eleventh would
+# wrap in a narrow client.
+AI_NUMBER_EMOJI = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟")
 
 
 def origin_callback(origin: str, page: int) -> str:
@@ -53,6 +61,8 @@ def origin_callback(origin: str, page: int) -> str:
 		return f"{cb.FAVORITES}:{page}"
 	if origin.startswith("search"):
 		return f"{cb.SEARCH_RESULTS}:{page}"
+	if origin.startswith(AI_ORIGIN):
+		return cb.AI_SEARCH
 	return f"{cb.CATALOG}:{page}"
 
 
@@ -75,7 +85,7 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
 		[btn("🎼 Janrlar", f"{cb.GENRES}:1"), btn("💖 Sevimlilar", f"{cb.FAVORITES}:1")],
 		[btn("👤 Profil", cb.PROFILE), btn("👥 Do'stlar", cb.REF)],
 		[btn("🎫 Obuna", cb.SUBSCRIPTION), btn("🎟 Kupon", cb.COUPON)],
-		[btn("ℹ️ Yordam", cb.HELP)],
+		[btn("ℹ️ Yordam", cb.HELP), btn("✉️ Adminga xabar", cb.SUPPORT)],
 	]
 	# The rating game lives on the website; the button appears only when a
 	# public site URL is configured so it is never broken.
@@ -97,6 +107,10 @@ def search_keyboard() -> InlineKeyboardMarkup:
 		[btn("🎌 Anime", f"{cb.S_TYPE}:anime:1"), btn("📺 Serial", f"{cb.S_TYPE}:series:1")],
 		[btn("📖 Manga", f"{cb.S_TYPE}:manga:1"), btn("🎬 Kino", f"{cb.S_TYPE}:movie:1")],
 		[btn("🎭 Janr bo'yicha", f"{cb.S_GENRES}:1")],
+		# Semantic search, right where the user is already looking for content:
+		# "menga sarguzasht va qo'rqinchli animelar ayt" finds titles whose name
+		# (and genre) says nothing of the sort.
+		[btn("🤖 AI orqali qidirish", cb.AI_SEARCH)],
 		[btn("📚 Barchasini ko'rish", cb.S_ALL)],
 	]
 	app = webapp_row("📱 Ilovada qidirish")
@@ -111,6 +125,52 @@ def search_genres_keyboard(genres: Sequence, page: int, pages: int) -> InlineKey
 		[btn(genre.name, f"{cb.S_GENRE}:{genre.pk}:1")] for genre in genres
 	]
 	rows.append(pagination_row(f"{cb.S_GENRES}:", page, pages))
+	rows.append([btn("⬅️ Qidiruvga qaytish", cb.SEARCH)])
+	return keyboard(*rows)
+
+
+def ai_prompt_keyboard(*, favs: bool = False) -> InlineKeyboardMarkup:
+	"""Shown while the AI search waits for the user's own words.
+
+	``favs`` reflects whether the user opted in to sending their favourites and
+	recent activity to the model ("agar user ozi hohlasa"): the toggle only
+	changes the prompt, the feature costs nothing when off.
+	"""
+	favs_label = "🎯 Sevimlilar: ✅" if favs else "🎯 Sevimlilar: ❌"
+	return keyboard(
+		[btn(favs_label, cb.AI_FAV)],
+		[btn("🔍 Oddiy qidiruv", cb.SEARCH)],
+		[btn("⬅️ Asosiy menyu", cb.MENU)],
+	)
+
+
+def ai_locked_keyboard() -> InlineKeyboardMarkup:
+	"""The way forward for a visitor without an active subscription."""
+	return keyboard(
+		[btn("🎫 Obuna", cb.SUBSCRIPTION)],
+		[btn("⬅️ Qidiruvga qaytish", cb.SEARCH)],
+	)
+
+
+def ai_results_keyboard(
+	items: Sequence[Dict[str, Any]], *, limit: int = len(AI_NUMBER_EMOJI)
+) -> InlineKeyboardMarkup:
+	"""Numbered buttons that open each AI result *inside* the bot.
+
+	The message above already lists every hit with its link and one-line summary;
+	these buttons are how the user opens one without leaving Telegram.
+	"""
+	rows: List[List[InlineKeyboardButton]] = []
+	for index, item in enumerate(list(items)[: min(limit, len(AI_NUMBER_EMOJI))]):
+		rows.append(
+			[
+				btn(
+					f"{AI_NUMBER_EMOJI[index]} {truncate(item.get('title'), 40)}",
+					f"{cb.TITLE}:{item.get('id')}:1:{AI_ORIGIN}",
+				)
+			]
+		)
+	rows.append([btn("🔎 Yana so'rash", cb.AI_SEARCH)])
 	rows.append([btn("⬅️ Qidiruvga qaytish", cb.SEARCH)])
 	return keyboard(*rows)
 

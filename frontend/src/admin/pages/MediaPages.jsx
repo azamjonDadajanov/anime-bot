@@ -228,6 +228,15 @@ export function MediaListPage({ typeFilter = null }) {
                       </ActionIcon>
                       <ActionIcon
                         variant="subtle"
+                        color="green"
+                        component={Link}
+                        to={`/admin/media/${item.slug}/quiz`}
+                        title="Test savollari"
+                      >
+                        <i className="bi bi-question-circle" />
+                      </ActionIcon>
+                      <ActionIcon
+                        variant="subtle"
                         color="blue"
                         component={Link}
                         to={`/admin/media/${item.slug}/edit`}
@@ -720,6 +729,9 @@ export function MediaPartsPage() {
           <Group gap="xs">
             <Link className="admin-btn admin-btn-secondary" to="/admin/media">
               Ro'yxat
+            </Link>
+            <Link className="admin-btn admin-btn-secondary" to={`/admin/media/${slug}/quiz`}>
+              <i className="bi bi-question-circle" aria-hidden="true" /> Test savollari
             </Link>
             <button type="button" className="admin-btn admin-btn-primary" onClick={openCreatePart}>
               <i className="bi bi-plus-lg" aria-hidden="true" /> Qism qo'shish
