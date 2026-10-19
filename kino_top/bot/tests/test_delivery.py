@@ -16,7 +16,7 @@ from ..services.media import (
 )
 from .fakes import NOW, FakeSession, make_bot
 from .helpers import make_media, make_part, make_title
-from .helpers import make_channel
+from .helpers import bot_env, make_channel
 
 
 def load_part(part) -> MediaPart:
@@ -39,16 +39,33 @@ class DeliverySelectionTests(TransactionTestCase):
 		self.assertEqual(len(sent), 1)
 		self.assertEqual(bot.session.delivered_file_ids(), ["video-file-id"])
 
-	def test_document_part_uses_send_document(self) -> None:
+	def test_document_part_is_answered_with_a_website_link(self) -> None:
+		"""PDF chapters are never attached: a downloadable file must not be sent."""
 		title = make_title(code="1002")
 		part = load_part(make_part(title))
 		make_media(part, file_id="doc-file-id", media_type="document")
 
 		session = FakeSession()
-		asyncio.run(deliver_part(make_bot(session), 111, part))
+		with bot_env(BOT_SITE_URL="https://kino.test"):
+			sent = asyncio.run(deliver_part(make_bot(session), 111, part))
 
-		self.assertEqual(len(session.methods("SendDocument")), 1)
-		self.assertEqual(session.methods("SendDocument")[0].document, "doc-file-id")
+		self.assertEqual(session.methods("SendDocument"), [])
+		messages = session.methods("SendMessage")
+		self.assertEqual(len(messages), 1)
+		self.assertIn(f"https://kino.test/read/{title.slug}/1", messages[0].text)
+		self.assertEqual(len(sent), 1)
+
+	def test_document_part_without_site_url_reports_unavailable(self) -> None:
+		title = make_title(code="1012")
+		part = load_part(make_part(title))
+		make_media(part, file_id="doc-only", media_type="document")
+
+		session = FakeSession()
+		with bot_env(BOT_SITE_URL=None):
+			with self.assertRaises(MediaUnavailable):
+				asyncio.run(deliver_part(make_bot(session), 111, part))
+
+		self.assertEqual(session.methods("SendDocument"), [])
 
 	def test_photo_only_part_sends_every_page_as_a_group(self) -> None:
 		title = make_title(code="1003")
@@ -81,6 +98,13 @@ class DeliverySelectionTests(TransactionTestCase):
 		default = select_media_for_delivery_sync(part)
 		self.assertEqual(default[0].file_id, "low")
 		self.assertEqual(len(default), 3)
+
+	def test_pdf_documents_are_never_delivery_candidates(self) -> None:
+		title = make_title(code="1014")
+		part = load_part(make_part(title))
+		make_media(part, file_id="doc", media_type="document")
+
+		self.assertEqual(select_media_for_delivery_sync(part), [])
 
 
 class DeliveryFallbackTests(TransactionTestCase):

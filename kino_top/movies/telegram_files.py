@@ -1,8 +1,9 @@
 """Fetch a file from Telegram by ``file_id`` using the Bot HTTP API.
 
 The catalog only stores Telegram ``file_id`` references (see ``TelegramMedia``).
-Manga chapters are uploaded as PDF documents, so the website needs a way to
-stream those bytes back to the browser. This module talks to the Bot API
+Manga chapters are uploaded as PDF documents; the website renders them into
+page images on the server (see ``movies.pdf_pages``) and this module is what
+pulls the original bytes down for that rendering. It talks to the Bot API
 directly with the standard library, so no extra dependency is required.
 """
 
@@ -41,6 +42,17 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
 	except (ValueError, AttributeError):
 		pass
 	return f"Telegram xatoligi (HTTP {exc.code})"
+
+
+def user_error_message(exc: "TelegramFileError") -> str:
+	"""Turn a :class:`TelegramFileError` into a message a reader can act on."""
+	message = str(exc)
+	lowered = message.lower()
+	if "too big" in lowered or "file is too big" in lowered:
+		return "PDF Telegram orqali yuklanmaydi (bot uchun 20MB limit). Faylni saytga (serverga) yuklang."
+	if "not found" in lowered or "wrong file" in lowered or "invalid" in lowered:
+		return "Telegram file_id yaroqsiz yoki muddati o'tgan."
+	return message
 
 
 def resolve_file_path(file_id: str) -> str:

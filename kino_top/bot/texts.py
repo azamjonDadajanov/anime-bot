@@ -128,6 +128,14 @@ MEDIA_SENDING = "⏳ Media yuborilmoqda, biroz kuting..."
 MEDIA_UNAVAILABLE = "😔 Kechirasiz, bu media hozircha mavjud emas.\nAdministrator fayl almashayotgan bo'lishi mumkin."
 MEDIA_BLOCKED = "❌ Bu kontentni yuborishning imkoni bo'lmadi. Keyinroq qayta urinib ko'ring."
 
+# Sent instead of a chapter that exists only as a PDF: Telegram documents are
+# downloadable, so the bot links to the website reader (server-rendered pages)
+# and never attaches the file itself.
+PDF_READER_HINT = (
+	"📖 Bu qism PDF ko'rinishida saqlangan va Telegram orqali yuborilmaydi.\n"
+	"Saytda o'qish: {url}"
+)
+
 SUBSCRIPTION_REQUIRED = (
 	"🔒 <b>Majburiy obuna</b>\n\n"
 	"Kontentni olish uchun quyidagi kanallarga obuna bo'ling:\n{channels}\n\n"

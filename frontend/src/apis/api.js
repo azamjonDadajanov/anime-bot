@@ -1,5 +1,8 @@
 import axios from 'axios'
 
+import { cacheKey, clearCache, dropCache, readCache, revalidate, writeCache } from './apiCache'
+import { chapterPageUrl } from './mediaUrl'
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
 const ACCESS_TOKEN_KEY = 'anichopar_access'
 const REFRESH_TOKEN_KEY = 'anichopar_refresh'
@@ -8,6 +11,45 @@ export const api = axios.create({
   baseURL: apiBaseUrl,
   headers: { 'Content-Type': 'application/json' },
 })
+
+// How long a GET response may be reused without asking the server again.
+// Anything not listed here (views, reading progress, profile activity, AI
+// chat) is always fetched live.
+const CACHE_RULES = [
+  { match: /^\/catalog\/random\/?$/, ttl: 0 },
+  { match: /^\/catalog\/(latest|popular|upcoming|movies|anime|manga|series)\/?$/, ttl: 45_000 },
+  { match: /^\/catalog\/[^/]+\/$/, ttl: 5 * 60_000 },
+  { match: /^\/catalog\/?$/, ttl: 45_000 },
+  { match: /^\/auth\/favorites\/?$/, ttl: 45_000 },
+  { match: /^\/auth\/subscription\/plans\/?$/, ttl: 10 * 60_000 },
+  { match: /^\/game\/titles\/?$/, ttl: 10 * 60_000 },
+]
+
+function cacheTtl(url) {
+  const rule = CACHE_RULES.find((entry) => entry.match.test(url))
+  return rule ? rule.ttl : 0
+}
+
+/**
+ * GET with a memory cache: a fresh hit answers instantly, a stale hit answers
+ * immediately too while one background request refreshes it. Used by every
+ * catalogue screen, so flipping between pages costs no network round trip and
+ * no re-download of the (now cached) cover files.
+ */
+async function cachedGet(url, params) {
+  const ttl = cacheTtl(url)
+  const key = cacheKey(url, params)
+  const hit = readCache(key, ttl)
+  if (hit) {
+    if (!hit.fresh) {
+      revalidate(key, async () => (await api.get(url, { params })).data, ttl)
+    }
+    return hit.data
+  }
+  const { data } = await api.get(url, { params })
+  writeCache(key, data, ttl)
+  return data
+}
 
 let refreshRequest
 
@@ -50,11 +92,19 @@ api.interceptors.response.use(
   },
 )
 
+// An expired refresh token means the session is gone; nothing cached for that
+// viewer may be shown to whoever signs in next.
+if (typeof window !== 'undefined') {
+  window.addEventListener('anichopar:auth-expired', () => clearCache())
+}
+
 export const authApi = {
   async login(credentials) {
     const { data } = await api.post('/auth/token/', credentials)
     localStorage.setItem(ACCESS_TOKEN_KEY, data.access)
     localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh)
+    // A different viewer: everything cached for the previous one is wrong.
+    clearCache()
     return data
   },
   async register(details) {
@@ -65,6 +115,7 @@ export const authApi = {
     const { data } = await api.post('/auth/telegram/mini-app/', credentials)
     localStorage.setItem(ACCESS_TOKEN_KEY, data.access)
     localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh)
+    clearCache()
     return data
   },
   async currentUser() {
@@ -78,6 +129,7 @@ export const authApi = {
   logout() {
     localStorage.removeItem(ACCESS_TOKEN_KEY)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
+    clearCache()
   },
 }
 
@@ -95,65 +147,72 @@ export function getApiBaseUrl() {
 
 export const mediaApi = {
   async catalog(params = {}) {
-    const { data } = await api.get('/catalog/', { params })
-    return data
+    return cachedGet('/catalog/', params)
   },
   async favorites(params = {}) {
-    const { data } = await api.get('/auth/favorites/', { params })
-    return data
+    return cachedGet('/auth/favorites/', params)
   },
   async toggleFavorite(slug) {
     const { data } = await api.post('/auth/favorites/toggle/', { slug })
+    // The catalogue embeds favourite flags: drop both so the hearts re-render.
+    dropCache('/auth/favorites')
+    dropCache('/catalog')
     return data
   },
   async detail(slug) {
-    const { data } = await api.get(`/catalog/${encodeURIComponent(slug)}/`)
-    return data
+    return cachedGet(`/catalog/${encodeURIComponent(slug)}/`)
   },
   async recordView(slug, part) {
     const { data } = await api.post(
       `/catalog/${encodeURIComponent(slug)}/view/`,
       part ? { part } : {},
     )
+    // "Popular" is derived from views; a fresh one should show the change.
+    dropCache('/catalog/popular')
     return data
   },
   async latest(params = {}) {
-    const { data } = await api.get('/catalog/latest/', { params })
-    return data
+    return cachedGet('/catalog/latest/', params)
   },
   async popular(params = {}) {
-    const { data } = await api.get('/catalog/popular/', { params })
-    return data
+    return cachedGet('/catalog/popular/', params)
   },
   async upcoming(params = {}) {
-    const { data } = await api.get('/catalog/upcoming/', { params })
-    return data
+    return cachedGet('/catalog/upcoming/', params)
   },
   async movies(params = {}) {
-    const { data } = await api.get('/catalog/movies/', { params })
-    return data
+    return cachedGet('/catalog/movies/', params)
   },
   async anime(params = {}) {
-    const { data } = await api.get('/catalog/anime/', { params })
-    return data
+    return cachedGet('/catalog/anime/', params)
   },
   async manga(params = {}) {
-    const { data } = await api.get('/catalog/manga/', { params })
-    return data
+    return cachedGet('/catalog/manga/', params)
   },
   async series(params = {}) {
-    const { data } = await api.get('/catalog/series/', { params })
-    return data
+    return cachedGet('/catalog/series/', params)
   },
   async random(params = {}) {
-    const { data } = await api.get('/catalog/random/', { params })
-    return data
+    return cachedGet('/catalog/random/', params)
   },
-  partPdfUrl(partId) {
-    return `${apiBaseUrl}/parts/${partId}/pdf/`
+  /**
+   * Rendered page from the API (Django renders it on demand). The reader
+   * prefers `partPageFileUrl` — the nginx URL — and falls back to this one
+   * when the file is not on disk yet.
+   */
+  partPageUrl(partId, number) {
+    return `${apiBaseUrl}/parts/${partId}/pages/${number}/`
   },
-  async partPdfMeta(partId) {
-    const { data } = await api.get(`/parts/${partId}/pdf/`, { params: { meta: 1 } })
+  /**
+   * Same page straight from nginx (`/media/manga/pages/...`), cache-busted
+   * with the version token from the page metadata. Returns '' until the
+   * metadata for the part has loaded.
+   */
+  partPageFileUrl(meta, partId, number) {
+    return chapterPageUrl(meta, number) || this.partPageUrl(partId, number)
+  },
+  async partPagesMeta(partId) {
+    const { data } = await api.get(`/parts/${partId}/pages/`)
     return data
   },
   async uploadPartPdf(partId, file, onProgress) {
@@ -250,8 +309,7 @@ export const supportApi = {
 
 export const subscriptionApi = {
   async plans() {
-    const { data } = await api.get('/auth/subscription/plans/')
-    return data
+    return cachedGet('/auth/subscription/plans/')
   },
   async card() {
     const { data } = await api.get('/auth/subscription/card/')
@@ -278,8 +336,7 @@ export const gameApi = {
     return data
   },
   async titles(query = '') {
-    const { data } = await api.get('/game/titles/', { params: query ? { q: query } : {} })
-    return data
+    return cachedGet('/game/titles/', query ? { q: query } : {})
   },
   async startQuiz(titleId) {
     const { data } = await api.post('/game/quiz/start/', { title_id: titleId })

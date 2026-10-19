@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Alert, Badge, Button, Group, Loader, Tabs, Text, Title } from '@mantine/core'
 import { Link, useParams } from 'react-router-dom'
 import { hasAccessToken, mediaApi } from '../apis/api'
+import { coverSrc } from '../apis/mediaUrl'
 import { computeResume, loadTitleProgress, orderParts } from '../reading'
 
 const mediaTypeLabels = {
@@ -104,9 +105,7 @@ export function MediaDetailPage() {
     return <main className="dashboard-page"><Alert color="red" title="Media topilmadi">Bu media katalogda mavjud emas.</Alert></main>
   }
 
-  const cover = item.cover
-    ? `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-    : ''
+  const cover = coverSrc(item)
   const isManga = item.type === 'manga'
   const resume = isManga ? computeResume(progress, parts) : null
 

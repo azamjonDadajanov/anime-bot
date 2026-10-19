@@ -315,10 +315,9 @@ export const adminLogApi = {
   },
 }
 
-export function coverDataUrl(item) {
-  if (!item?.cover) return ''
-  return `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-}
+// The panel renders the same /media/covers/ file the site does; it just used
+// to decode a base64 blob instead of pointing at the URL.
+export { coverSrc as coverDataUrl } from '../../apis/mediaUrl'
 
 export function fileToBase64(file) {
   return new Promise((resolve, reject) => {

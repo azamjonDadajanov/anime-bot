@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, HttpResponseNotModified
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
@@ -14,7 +14,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from . import ai_assistant
+from . import ai_assistant, pdf_pages
 from .models import MediaPart, MediaTitle, MediaView, ReadingProgress, TelegramChannel, TelegramMedia
 from .permissions import IsAdminOrReadOnly
 from .serializers import (
@@ -29,17 +29,7 @@ from .serializers import (
 	TelegramMediaSerializer,
 )
 from .storage_copy import copy_file_to_storage
-from .telegram_files import TelegramFileError, fetch_file_bytes, resolve_file_path
-
-
-def _pdf_error_message(exc: TelegramFileError) -> str:
-	message = str(exc)
-	lowered = message.lower()
-	if "too big" in lowered or "file is too big" in lowered:
-		return "PDF Telegram orqali yuklanmaydi (bot uchun 20MB limit). Faylni saytga (serverga) yuklang."
-	if "not found" in lowered or "wrong file" in lowered or "invalid" in lowered:
-		return "Telegram file_id yaroqsiz yoki muddati o'tgan."
-	return message
+from .telegram_files import TelegramFileError, resolve_file_path, user_error_message
 
 
 def _looks_like_pdf(upload) -> bool:
@@ -352,11 +342,11 @@ class MediaPartViewSet(viewsets.ModelViewSet):
 	@extend_schema(tags=["Catalog"])
 	@action(detail=True, methods=["get", "delete"], url_path="pdf")
 	def pdf(self, request, pk=None):
-		"""Serve the chapter PDF: local upload first, Telegram document fallback.
+		"""PDF availability (``?meta=1``) and deletion — never the raw bytes.
 
-		Add ``?meta=1`` to only report availability (no download), so the reader
-		can show a clear reason instead of a broken viewer. ``DELETE`` removes
-		the locally stored PDF (staff only).
+		The reader shows server-rendered page images (see ``movies.pdf_pages``),
+		so the PDF itself is never sent to a browser: a plain GET is refused and
+		``DELETE`` removes the locally stored copy (staff only).
 		"""
 		part = self.get_object()
 
@@ -365,48 +355,75 @@ class MediaPartViewSet(viewsets.ModelViewSet):
 				return Response({"detail": "Ruxsat yo'q."}, status=403)
 			if part.pdf:
 				part.pdf.delete(save=True)
+			pdf_pages.invalidate(part)
 			return Response(status=204)
 
-		filename = f"{part.content.slug}-{part.number}.pdf"
-		meta_only = request.query_params.get("meta")
+		if not request.query_params.get("meta"):
+			return Response(
+				{
+					"detail": (
+						"PDF faylni yuklab olish mumkin emas — "
+						"sahifalar rasm ko'rinishida beriladi."
+					)
+				},
+				status=403,
+			)
+
 		has_local = bool(part.pdf) and part.pdf.storage.exists(part.pdf.name)
-
 		if has_local:
-			if meta_only:
-				return Response({"available": True, "source": "local", "size": part.pdf.size})
-			response = FileResponse(part.pdf.open("rb"), content_type="application/pdf")
-			response["Content-Disposition"] = f'inline; filename="{filename}"'
-			response["Accept-Ranges"] = "none"
-			return response
+			return Response({"available": True, "source": "local", "size": part.pdf.size})
 
-		document = next(
-			(
-				item
-				for item in part.telegram_media.all()
-				if item.media_type == TelegramMedia.MediaType.DOCUMENT
-			),
-			None,
-		)
+		document = pdf_pages.telegram_document(part)
 		if document is None:
-			if meta_only:
-				return Response({"available": False, "reason": "Bu qism uchun PDF topilmadi."})
-			return Response({"detail": "Bu qism uchun PDF topilmadi."}, status=404)
-
-		if meta_only:
-			try:
-				resolve_file_path(document.file_id)
-			except TelegramFileError as exc:
-				return Response({"available": False, "reason": _pdf_error_message(exc)})
-			return Response({"available": True, "source": "telegram"})
-
+			return Response({"available": False, "reason": "Bu qism uchun PDF topilmadi."})
 		try:
-			content, _ = fetch_file_bytes(document.file_id)
+			resolve_file_path(document.file_id)
 		except TelegramFileError as exc:
-			return Response({"detail": _pdf_error_message(exc)}, status=502)
+			return Response({"available": False, "reason": user_error_message(exc)})
+		return Response({"available": True, "source": "telegram"})
 
-		response = HttpResponse(content, content_type="application/pdf")
-		response["Content-Disposition"] = f'inline; filename="{filename}"'
-		response["Accept-Ranges"] = "none"
+	@extend_schema(tags=["Catalog"])
+	@action(detail=True, methods=["get"], url_path="pages")
+	def pages(self, request, pk=None):
+		"""Page metadata for the image reader (never the image bytes).
+
+		Every page is rendered up front into ``MEDIA_ROOT/manga/pages/``, so
+		the response only says *where* the files are: ``base_url`` (nginx)
+		plus ``version`` for the cache-busting ``?v=`` parameter. From then on
+		the browser talks to nginx, not to Django.
+		"""
+		part = self.get_object()
+		info = pdf_pages.ensure_pages(part)
+		if info.get("available"):
+			info["base_url"] = pdf_pages.public_base_url(part)
+		return Response(info)
+
+	@extend_schema(tags=["Catalog"])
+	@action(detail=True, methods=["get"], url_path=r"pages/(?P<number>\d+)")
+	def page_image(self, request, pk=None, number=None):
+		"""Render one chapter page on demand (fallback for a direct API call).
+
+		Production readers use the nginx URL from ``pages``; this endpoint
+		keeps a cold page renderable for clients that only know the API and
+		still never hands out the PDF itself.
+		"""
+		part = self.get_object()
+		try:
+			number = int(number)
+			info = pdf_pages.describe(part)
+			if not info.get("available"):
+				return Response({"detail": info.get("reason")}, status=404)
+			if not 1 <= number <= info["count"]:
+				return Response({"detail": "Sahifa topilmadi."}, status=404)
+			etag = info["etag"]
+			if request.headers.get("If-None-Match") == etag:
+				return HttpResponseNotModified()
+			path = pdf_pages.render_page(part, number)
+		except pdf_pages.PdfUnavailable as exc:
+			return Response({"detail": str(exc)}, status=exc.status)
+		response = FileResponse(path.open("rb"), content_type="image/jpeg")
+		response["Cache-Control"] = "private, max-age=300"
+		response["ETag"] = etag
 		return response
 
 	@extend_schema(tags=["Catalog"])
@@ -432,6 +449,7 @@ class MediaPartViewSet(viewsets.ModelViewSet):
 
 		filename = f"{part.content.slug}-{part.number}.pdf"
 		part.pdf.save(filename, upload, save=True)
+		pdf_pages.invalidate(part)
 		return Response(
 			{"available": True, "source": "local", "size": part.pdf.size, "has_pdf": True}
 		)

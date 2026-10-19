@@ -21,6 +21,7 @@ import {
   adminMediaApi,
   coverDataUrl,
 } from '../api/adminApi'
+import { coverSrc } from '../../apis/mediaUrl'
 import {
   ACCESS_PLAN_LABELS,
   ConfirmDialog,
@@ -370,8 +371,9 @@ export function MediaFormPage() {
       setCoverPreview('')
       return
     }
-    const clean = raw.replace(/^data:[^;]+;base64,/, '')
-    setCoverPreview(`data:image/jpeg;base64,${clean}`)
+    // The pasted value may be base64, a data: URL, or the stored
+    // /media/covers/... path echoed back from the form.
+    setCoverPreview(coverSrc({ cover: raw }))
   }
 
   async function handleSubmit(event) {

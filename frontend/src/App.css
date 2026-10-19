@@ -294,8 +294,7 @@
 .reader-pages { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 @media (min-width: 851px) { .reader-pages { width: 75%; } }
 .reader-page { width: 100%; display: flex; justify-content: center; }
-.reader-canvas { display: block; max-width: 100%; border-radius: 8px; background: #fff; box-shadow: 0 10px 40px rgb(0 0 0 / 25%); }
-.reader-canvas[hidden] { display: none; }
+.reader-page-img { display: block; max-width: 100%; border-radius: 8px; background: #fff; box-shadow: 0 10px 40px rgb(0 0 0 / 25%); -webkit-user-drag: none; user-select: none; }
 .reader-message { flex: 1; display: grid; place-items: center; gap: 12px; text-align: center; color: var(--mantine-color-dimmed); }
 .reader-message .bi { font-size: 46px; }
 .reader-bottom-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: center; gap: 16px; width: 100%; margin-top: auto; padding: 12px 0 4px; background: color-mix(in srgb, var(--mantine-color-body) 82%, transparent); backdrop-filter: blur(8px); }

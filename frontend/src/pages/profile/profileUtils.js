@@ -55,7 +55,6 @@ export function formatDateTime(value) {
   })
 }
 
-export function coverUrl(item) {
-  if (!item?.cover) return ''
-  return `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-}
+// Covers are media files now; re-exported under the name the profile screens
+// already use.
+export { coverSrc as coverUrl } from '../../apis/mediaUrl'

@@ -213,13 +213,19 @@ def site_url() -> str:
 	return str(raw or "").strip().rstrip("/")
 
 
-def manga_url(slug: str) -> str:
-	"""Deep link to the website reader for ``slug`` (empty without a site URL)."""
+def manga_url(slug: str, number: Optional[int] = None) -> str:
+	"""Deep link to the website reader for ``slug`` (empty without a site URL).
+
+	``number`` narrows the link down to a single chapter.
+	"""
 	base = site_url()
 	target = str(slug or "").strip()
 	if not base or not target:
 		return ""
-	return f"{base}/read/{target}"
+	url = f"{base}/read/{target}"
+	if number is not None:
+		url = f"{url}/{number}"
+	return url
 
 
 def game_url() -> str:

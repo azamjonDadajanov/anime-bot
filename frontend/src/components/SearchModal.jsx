@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Modal, Text, Loader, Badge, Group } from '@mantine/core'
 import { Link } from 'react-router-dom'
 import { mediaApi } from '../apis/api'
+import { coverSrc } from '../apis/mediaUrl'
 
 const mediaTypeLabels = {
   movie: 'Kino',
@@ -174,8 +175,8 @@ function SearchModal({ opened, onClose }) {
           <Link className="search-result" to={`/media/${item.slug}`} key={item.id} onClick={handleClose}>
             <Group gap="xs" wrap="nowrap">
               <span className="search-result-thumb" aria-hidden="true">
-                {item.cover
-                  ? <img src={`data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`} alt="" loading="lazy" />
+                {coverSrc(item)
+                  ? <img src={coverSrc(item)} alt="" loading="lazy" />
                   : <i className={`bi ${thumbIcons[item.type] || 'bi-film'}`} />}
               </span>
               <div>

@@ -5,7 +5,7 @@ Bitta `docker compose` steki to'rt xizmatdan iborat:
 | Xizmat  | Vazifasi                                                                 |
 | ------- | ------------------------------------------------------------------------ |
 | `db`    | PostgreSQL 17 (ma'lumotlar `pgdata` volume'da)                            |
-| `web`   | Django + gunicorn (`:8000`), konteyner ishga tushishida migratsiya + `collectstatic` |
+| `web`   | Django + gunicorn (`:8000`), konteyner ishga tushishida migratsiya + `collectstatic` + muqovalarni tuzatish (`fix_covers`) |
 | `bot`   | `python manage.py runbot` — aiogram long-polling (faqat bitta replika!)   |
 | `nginx` | Qurilgan SPA'ni beradi (`/admin` — React panel), `/api` va `/django-admin` ni `web` ga proxy qiladi, `/static` va `/media` ni to'g'ridan-to'g'ri volume'dan uzatadi |
 
@@ -77,6 +77,7 @@ curl -I http://localhost/admin/game-ratings   # 200, SPA (React panel) — Djang
 curl -I http://localhost/django-admin/    # 302, Django admin login
 curl -I http://localhost/api/schema/      # 200, DRF sxema
 curl -I http://localhost/static/admin/css/base.css   # nginx beradi, DEBUG=false da ham
+curl -I http://localhost/profile   # 200 + CSP/nosniff (SPA yo'llari ham)
 docker compose exec web python manage.py check --deploy
 ```
 
@@ -89,6 +90,32 @@ docker compose exec web python manage.py check --deploy
   (`web` konteynerining entrypoint'i buni bajaradi).
 - Media yuklash hajmi `DATA_UPLOAD_MAX_MEMORY_SIZE` (512 MB) bilan cheklangan,
   nginx tomonida `client_max_body_size 512m` bilan moslashtirilgan.
+- **Muqovalar** (`media/covers/`) va **manga sahifalari** (`media/manga/pages/`)
+  nginx tomonidan 1 yillik `immutable` kech bilan uzatiladi. PDF qayta
+  yuklanganda `?v=` tokeni o'zgaradi, shuning uchun brauzer eski faylni qayta
+  olmaydi — qayta render uchun `mediaApi.partPagesMeta` ni invalidate qilish
+  yetarli.
+- Eski `cover` BinaryField'ida base64 matn ko'rinishida turgan muqovalar
+  `migrate` (0019) da faylga aylanadi, keyin har bir deploy'da
+  `python manage.py fix_covers` qoldiq payloadlarni ham tuzatadi:
+  idempotent, qatorlarni alohida ko'radi va hech qachon boot'ni to'xtatmaydi.
+  Qo'lda ishga tushirish: `--dry-run` (faqat hisobot), `--slug <x>` (bitta
+  sarlavha), `--strict` (tuzatilmagan qator qolsa xato kod).
+- PDF sahifalari birinchi so'rovda serverda render qilinadi (`pages` API
+  `ensure_pages` chaqiradi), keyin brauzer faqat nginx'dan rasm oladi. PDF'ni
+  brauzerda yuklab olish (pdf.js) olib tashlangan; API dagi `page_image`
+  endpointi nginx faylni topa olgandagina fallback sifatida qolgan.
+- `media/manga/render/` ishchi katalogi (xom PDF'lar) nginx'dan yashirin —
+  `/media/manga/` yo'nalishi to'g'ridan-to'g'ri `return 444` qiladi, faqat
+  `pages/` `^~` qoidalari orqali ochiladi.
+- Himoya qatlami: auth endpointlari 5 r/m (`anichopar_auth`), API 25 r/s +
+  64 bir vaqtdagi ulanish (`limit_conn`), skaner agentlari (sqlmap, masscan
+  va h.k.) 403, `/wp-admin` kabi tez-tez uriladigan yo'llar `444`, `.env` kabi
+  nuqtali fayllar `404`. Sarlavha/CSP nginx'da `location = /index.html` da
+  (SPA yo'llari `try_files` orqali shu yerga kiradi). HTTPS'ni tashqi proxyda
+  yoqilganda `frontend/nginx.conf` oxiridagi HTTPS blokini, `DJANGO_SECURE_*`
+  o'zgaruvchilarini esa `.env.production.example` dagi izohlarga qarab
+  sozlang.
 - **Oylik o'yin mukofoti** uchun cron qo'ying (har oyining 1-si, 06:00 da oldingi
   oy g'olibini e'lon qiladi; bir xil oy uchun ikki marta ishga tushirsa ham
   mukofot takrorlanmaydi):

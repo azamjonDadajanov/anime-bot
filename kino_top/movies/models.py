@@ -91,7 +91,10 @@ class MediaTitle(models.Model):
 		default=AccessPlan.FREE,
 	)
 	rating = models.PositiveSmallIntegerField(default=5)
-	cover = models.BinaryField(blank=True, null=True)
+	# The cover is a real media file under MEDIA_ROOT/covers/, served by nginx
+	# with long-lived cache headers. It used to be a BinaryField inlined as
+	# base64 in every catalogue response, which no client could cache.
+	cover = models.ImageField(upload_to="covers/", blank=True, null=True)
 	cover_content_type = models.CharField(max_length=50, blank=True)
 	metadata_channel = models.ForeignKey(
 		TelegramChannel,

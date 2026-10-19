@@ -13,15 +13,17 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
-from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
+from aiogram.types import InputMediaPhoto, InputMediaVideo
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.template.defaultfilters import slugify
 from django.utils import timezone
 
+from movies.covers import content_file as new_cover_file
 from movies.models import Genre, MediaPart, MediaTitle, MediaView, TelegramChannel, TelegramMedia
 
-from ..texts import WATCH_PARTS_HINT
+from ..config import manga_url
+from ..texts import PDF_READER_HINT, WATCH_PARTS_HINT
 from ..utils import to_async
 
 logger = logging.getLogger(__name__)
@@ -346,8 +348,12 @@ def create_title_sync(
 		"episode_count": episode_count,
 	}
 	if cover:
-		payload["cover"] = bytes(cover)
-		payload["cover_content_type"] = cover_content_type[:50]
+		# Covers are media files on disk now: the bytes become
+		# MEDIA_ROOT/covers/<slug>.<ext> and the API only ships the URL.
+		stored = new_cover_file(cover)
+		if stored is not None:
+			payload["cover"] = stored
+			payload["cover_content_type"] = cover_content_type[:50]
 	media = MediaTitle(**payload)
 	media.save()
 	if genres:
@@ -390,7 +396,11 @@ def update_title_sync(title: MediaTitle, **fields: Any) -> MediaTitle:
 		if name == "quality_options" and value is not None:
 			value = [str(item).strip() for item in value if str(item).strip()]
 		if name == "cover" and value is not None:
-			value = bytes(value)
+			# Raw photo bytes from Telegram land in a media file; an already
+			# stored FieldFile/URL is passed through untouched.
+			if isinstance(value, (bytes, bytearray, memoryview)):
+				converted = new_cover_file(value)
+				value = converted if converted is not None else value
 		if getattr(title, name) != value:
 			setattr(title, name, value)
 			changed.append(name)
@@ -573,23 +583,22 @@ def select_media_for_delivery_sync(
 	"""Pick the delivery candidates for ``part``, best match first.
 
 	* A photo-only part (manga chapter) returns every page in order.
-	* Otherwise every video/document copy is returned, with the requested
-	  quality moved to the front. ``deliver_part`` sends the first copy that
-	  Telegram still accepts, which is what makes a stale ``file_id`` harmless.
+	* Otherwise every video copy is returned, with the requested quality moved
+	  to the front. ``deliver_part`` sends the first copy that Telegram still
+	  accepts, which is what makes a stale ``file_id`` harmless.
+	* PDF documents are never candidates: a Telegram file can be downloaded by
+	  anyone, so PDF-only parts are answered with a website link instead
+	  (see ``deliver_part``).
 	"""
 	records = part_media_sync(part)
 	if not records:
 		return []
 	photos = [row for row in records if row.media_type == TelegramMedia.MediaType.PHOTO]
-	videos = [
-		row
-		for row in records
-		if row.media_type in (TelegramMedia.MediaType.VIDEO, TelegramMedia.MediaType.DOCUMENT)
-	]
+	videos = [row for row in records if row.media_type == TelegramMedia.MediaType.VIDEO]
 	if photos and not videos:
 		return photos
 	if not videos:
-		return records[:1]
+		return []
 	if quality:
 		needle = str(quality).lower()
 		videos.sort(key=lambda row: 0 if needle in (row.caption or "").lower() else 1)
@@ -631,13 +640,48 @@ async def send_media(
 			protect_content=protect_content,
 			reply_markup=_reply_markup(reply_markup),
 		)
-	return await bot.send_document(
+	# PDFs are never attached: a Telegram document can be downloaded by
+	# anyone. deliver_part answers PDF-only parts with a website link.
+	raise MediaUnavailable("PDF hujjatlar Telegram orqali yuborilmaydi.")
+
+
+def part_has_pdf_sync(part: MediaPart) -> bool:
+	"""True when the chapter exists as a PDF (local upload or Telegram doc)."""
+	if part.pdf:
+		return True
+	return part.telegram_media.filter(
+		media_type=TelegramMedia.MediaType.DOCUMENT
+	).exists()
+
+
+part_has_pdf = to_async(part_has_pdf_sync)
+
+
+async def _deliver_reader_link(
+	bot: Bot,
+	chat_id: int,
+	part: MediaPart,
+	*,
+	protect_content: bool = True,
+	caption: Optional[str] = None,
+	reply_markup: Any = None,
+) -> List[int]:
+	"""Point the user at the website reader instead of sending the PDF."""
+	url = manga_url(part.content.slug, part.number)
+	if not url:
+		raise MediaUnavailable(
+			"Bu qism PDF ko'rinishida, sayt manzili esa (BOT_SITE_URL) sozlanmagan."
+		)
+	text = PDF_READER_HINT.format(url=url)
+	if caption:
+		text = f"{caption}\n\n{text}"
+	message = await bot.send_message(
 		chat_id=chat_id,
-		document=media.file_id,
-		caption=text,
+		text=text,
 		protect_content=protect_content,
 		reply_markup=_reply_markup(reply_markup),
 	)
+	return [message.message_id]
 
 
 async def _deliver_photo_pages(
@@ -724,6 +768,17 @@ async def deliver_part(
 	"""Deliver a part, falling back to the next stored copy when one is stale."""
 	records = await select_media_for_delivery(part, quality)
 	if not records:
+		if await part_has_pdf(part):
+			# PDF chapters are never sent as files (they would be downloadable);
+			# the reader on the website shows server-rendered page images.
+			return await _deliver_reader_link(
+				bot,
+				chat_id,
+				part,
+				protect_content=protect_content,
+				caption=caption,
+				reply_markup=reply_markup,
+			)
 		raise MediaUnavailable("Bu qism uchun media fayl saqlanmagan.")
 
 	if all(row.media_type == TelegramMedia.MediaType.PHOTO for row in records):
@@ -736,7 +791,7 @@ async def deliver_part(
 			reply_markup=reply_markup,
 		)
 
-	# Video/document variants: send the first copy Telegram still accepts.
+	# Video variants: send the first copy Telegram still accepts.
 	last_error: Optional[Exception] = None
 	for media in records:
 		try:
@@ -777,8 +832,7 @@ def build_input_media(media: TelegramMedia, caption: Optional[str] = None) -> An
 		return InputMediaVideo(media=media.file_id, caption=text, supports_streaming=True)
 	if media.media_type == TelegramMedia.MediaType.PHOTO:
 		return InputMediaPhoto(media=media.file_id, caption=text)
-	if media.media_type == TelegramMedia.MediaType.DOCUMENT:
-		return InputMediaDocument(media=media.file_id, caption=text)
+	# Never edit a message into a PDF: documents are downloadable by anyone.
 	return None
 
 
@@ -808,6 +862,11 @@ async def edit_part_media(
 	"""
 	records = await select_media_for_delivery(part, quality)
 	if not records:
+		if await part_has_pdf(part):
+			# A PDF chapter cannot live in a media bubble at all; this is a
+			# "not editable" situation so the caller sends a fresh message
+			# (which deliver_part turns into the website link).
+			raise MediaNotEditable("PDF qismni xabarga almashtirib bo'lmaydi.")
 		raise MediaUnavailable("Bu qism uchun media fayl saqlanmagan.")
 
 	candidates = [row for row in records if row.media_type == current_kind]

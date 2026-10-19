@@ -1,5 +1,6 @@
 import { Text, Badge, Title } from '@mantine/core'
 import { Link } from 'react-router-dom'
+import { coverSrc } from '../apis/mediaUrl'
 
 const mediaTypeLabels = {
   movie: 'Kino',
@@ -10,9 +11,7 @@ const mediaTypeLabels = {
 }
 
 function MediaCard({ item }) {
-  const cover = item.cover
-    ? `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-    : ''
+  const cover = coverSrc(item)
 
   return (
     <Link className="media-card" to={`/media/${item.slug}`} aria-label={`${item.title} tafsilotlarini ochish`}>

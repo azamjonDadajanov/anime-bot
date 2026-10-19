@@ -60,6 +60,30 @@ ALLOWED_HOSTS = [
 # the internal http scheme, which breaks /django-admin/ logins behind https.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
+# ---------------------------------------------------------------------------
+# Hardening (this file plus the edge rules in frontend/nginx.conf)
+# ---------------------------------------------------------------------------
+# Always on: correct for every deployment, including plain-http development.
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = env("DJANGO_REFERRER_POLICY", "strict-origin-when-cross-origin")
+CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+# A submitted form is only allowed to carry this many fields; a wider payload
+# is a probe (or a bug), not a real client.
+DATA_UPLOAD_MAX_NUMBER_FIELDS = env_int("DJANGO_MAX_FORM_FIELDS", 500)
+
+# Opt-in, because they only make sense behind TLS. nginx adds HSTS itself once
+# a certificate is mounted, so a plain-http deploy keeps working by default.
+# Set DJANGO_SECURE_COOKIES=true / DJANGO_SECURE_SSL_REDIRECT=true /
+# DJANGO_SECURE_HSTS_SECONDS=31536000 in .env for an https-only site.
+SECURE_SSL_REDIRECT = env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
+SESSION_COOKIE_SECURE = env_bool("DJANGO_SECURE_COOKIES", False)
+CSRF_COOKIE_SECURE = env_bool("DJANGO_SECURE_COOKIES", False)
+SECURE_HSTS_SECONDS = env_int("DJANGO_SECURE_HSTS_SECONDS", 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
+SECURE_HSTS_PRELOAD = SECURE_HSTS_SECONDS > 0
+
 
 # Application definition
 

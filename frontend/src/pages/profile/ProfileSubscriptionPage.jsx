@@ -1,6 +1,7 @@
 import { Alert, Badge, Button, Group, Loader, Text, Title } from '@mantine/core'
 import { Link } from 'react-router-dom'
 import { profileApi } from '../../apis/api'
+import { mediaUrl } from '../../apis/mediaUrl'
 import { useAuth } from '../../apis/useAuth'
 import { useApi } from './useApi'
 import { formatDate, formatDateTime, formatPrice, PLAN_STATUS_COLORS, PLAN_STATUS_LABELS } from './profileUtils'
@@ -86,7 +87,7 @@ export function ProfileSubscriptionPage() {
                     {PLAN_STATUS_LABELS[request.status] || request.status}
                   </Badge>
                   {request.screenshot && (
-                    <a className="text-link" href={request.screenshot} target="_blank" rel="noreferrer">
+                    <a className="text-link" href={mediaUrl(request.screenshot)} target="_blank" rel="noreferrer">
                       Chekni ko'rish
                     </a>
                   )}

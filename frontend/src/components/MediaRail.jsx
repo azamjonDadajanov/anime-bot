@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Text, Skeleton } from '@mantine/core'
 import { Link } from 'react-router-dom'
+import { coverSrc } from '../apis/mediaUrl'
 
 const typeLabels = {
   movie: 'Kino',
@@ -13,12 +14,6 @@ const statusLabels = {
   upcoming: 'Kutilmoqda',
   ongoing: 'Davom etmoqda',
   completed: 'Tugallangan',
-}
-
-function coverSrc(item) {
-  return item.cover
-    ? `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-    : ''
 }
 
 function RailCard({ item }) {

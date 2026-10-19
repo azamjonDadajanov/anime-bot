@@ -14,6 +14,13 @@ if [ "${RUN_SETUP:-0}" = "1" ]; then
     # Hashed, compressed files land in STATIC_ROOT, which nginx serves from the
     # shared volume at /var/www/static.
     python manage.py collectstatic --noinput
+
+    echo "[entrypoint] repairing legacy base64 covers"
+    # Idempotent: turns whatever the base64 era left behind (payload text in an
+    # already written file, or a payload still sitting in `cover_blob`) into a
+    # real image under media/covers/ that nginx can serve. It only reports rows
+    # it cannot repair, and `||` keeps a cover problem from blocking the boot.
+    python manage.py fix_covers || echo "[entrypoint] fix_covers reported problems (see above)"
 fi
 
 exec "$@"

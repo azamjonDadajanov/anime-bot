@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Badge, Button, Loader, Text } from '@mantine/core'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import * as pdfjsLib from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { getAccessToken, hasAccessToken, mediaApi, readingApi } from '../apis/api'
+import { hasAccessToken, mediaApi, readingApi } from '../apis/api'
 import { useAuth } from '../apis/useAuth'
 import {
   computeResume,
@@ -12,23 +10,8 @@ import {
   saveLocalProgress,
 } from '../reading'
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
-
-const MAX_CANVAS_DIM = 8192
-
 function isCompactViewport() {
   return typeof window !== 'undefined' && window.innerWidth <= 850
-}
-
-function documentParams(partId) {
-  const params = {
-    url: mediaApi.partPdfUrl(partId),
-    disableRange: true,
-    disableStream: true,
-  }
-  const token = getAccessToken()
-  if (token) params.httpHeaders = { Authorization: `Bearer ${token}` }
-  return params
 }
 
 function partLabel(part) {
@@ -60,20 +43,20 @@ function MangaReaderPage() {
   const [error, setError] = useState('')
   const [errorKey, setErrorKey] = useState('')
 
-  const [pdfDoc, setPdfDoc] = useState(null)
   const [page, setPage] = useState(1)
   const [numPages, setNumPages] = useState(0)
+  // Page metadata from the API: how many pages there are, where nginx serves
+  // them (`base_url`) and the `version` token that busts the browser cache
+  // after the PDF is re-rendered.
+  const [pdfMeta, setPdfMeta] = useState(null)
   const [loadedPdfId, setLoadedPdfId] = useState(null)
   const [pdfError, setPdfError] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(() => !isCompactViewport())
   const [upload, setUpload] = useState({ uploading: false, progress: 0, error: '' })
-  const [layoutKey, setLayoutKey] = useState(0)
 
   const mainRef = useRef(null)
   const pagesRef = useRef(null)
-  const canvasRefs = useRef({})
   const pageRefs = useRef({})
-  const pdfTaskRef = useRef(null)
   const fileInputRef = useRef(null)
   const activePageRef = useRef(1)
   const lastPersistRef = useRef(0)
@@ -122,45 +105,36 @@ function MangaReaderPage() {
   useEffect(() => {
     if (!currentPart || !currentPart.has_pdf) return undefined
     let cancelled = false
-    mediaApi.partPdfMeta(currentPart.id)
+    mediaApi.partPagesMeta(currentPart.id)
       .then((meta) => {
-        if (cancelled) return null
+        if (cancelled) return
         if (!meta?.available) {
-          setPdfError({ partId: currentPart.id, message: meta?.reason || 'PDF yuklanmadi.' })
+          setPdfError({ partId: currentPart.id, message: meta?.reason || 'Sahifalar yuklanmadi.' })
           setLoadedPdfId(currentPart.id)
-          return null
+          setPdfMeta(null)
+          return
         }
-        const task = pdfjsLib.getDocument(documentParams(currentPart.id))
-        pdfTaskRef.current = task
-        return task.promise
-          .then((doc) => {
-            if (cancelled) {
-              doc.destroy()
-              return
-            }
-            scrollTargetRef.current = activePageRef.current
-            setPdfDoc(doc)
-            setNumPages(doc.numPages)
-            setPage((prev) => Math.min(Math.max(prev, 1), doc.numPages))
-            setLoadedPdfId(currentPart.id)
-            setPdfError(null)
-          })
-          .catch((loadError) => {
-            if (cancelled) return
-            setPdfError({ partId: currentPart.id, message: errorText(loadError) || 'PDF yuklanmadi.' })
-            setLoadedPdfId(currentPart.id)
-          })
+        if (!meta.count) {
+          setPdfError({ partId: currentPart.id, message: 'Bu PDF hujjatida sahifalar yo\'q.' })
+          setLoadedPdfId(currentPart.id)
+          setPdfMeta(null)
+          return
+        }
+        scrollTargetRef.current = activePageRef.current
+        setNumPages(meta.count)
+        setPage((prev) => Math.min(Math.max(prev, 1), meta.count))
+        setLoadedPdfId(currentPart.id)
+        setPdfError(null)
+        // Pages are already rendered by the server: from here the browser
+        // talks to nginx, never to Django.
+        setPdfMeta(meta)
       })
       .catch((metaError) => {
         if (cancelled) return
-        setPdfError({ partId: currentPart.id, message: errorText(metaError) || 'PDF yuklanmadi.' })
+        setPdfError({ partId: currentPart.id, message: errorText(metaError) || 'Sahifalar yuklanmadi.' })
         setLoadedPdfId(currentPart.id)
       })
-    return () => {
-      cancelled = true
-      pdfTaskRef.current?.destroy?.()
-      pdfTaskRef.current = null
-    }
+    return () => { cancelled = true }
   }, [currentPart])
 
   const persist = useCallback((part, pageValue, isRead) => {
@@ -173,52 +147,9 @@ function MangaReaderPage() {
   }, [slug])
 
   useEffect(() => {
-    const doc = pdfDoc
     const container = mainRef.current
     const pages = pagesRef.current
-    if (!doc || !container || !pages) return undefined
-    const ratio = Math.min(window.devicePixelRatio || 1, 2)
-    const rendered = new Set()
-    let cancelled = false
-
-    const renderPage = async (pageNumber, canvas) => {
-      if (cancelled || !canvas || rendered.has(pageNumber)) return
-      rendered.add(pageNumber)
-      try {
-        const pdfPage = await doc.getPage(pageNumber)
-        if (cancelled) return
-        const base = pdfPage.getViewport({ scale: 1 })
-        const available = Math.max(280, (pages.clientWidth || container.clientWidth || 900) - 4)
-        const layoutScale = Math.max(0.2, Math.min(available / base.width, 2.5))
-        const cssWidth = base.width * layoutScale
-        const cssHeight = base.height * layoutScale
-        const pageRatio = Math.max(
-          1,
-          Math.min(ratio, MAX_CANVAS_DIM / cssWidth, MAX_CANVAS_DIM / cssHeight),
-        )
-        canvas.width = Math.max(1, Math.round(cssWidth * pageRatio))
-        canvas.height = Math.max(1, Math.round(cssHeight * pageRatio))
-        canvas.style.width = `${Math.round(cssWidth)}px`
-        canvas.style.height = `${Math.round(cssHeight)}px`
-        const viewport = pdfPage.getViewport({ scale: layoutScale })
-        await pdfPage.render({
-          canvas,
-          canvasContext: canvas.getContext('2d'),
-          viewport,
-          transform: pageRatio !== 1 ? [pageRatio, 0, 0, pageRatio, 0, 0] : undefined,
-        }).promise
-      } catch {
-        rendered.delete(pageNumber)
-      }
-    }
-
-    const renderObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue
-        const pageNumber = Number(entry.target.dataset.page)
-        renderPage(pageNumber, canvasRefs.current[pageNumber])
-      }
-    }, { root: container, rootMargin: '300% 0px' })
+    if (!numPages || !container || !pages) return undefined
 
     const pageObserver = new IntersectionObserver((entries) => {
       let best = null
@@ -238,7 +169,6 @@ function MangaReaderPage() {
 
     Object.values(pageRefs.current).forEach((element) => {
       if (!element) return
-      renderObserver.observe(element)
       pageObserver.observe(element)
     })
 
@@ -251,31 +181,9 @@ function MangaReaderPage() {
     }
 
     return () => {
-      cancelled = true
-      renderObserver.disconnect()
       pageObserver.disconnect()
     }
-  }, [pdfDoc, numPages, layoutKey, currentPart, persist])
-
-  useEffect(() => {
-    const container = mainRef.current
-    if (!container || typeof ResizeObserver === 'undefined') return undefined
-    let timer = null
-    let first = true
-    const observer = new ResizeObserver(() => {
-      if (first) {
-        first = false
-        return
-      }
-      clearTimeout(timer)
-      timer = setTimeout(() => setLayoutKey((value) => value + 1), 150)
-    })
-    observer.observe(container)
-    return () => {
-      clearTimeout(timer)
-      observer.disconnect()
-    }
-  }, [loadedKey])
+  }, [numPages, loadedPdfId, currentPart, persist])
 
   const goToPage = useCallback((next) => {
     if (!numPages) return
@@ -291,8 +199,8 @@ function MangaReaderPage() {
     if (!part) return
     setCurrentPart(part)
     setPage(1)
-    setPdfDoc(null)
     setNumPages(0)
+    setPdfMeta(null)
     setPdfError(null)
     activePageRef.current = 1
     lastPersistRef.current = 0
@@ -301,6 +209,16 @@ function MangaReaderPage() {
     mainRef.current?.scrollTo({ top: 0 })
     navigate(`/read/${slug}/${part.number}`, { replace: true })
   }, [navigate, slug, persist])
+
+  // nginx answers every page in production. If a file is not there yet (a
+  // PDF uploaded seconds ago, or a lost render) the API renders that one page
+  // on demand, and the retry — same URL, now on disk — is served by nginx.
+  const handlePageFallback = useCallback((event, pageNumber) => {
+    const image = event.currentTarget
+    if (!currentPart || image.dataset.fallback === '1') return
+    image.dataset.fallback = '1'
+    image.src = mediaApi.partPageUrl(currentPart.id, pageNumber)
+  }, [currentPart])
 
   const handlePdfSelected = useCallback(async (event) => {
     const file = event.target.files?.[0]
@@ -322,12 +240,32 @@ function MangaReaderPage() {
   }, [currentPart])
 
   useEffect(() => {
+    const BLOCKED_COMBOS = ['s', 'p', 'o', 'u', 'a']
+    function isBlockedShortcut(event) {
+      if (event.key === 'F12') return true
+      if (!(event.ctrlKey || event.metaKey)) return false
+      const key = (event.key || '').toLowerCase()
+      if (BLOCKED_COMBOS.includes(key)) return true
+      return event.shiftKey && ['i', 'j', 'c', 's'].includes(key)
+    }
     function onKeyDown(event) {
+      if (isBlockedShortcut(event)) {
+        event.preventDefault()
+        return
+      }
       if (event.key === 'ArrowRight') goToPage(page + 1)
       if (event.key === 'ArrowLeft') goToPage(page - 1)
     }
+    // Sahifalarni o'ng tugma bilan saqlashni ham oldini olamiz.
+    function onContextMenu(event) {
+      event.preventDefault()
+    }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('contextmenu', onContextMenu)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('contextmenu', onContextMenu)
+    }
   }, [goToPage, page])
 
   if (loading) return <div className="reader-state"><Loader /></div>
@@ -467,12 +405,14 @@ function MangaReaderPage() {
                     else delete pageRefs.current[pageNumber]
                   }}
                 >
-                  <canvas
-                    className="reader-canvas"
-                    ref={(element) => {
-                      if (element) canvasRefs.current[pageNumber] = element
-                      else delete canvasRefs.current[pageNumber]
-                    }}
+                  <img
+                    className="reader-page-img"
+                    src={mediaApi.partPageFileUrl(pdfMeta, currentPart.id, pageNumber)}
+                    alt={`${pageNumber}-sahifa`}
+                    loading={pageNumber <= 2 ? 'eager' : 'lazy'}
+                    decoding="async"
+                    draggable={false}
+                    onError={(event) => handlePageFallback(event, pageNumber)}
                   />
                 </div>
               ))}

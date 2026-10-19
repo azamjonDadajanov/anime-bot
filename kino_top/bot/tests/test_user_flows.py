@@ -781,23 +781,26 @@ class InPlaceSwapTests(DispatcherTestCase):
 
 		self.assertEqual(self._edit().media.media, "swap-2")
 
-	def test_a_document_is_swapped_for_another_document(self) -> None:
+	def test_a_document_message_is_never_swapped_for_another_pdf(self) -> None:
+		"""PDF files are downloadable, so neither the edit nor the send happens."""
 		title = make_title(code="7107", title="Doc Anime")
 		parts = [make_part(title, number=number, season=1) for number in (1, 2)]
 		for part in parts:
 			make_media(part, file_id=f"doc-{part.number}", media_type="document", order=1)
 
-		self.feed(
-			build_callback(
-				f"watch:{parts[1].pk}",
-				update_id=8,
-				message_id=42,
-				document=fake_document("doc-1"),
+		with bot_env(BOT_SITE_URL="https://kino.test"):
+			self.feed(
+				build_callback(
+					f"watch:{parts[1].pk}",
+					update_id=8,
+					message_id=42,
+					document=fake_document("doc-1"),
+				)
 			)
-		)
 
-		self.assertEqual(self._edit().media.media, "doc-2")
-		self.assertEqual(self.session.methods("SendDocument"), [])
+			self.assertEqual(self.session.methods("EditMessageMedia"), [])
+			self.assertEqual(self.session.methods("SendDocument"), [])
+			self.assertIn(f"https://kino.test/read/{title.slug}/2", self.all_text())
 
 	def test_a_different_file_kind_is_sent_as_a_new_message(self) -> None:
 		"""Telegram cannot change a message's media type, so that falls back."""
@@ -806,16 +809,19 @@ class InPlaceSwapTests(DispatcherTestCase):
 		make_media(parts[0], file_id="mixed-1", media_type="video", order=1)
 		make_media(parts[1], file_id="mixed-2", media_type="document", order=1)
 
-		self.feed(
-			build_callback(
-				f"watch:{parts[1].pk}",
-				video=fake_video("mixed-1"),
+		with bot_env(BOT_SITE_URL="https://kino.test"):
+			self.feed(
+				build_callback(
+					f"watch:{parts[1].pk}",
+					video=fake_video("mixed-1"),
+				)
 			)
-		)
 
-		self.assertEqual(self.session.methods("EditMessageMedia"), [])
-		self.assertEqual(self.session.delivered_file_ids(), ["mixed-2"])
-		self.assertEqual(len(self.session.methods("SendDocument")), 1)
+			self.assertEqual(self.session.methods("EditMessageMedia"), [])
+			# The second part exists only as a PDF: the bot links to the reader.
+			self.assertEqual(self.session.delivered_file_ids(), [])
+			self.assertEqual(self.session.methods("SendDocument"), [])
+			self.assertIn(f"https://kino.test/read/{title.slug}/2", self.all_text())
 
 	def test_an_album_item_is_not_swapped_in_place(self) -> None:
 		title = make_title(code="7105", title="Scanned Swap")

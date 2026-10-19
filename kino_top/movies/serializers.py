@@ -1,6 +1,45 @@
 from rest_framework import serializers
 
+from .covers import content_file, cover_url, decode_base64
 from .models import Genre, MediaPart, MediaTitle, ReadingProgress, TelegramChannel, TelegramMedia
+
+# Returned by CoverField.to_internal_value() when the client echoes the stored
+# file URL back: the image is already on disk, nothing has to change.
+UNCHANGED = object()
+
+
+class CoverField(serializers.Field):
+	"""``cover``: a /media/covers/... URL on read, an upload on write.
+
+	The administrator panel posts base64 in JSON, the bot service layer and the
+	import command hand over raw bytes, and an untouched form field echoes the
+	URL it rendered earlier. All three are accepted; only new image data ever
+	reaches the storage, which keeps nginx in charge of serving the bytes.
+	"""
+
+	default_error_messages = {
+		"invalid": "Muqova rasm noto'g'ri formatda yuborildi.",
+	}
+
+	def to_representation(self, value) -> str:
+		return cover_url(value)
+
+	def to_internal_value(self, data):
+		if data is None or data == "":
+			return None
+		# Multipart upload (POST /catalog/ with a real file).
+		if hasattr(data, "read"):
+			return data
+		if not isinstance(data, str):
+			self.fail("invalid")
+		raw = data.strip()
+		if raw.startswith("/media/") or raw.startswith(("http://", "https://")):
+			return UNCHANGED
+		try:
+			blob = decode_base64(raw)
+		except ValueError:
+			self.fail("invalid")
+		return content_file(blob)
 
 
 class MediaTitleSerializer(serializers.ModelSerializer):
@@ -10,6 +49,21 @@ class MediaTitleSerializer(serializers.ModelSerializer):
 		many=True,
 		required=False,
 	)
+	cover = CoverField(required=False, allow_null=True)
+
+	def create(self, validated_data):
+		# A URL means "already stored, nothing new": drop it, there is no file
+		# to attach on creation.
+		if validated_data.get("cover") is UNCHANGED:
+			validated_data.pop("cover")
+		return super().create(validated_data)
+
+	def update(self, instance, validated_data):
+		# Same on edit: the panel echoes /media/covers/... back when the form
+		# field was untouched, and the file on disk must stay as it is.
+		if validated_data.get("cover") is UNCHANGED:
+			validated_data.pop("cover")
+		return super().update(instance, validated_data)
 
 	class Meta:
 		model = MediaTitle

@@ -9,6 +9,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
+from movies.covers import cover_bytes
 from movies.models import MediaPart, MediaTitle, TelegramChannel
 
 from ..texts import COUPON_POST, GIVEAWAY_POST, GIVEAWAY_POST_NO_CONDITIONS
@@ -72,12 +73,11 @@ def announcement_text(
 
 
 def _cover_file(title: MediaTitle) -> Optional[BufferedInputFile]:
-	if not title.cover:
+	# The cover is a media file on disk (MEDIA_ROOT/covers/...), read as bytes
+	# only to hand it to Telegram.
+	data = cover_bytes(title)
+	if not data:
 		return None
-	try:
-		data = bytes(title.cover)
-	except TypeError:  # pragma: no cover - memoryview edge case
-		data = title.cover
 	return BufferedInputFile(data, filename=f"cover-{title.code}.jpg")
 
 

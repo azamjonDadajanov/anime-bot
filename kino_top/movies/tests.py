@@ -1,17 +1,29 @@
+import base64
+import importlib
 import io
 import json
+import shutil
+import tempfile
 import urllib.error
 from datetime import timedelta
+from pathlib import Path
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import DatabaseError
 from django.db.models.query import QuerySet
-from django.test import Client, TestCase, override_settings
+from django.test import Client, SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
+from django.utils.functional import empty
+from PIL import Image
 from rest_framework.test import APIClient
 
 from . import llm
+from .management.commands.fix_covers import Command as FixCoversCommand
 from .models import (
 	AIProvider,
 	MediaPart,
@@ -20,6 +32,23 @@ from .models import (
 	TelegramChannel,
 	TelegramMedia,
 )
+
+
+def _sample_pdf(page_count: int = 2) -> bytes:
+	"""A tiny multi-page PDF produced with Pillow (no fixture files)."""
+	buffer = io.BytesIO()
+	images = [
+		Image.new("RGB", (120, 160), color) for color in ("white", "lightgrey")
+	][:page_count]
+	images[0].save(buffer, "PDF", save_all=True, append_images=images[1:])
+	return buffer.getvalue()
+
+
+def _sample_cover(color="orange") -> bytes:
+	"""A tiny JPEG stand-in for a poster image."""
+	buffer = io.BytesIO()
+	Image.new("RGB", (40, 60), color).save(buffer, "JPEG", quality=70)
+	return buffer.getvalue()
 
 
 class CatalogMediaTests(TestCase):
@@ -181,18 +210,38 @@ class CatalogMediaTests(TestCase):
 
 		self.assertEqual(admin_write.status_code, 201)
 
-	def test_cover_image_bytes_are_stored_in_the_database(self):
-		manga = MediaTitle.objects.create(
-			type=MediaTitle.MediaType.MANGA,
-			title="Cover Test",
-			slug="cover-test",
-			cover=b"image-bytes",
-			cover_content_type="image/jpeg",
-		)
+	def test_cover_image_is_stored_as_a_media_file_not_in_the_database(self):
+		"""The poster lives under MEDIA_ROOT/covers/ so nginx can serve it."""
+		with tempfile.TemporaryDirectory(prefix="kino-covers-") as media_root:
+			with override_settings(MEDIA_ROOT=media_root):
+				default_storage._wrapped = empty
+				try:
+					manga = MediaTitle.objects.create(
+						type=MediaTitle.MediaType.MANGA,
+						title="Cover Test",
+						slug="cover-test",
+						cover=ContentFile(_sample_cover(), name="cover.jpg"),
+						cover_content_type="image/jpeg",
+					)
 
-		manga.refresh_from_db()
-		self.assertEqual(manga.cover, b"image-bytes")
-		self.assertEqual(manga.cover_content_type, "image/jpeg")
+					manga.refresh_from_db()
+					self.assertTrue(manga.cover.name.startswith("covers/"))
+					stored = Path(manga.cover.path)
+					self.assertTrue(stored.exists())
+					self.assertTrue(stored.read_bytes().startswith(b"\xff\xd8"))
+					self.assertEqual(manga.cover_content_type, "image/jpeg")
+
+					# The catalogue ships the URL, never the bytes: the
+					# response stays small and the browser caches the image
+					# itself (nginx sets the cache headers).
+					response = self.client.get("/api/catalog/", {"type": "manga"})
+					self.assertEqual(response.status_code, 200)
+					payload = response.data[0]
+					self.assertEqual(payload["cover"], manga.cover.url)
+					self.assertTrue(payload["cover"].startswith("/media/covers/"))
+					self.assertNotIn("base64", json.dumps(payload))
+				finally:
+					default_storage._wrapped = empty
 
 	def test_manga_pages_are_returned_in_order_by_telegram_file_id(self):
 		manga = MediaTitle.objects.create(
@@ -698,5 +747,411 @@ class AIProviderAdminTests(TestCase):
 		row.refresh_from_db()
 		self.assertFalse(row.is_active)
 		self.assertEqual(llm.provider_chain(), [])
+
+
+class MangaPdfDownloadProtectionTests(TestCase):
+	"""Chapters are readable, but no visitor ever receives a PDF file."""
+
+	def setUp(self):
+		self.media_root = tempfile.mkdtemp(prefix="kino-media-")
+		self.override = override_settings(MEDIA_ROOT=self.media_root)
+		self.override.enable()
+		# FileSystemStorage caches MEDIA_ROOT on first use; force a fresh one.
+		default_storage._wrapped = empty
+		self.addCleanup(self._restore_media)
+
+		self.client = APIClient()
+		self.title = MediaTitle.objects.create(
+			type=MediaTitle.MediaType.MANGA,
+			title="Protected Manga",
+			slug="protected-manga",
+		)
+		self.part = MediaPart.objects.create(content=self.title, number=1)
+		self.part.pdf.save(
+			"protected-manga-1.pdf", ContentFile(_sample_pdf()), save=True
+		)
+
+	def _restore_media(self):
+		self.override.disable()
+		default_storage._wrapped = empty
+		shutil.rmtree(self.media_root, ignore_errors=True)
+
+	def render_dir(self, part=None) -> Path:
+		target = part or self.part
+		return Path(self.media_root) / "manga" / "render" / str(target.pk)
+
+	def public_dir(self, part=None) -> Path:
+		"""What nginx serves as /media/manga/pages/<part_id>/."""
+		target = part or self.part
+		return Path(self.media_root) / "manga" / "pages" / str(target.pk)
+
+	def test_pages_meta_renders_every_page_where_nginx_can_serve_them(self):
+		response = self.client.get(f"/api/parts/{self.part.pk}/pages/")
+
+		self.assertEqual(response.status_code, 200)
+		data = response.json()
+		self.assertTrue(data["available"])
+		self.assertEqual(data["count"], 2)
+		self.assertTrue(data["etag"].startswith('"'))
+		# The browser is pointed at nginx with a cache-busting version token;
+		# Django only reports the location and never streams the bytes.
+		self.assertEqual(data["base_url"], f"/media/manga/pages/{self.part.pk}/")
+		self.assertRegex(data["version"], r"^[0-9a-f]{16}$")
+		for number in (1, 2):
+			page = self.public_dir() / f"page_{number}.jpg"
+			self.assertTrue(page.exists(), f"page {number} was not rendered")
+			self.assertTrue(page.read_bytes().startswith(b"\xff\xd8"))
+		# The raw PDF and the rendering workspace stay unreachable.
+		self.assertFalse((self.public_dir() / "source.pdf").exists())
+
+	def test_a_page_is_a_jpeg_image_and_can_be_revalidated(self):
+		response = self.client.get(f"/api/parts/{self.part.pk}/pages/1/")
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response["Content-Type"], "image/jpeg")
+		body = b"".join(response.streaming_content)
+		response.close()
+		self.assertTrue(body.startswith(b"\xff\xd8"))
+		self.assertNotIn(b"%PDF", body)
+
+		cached = self.client.get(
+			f"/api/parts/{self.part.pk}/pages/1/",
+			HTTP_IF_NONE_MATCH=response["ETag"],
+		)
+		self.assertEqual(cached.status_code, 304)
+
+	def test_pages_beyond_the_document_do_not_exist(self):
+		response = self.client.get(f"/api/parts/{self.part.pk}/pages/3/")
+
+		self.assertEqual(response.status_code, 404)
+
+	def test_the_raw_pdf_endpoint_never_returns_the_file(self):
+		download = self.client.get(f"/api/parts/{self.part.pk}/pdf/")
+
+		self.assertEqual(download.status_code, 403)
+		self.assertNotIn(b"%PDF", download.content)
+
+		# Availability stays reportable (admin panel, upload feedback).
+		meta = self.client.get(f"/api/parts/{self.part.pk}/pdf/", {"meta": 1})
+		self.assertEqual(meta.status_code, 200)
+		self.assertEqual(
+			meta.json(), {"available": True, "source": "local", "size": self.part.pdf.size}
+		)
+
+	def test_telegram_only_chapters_render_without_exposing_the_bytes(self):
+		part = MediaPart.objects.create(content=self.title, number=2)
+		TelegramMedia.objects.create(
+			part=part,
+			file_id="tg-doc-file",
+			media_type=TelegramMedia.MediaType.DOCUMENT,
+			order=1,
+		)
+
+		with mock.patch(
+			"movies.pdf_pages.fetch_file_bytes",
+			return_value=(_sample_pdf(), "documents/chapter.pdf"),
+		) as fetch:
+			meta = self.client.get(f"/api/parts/{part.pk}/pages/")
+			page = self.client.get(f"/api/parts/{part.pk}/pages/1/")
+
+		self.assertEqual(meta.status_code, 200)
+		self.assertEqual(meta.json()["count"], 2)
+		self.assertEqual(page.status_code, 200)
+		self.assertEqual(page["Content-Type"], "image/jpeg")
+		page.close()
+		# The Telegram download happens exactly once, then pages come from disk.
+		fetch.assert_called_once_with("tg-doc-file")
+		raw_pdf = self.client.get(f"/api/parts/{part.pk}/pdf/")
+		self.assertEqual(raw_pdf.status_code, 403)
+
+	def test_deleting_the_pdf_drops_every_rendered_page(self):
+		meta = self.client.get(f"/api/parts/{self.part.pk}/pages/")
+		self.assertTrue(meta.json()["available"])
+		self.assertTrue(self.public_dir().exists())
+		rendered = self.client.get(f"/api/parts/{self.part.pk}/pages/1/")
+		b"".join(rendered.streaming_content)
+		rendered.close()  # release the file handle so Windows can drop the cache
+		self.assertTrue(self.render_dir().exists())
+
+		denied = self.client.delete(f"/api/parts/{self.part.pk}/pdf/")
+		self.assertIn(denied.status_code, (401, 403))
+
+		staff = get_user_model().objects.create_user(
+			username="editor", password="pass", is_staff=True
+		)
+		self.client.force_authenticate(staff)
+		removed = self.client.delete(f"/api/parts/{self.part.pk}/pdf/")
+
+		self.assertEqual(removed.status_code, 204)
+		self.assertFalse(self.render_dir().exists())
+		# nginx would otherwise keep serving the stale JPEGs forever.
+		self.assertFalse(self.public_dir().exists())
+		meta = self.client.get(f"/api/parts/{self.part.pk}/pdf/", {"meta": 1})
+		self.assertEqual(meta.json()["available"], False)
+
+
+class CoverAsMediaFileTests(TestCase):
+	"""Covers: base64 in (the panel), bytes in (the bot), a /media URL out."""
+
+	def setUp(self):
+		self.media_root = tempfile.mkdtemp(prefix="kino-cover-media-")
+		self.override = override_settings(MEDIA_ROOT=self.media_root)
+		self.override.enable()
+		default_storage._wrapped = empty
+		self.addCleanup(self._restore_media)
+
+		self.client = APIClient()
+		self.admin = get_user_model().objects.create_superuser(
+			username="cover-editor", password="cover-password"
+		)
+
+	def _restore_media(self):
+		self.override.disable()
+		default_storage._wrapped = empty
+		shutil.rmtree(self.media_root, ignore_errors=True)
+
+	def test_base64_cover_becomes_a_media_file_and_a_url(self):
+		self.client.force_authenticate(self.admin)
+		payload = base64.b64encode(_sample_cover()).decode("ascii")
+
+		created = self.client.post(
+			"/api/catalog/",
+			{
+				"type": "anime",
+				"title": "Base64 Cover Anime",
+				"slug": "base64-cover-anime",
+				"cover": payload,
+				"cover_content_type": "image/jpeg",
+			},
+			format="json",
+		)
+
+		self.assertEqual(created.status_code, 201, created.data)
+		url = created.data["cover"]
+		self.assertTrue(url.startswith("/media/covers/"), url)
+		relative = url[len("/media/") :]
+		self.assertTrue(default_storage.exists(relative))
+		# No base64 blob left in the response body.
+		self.assertNotIn(payload, json.dumps(created.data))
+
+		# Echoing the URL back (what the panel does on an untouched form)
+		# must not fail and must not replace the stored file.
+		updated = self.client.patch(
+			f"/api/catalog/{created.data['slug']}/",
+			{"title": "Renamed Cover Anime", "cover": url},
+			format="json",
+		)
+
+		self.assertEqual(updated.status_code, 200, updated.data)
+		self.assertEqual(updated.data["cover"], url)
+		title = MediaTitle.objects.get(slug="base64-cover-anime")
+		self.assertEqual(title.cover.name, relative)
+		self.assertTrue(title.cover.storage.exists(title.cover.name))
+
+	def test_data_url_prefix_is_accepted_too(self):
+		self.client.force_authenticate(self.admin)
+		data_url = "data:image/jpeg;base64," + base64.b64encode(_sample_cover()).decode("ascii")
+
+		created = self.client.post(
+			"/api/catalog/",
+			{"type": "movie", "title": "Data Url Movie", "slug": "data-url-movie", "cover": data_url},
+			format="json",
+		)
+
+		self.assertEqual(created.status_code, 201, created.data)
+		self.assertTrue(created.data["cover"].startswith("/media/covers/"))
+		self.assertTrue(created.data["cover"].endswith(".jpg"))
+
+	def test_invalid_base64_is_rejected(self):
+		self.client.force_authenticate(self.admin)
+
+		created = self.client.post(
+			"/api/catalog/",
+			{"type": "movie", "title": "Bad Cover", "slug": "bad-cover", "cover": "%%%not-base64%%%"},
+			format="json",
+		)
+
+		self.assertEqual(created.status_code, 400)
+		self.assertIn("cover", created.data)
+
+
+class FixCoversCommandTests(TestCase):
+	"""`manage.py fix_covers` repairs what the base64 era left behind."""
+
+	def setUp(self):
+		self.media_root = tempfile.mkdtemp(prefix="kino-fix-covers-")
+		self.override = override_settings(MEDIA_ROOT=self.media_root)
+		self.override.enable()
+		default_storage._wrapped = empty
+		self.addCleanup(self._restore_media)
+
+	def _restore_media(self):
+		self.override.disable()
+		default_storage._wrapped = empty
+		shutil.rmtree(self.media_root, ignore_errors=True)
+
+	def _title(self, slug, *, cover=None, content_type="image/jpeg"):
+		fields = {
+			"type": MediaTitle.MediaType.MANGA,
+			"title": slug,
+			"slug": slug,
+			"cover_content_type": content_type,
+		}
+		if cover is not None:
+			fields["cover"] = cover
+		return MediaTitle.objects.create(**fields)
+
+	def _stored_bytes(self, title) -> bytes:
+		return Path(title.cover.path).read_bytes()
+
+	def _base64_cover(self) -> str:
+		return base64.b64encode(_sample_cover()).decode("ascii")
+
+	def _run(self, **kwargs) -> str:
+		out = io.StringIO()
+		call_command("fix_covers", stdout=out, **kwargs)
+		return out.getvalue()
+
+	def test_base64_file_is_decoded_into_the_image_it_stands_for(self):
+		payload = self._base64_cover()
+		title = self._title(
+			"broken-cover",
+			cover=ContentFile(payload.encode("ascii"), name="broken-cover.jpg"),
+			content_type="image/png",
+		)
+		broken_path = Path(self.media_root, title.cover.name)
+		self.assertTrue(broken_path.exists())
+
+		report = self._run()
+
+		self.assertIn("fixed=1", report)
+		self.assertIn("fayl ->", report)
+		title.refresh_from_db()
+		# A fresh URL: the browser must not keep whatever it cached before.
+		self.assertNotEqual(title.cover.name, "covers/broken-cover.jpg")
+		self.assertTrue(title.cover.name.startswith("covers/"))
+		self.assertTrue(self._stored_bytes(title).startswith(b"\xff\xd8"))
+		self.assertEqual(title.cover_content_type, "image/jpeg")
+		self.assertFalse(broken_path.exists())
+
+	def test_second_run_changes_nothing(self):
+		title = self._title(
+			"idem-cover",
+			cover=ContentFile(self._base64_cover().encode("ascii"), name="idem-cover.jpg"),
+		)
+
+		self._run()
+		title.refresh_from_db()
+		name, content = title.cover.name, self._stored_bytes(title)
+
+		report = self._run()
+		self.assertIn("ok=1", report)
+		self.assertIn("fixed=0", report)
+		self.assertEqual(title.cover.name, name)
+		self.assertEqual(self._stored_bytes(title), content)
+
+	def test_dry_run_reports_without_writing(self):
+		payload = self._base64_cover()
+		title = self._title(
+			"dry-cover",
+			cover=ContentFile(payload.encode("ascii"), name="dry-cover.jpg"),
+		)
+
+		report = self._run(dry_run=True)
+
+		self.assertIn("[dry-run]", report)
+		self.assertIn("fixed=1", report)
+		title.refresh_from_db()
+		self.assertEqual(title.cover.name, "covers/dry-cover.jpg")
+		self.assertEqual(self._stored_bytes(title), payload.encode("ascii"))
+
+	def test_valid_cover_is_left_untouched(self):
+		title = self._title("good-cover", cover=ContentFile(_sample_cover(), name="good-cover.jpg"))
+
+		report = self._run()
+
+		self.assertIn("ok=1", report)
+		self.assertIn("fixed=0", report)
+		title.refresh_from_db()
+		self.assertEqual(title.cover.name, "covers/good-cover.jpg")
+		self.assertTrue(self._stored_bytes(title).startswith(b"\xff\xd8"))
+
+	def test_lost_file_is_reported_and_strict_fails(self):
+		title = self._title("gone-cover", cover=ContentFile(_sample_cover(), name="gone-cover.jpg"))
+		Path(self.media_root, title.cover.name).unlink()
+
+		report = self._run()
+		self.assertIn("missing=1", report)
+
+		with self.assertRaises(CommandError):
+			self._run(strict=True)
+
+	def test_title_without_any_cover_is_empty_not_an_error(self):
+		self._title("no-cover")
+
+		report = self._run(strict=True)
+
+		self.assertIn("empty=1", report)
+		self.assertIn("checked=1", report)
+
+	def test_legacy_blob_restores_a_lost_file(self):
+		title = self._title("lost-cover", cover=ContentFile(_sample_cover(), name="lost-cover.jpg"))
+		Path(self.media_root, title.cover.name).unlink()
+		payload = base64.b64encode(_sample_cover("green")).decode("ascii")
+
+		with mock.patch.object(FixCoversCommand, "_column_exists", return_value=True), mock.patch.object(
+			FixCoversCommand, "_legacy_blob", return_value=payload.encode("ascii")
+		):
+			report = self._run()
+
+		self.assertIn("fixed=1", report)
+		self.assertIn("cover_blob ->", report)
+		title.refresh_from_db()
+		self.assertTrue(self._stored_bytes(title).startswith(b"\xff\xd8"))
+		self.assertNotEqual(self._stored_bytes(title), _sample_cover())
+
+	def test_undecodable_bytes_are_reported_and_do_not_stop_the_run(self):
+		self._title("bad-cover", cover=ContentFile(b"neither image nor base64...", name="bad-cover.jpg"))
+		self._title("fine-cover", cover=ContentFile(_sample_cover(), name="fine-cover.jpg"))
+
+		report = self._run()
+
+		self.assertIn("failed=1", report)
+		self.assertIn("ok=1", report)
+		self.assertIn("bad-cover", report)
+		self.assertIn("checked=2", report)
+
+	def test_unmigrated_schema_is_reported_instead_of_written(self):
+		payload = self._base64_cover()
+		title = self._title(
+			"old-schema",
+			cover=ContentFile(payload.encode("ascii"), name="old-schema.jpg"),
+		)
+
+		with mock.patch.object(FixCoversCommand, "_cover_column_is_binary", return_value=True):
+			report = self._run()
+
+		self.assertIn("migratsiya", report)
+		self.assertNotIn("checked=", report)
+		title.refresh_from_db()
+		self.assertEqual(title.cover.name, "covers/old-schema.jpg")
+		self.assertEqual(self._stored_bytes(title), payload.encode("ascii"))
+
+
+class CoverPayloadMigrationTests(SimpleTestCase):
+	"""Migration 0019 decodes whatever shape the stored payload has."""
+
+	def test_base64_text_raw_bytes_and_memoryviews_all_become_image_bytes(self):
+		module = importlib.import_module("movies.migrations.0019_migrate_covers_to_files")
+		image = _sample_cover()
+
+		self.assertEqual(module._decode_payload(image), image)
+		self.assertEqual(module._decode_payload(memoryview(image)), image)
+		self.assertEqual(module._decode_payload(base64.b64encode(image)), image)
+		text = "data:image/jpeg;base64,\n\t" + base64.b64encode(image).decode("ascii")
+		self.assertEqual(module._decode_payload(text.encode("ascii")), image)
+		# Anything that is not base64 is kept as it was.
+		self.assertEqual(module._decode_payload(b"!!! not base64 !!!"), b"!!! not base64 !!!")
+
 
 

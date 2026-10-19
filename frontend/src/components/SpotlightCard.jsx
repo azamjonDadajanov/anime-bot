@@ -1,17 +1,12 @@
 import { Badge, Skeleton, Text } from '@mantine/core'
 import { Link } from 'react-router-dom'
+import { coverSrc } from '../apis/mediaUrl'
 
 const typeLabels = {
   movie: 'Kino',
   anime: 'Anime',
   series: 'Serial',
   manga: 'Manga',
-}
-
-function coverSrc(item) {
-  return item?.cover
-    ? `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-    : ''
 }
 
 export function SpotlightCard({ item, kicker = 'Hafta marvaridi', icon = 'bi-fire' }) {

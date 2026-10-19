@@ -25,7 +25,8 @@ the remainder is slept at the end) — this keeps the importer from looking like
 a burst attack against bot.kawaii.uz. Re-run the command until it reports that
 nothing new is left.
 
-Posters are downloaded and stored in the database (``MediaTitle.cover``).
+Posters are downloaded and stored as media files under ``MEDIA_ROOT/covers/``
+(``MediaTitle.cover``), so nginx serves them and the API only ships URLs.
 
 Examples::
 
@@ -46,6 +47,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 from django.core.management.base import BaseCommand, CommandError
 
+from movies.covers import content_file as new_cover_file
 from movies.models import Genre, MediaTitle
 
 DEFAULT_BASE_URL = "https://bot.kawaii.uz"
@@ -556,7 +558,7 @@ class Command(BaseCommand):
 				existing.rating = metadata["rating"]
 				changed.append("rating")
 			if cover:
-				existing.cover = cover
+				existing.cover = new_cover_file(cover, name=slug)
 				existing.cover_content_type = cover_type
 				changed += ["cover", "cover_content_type"]
 			if changed:
@@ -577,7 +579,7 @@ class Command(BaseCommand):
 			required_plan=MediaTitle.AccessPlan.FREE,
 		)
 		if cover:
-			title.cover = cover
+			title.cover = new_cover_file(cover, name=slug)
 			title.cover_content_type = cover_type
 		title.save()
 		self._sync_genres(title, metadata["genres"])
