@@ -671,7 +671,8 @@ class PartsNavigatorTests(DispatcherTestCase):
 
 		self.assertEqual(self._rows()[1], ["⬅️ Oldingi qism", "Qismlar", "Keyingi qism ➡️"])
 
-	def test_single_part_title_gets_no_navigator(self) -> None:
+	def test_single_part_title_carries_actions_without_a_navigator(self) -> None:
+		"""A one-part title has nothing to navigate, but still gets the actions."""
 		title = make_title(code="7007", title="One Part")
 		part = make_part(title, number=1, season=1)
 		make_media(part, file_id="only-file", media_type="video", order=1)
@@ -679,7 +680,12 @@ class PartsNavigatorTests(DispatcherTestCase):
 		self.feed(build_callback(f"watch:{part.pk}"))
 
 		self.assertEqual(self.session.delivered_file_ids(), ["only-file"])
-		self.assertIsNone(self._navigator())
+		rows = self._rows()
+		self.assertEqual(rows[0], ["⭐️ Sevimlilarga qo'shish"])
+		self.assertEqual(rows[1], ["⬅️ Asosiy menyu"])
+		callbacks = self._callbacks()
+		self.assertEqual(callbacks[0][0], f"favm:{title.pk}:{part.pk}")
+		self.assertEqual(callbacks[1][0], cb.MENU)
 
 	def test_multi_page_part_posts_the_navigator_under_the_group(self) -> None:
 		title = make_title(code="7008", title="Scanned Anime")

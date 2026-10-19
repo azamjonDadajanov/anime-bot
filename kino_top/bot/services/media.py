@@ -120,12 +120,12 @@ def search_titles_sync(
 search_titles = to_async(search_titles_sync)
 
 
-# The AI search lives in ``movies.ai_search`` (shared with the website) and is
-# exposed here so handlers keep talking to the service layer only.
-AI_SEARCH_LIMIT = 10
-# How much of the user's taste the AI context may carry. The context rides on
-# two model calls, so it stays a few short lines — enough for "oxshashini ayt",
-# not enough to bloat every request.
+# The AI yordamchi lives in ``movies.ai_assistant`` (shared with the website)
+# and is exposed here so handlers keep talking to the service layer only.
+ASSISTANT_RESULT_LIMIT = 10
+# How much of the user's taste the assistant may read. It is only built when the
+# user opted in, and it is the result of the ``personal_taste`` tool — a few
+# short lines, enough for "o'xshashini top".
 AI_CONTEXT_FAVORITES_LIMIT = 8
 AI_CONTEXT_VIEWS_LIMIT = 5
 
@@ -138,8 +138,8 @@ def _context_line(title: MediaTitle) -> str:
 	return "(" + ", ".join(parts) + ")"
 
 
-def ai_user_context_sync(profile: Any) -> str:
-	"""A compact block about the user's taste for the AI (empty when unknown).
+def assistant_user_context_sync(profile: Any) -> str:
+	"""A compact block about the user's taste for the assistant (opt-in only).
 
 	Favourites first (newest), then the last watched/read titles. Both are
 	opt-in: the caller only builds this when the user asked for it.
@@ -177,36 +177,39 @@ def ai_user_context_sync(profile: Any) -> str:
 	return "\n".join(lines)
 
 
-ai_user_context = to_async(ai_user_context_sync)
+assistant_user_context = to_async(assistant_user_context_sync)
 
 
-def ai_search_answer_sync(
-	query: str, *, limit: int = AI_SEARCH_LIMIT, context: str = ""
+def assistant_answer_sync(
+	query: str, *, limit: int = ASSISTANT_RESULT_LIMIT, context: str = ""
 ) -> Dict[str, Any]:
-	"""Find titles by meaning and explain the picks (raises EmbeddingUnavailable).
+	"""Ask AniVoy: the online model plus its catalogue tools.
 
-	Returns everything the handler renders: the ranked hits, how many titles
-	matched in total, and the reasoning model's answer (empty when no model is
-	configured or the call failed — the search still has an answer then).
-	``context`` is the optional user-taste block (see :func:`ai_user_context_sync`).
+	Returns everything the handler renders: the titles the tools actually
+	returned, how many, the model's words, and whether it could answer at all
+	(``available``). ``context`` is the optional user-taste block, which also
+	enables the assistant's ``personal_taste`` tool.
 	"""
-	from movies import ai_reasoning
+	from movies import ai_assistant
 
 	from ..config import site_url
 
-	answer = ai_reasoning.answer_search(query, limit=limit, context=context)
+	result = ai_assistant.answer(query, limit=limit, personal_context=context)
 	return {
-		"query": answer.query,
-		"items": [hit.as_dict(site_url=site_url()) for hit in answer.hits],
-		"total": answer.total,
-		"text": answer.answer,
-		"thinking": answer.thinking,
-		"reasoning": answer.used_llm,
-		"conversational": answer.conversational,
+		"query": result.query,
+		"items": [
+			ai_assistant.title_payload(title, site_url=site_url())
+			for title in result.titles
+		],
+		"text": result.answer,
+		"conversational": result.conversational,
+		"tools": list(result.tools),
+		"available": result.used_llm,
+		"error": result.error,
 	}
 
 
-ai_search_answer = to_async(ai_search_answer_sync)
+assistant_answer = to_async(assistant_answer_sync)
 
 
 def titles_by_type_sync(media_type: str, *, limit: Optional[int] = None) -> List[MediaTitle]:

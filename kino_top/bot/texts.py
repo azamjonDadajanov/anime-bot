@@ -24,6 +24,8 @@ HELP_TEXT = (
 	"{brand}\n\n"
 	"<b>Yordam</b>\n\n"
 	"🔍 <b>Qidirish</b> — nomi, kodi yoki janri bo'yicha qidirish.\n"
+	"🤖 <b>AI yordamchi</b> — AniVoy: savollarga javob beradi va kontent topadi "
+	"(faol obunachilar uchun).\n"
 	"📚 <b>Katalog</b> — anime, serial, manga va kinolar ro'yxati.\n"
 	"⭐ <b>Sevimlilar</b> — saqlangan kontentlar.\n"
 	"👤 <b>Profil</b> — hisobingiz va obuna tarifi.\n\n"
@@ -45,43 +47,43 @@ SEARCH_ALL_TITLE = "📚 <b>Barcha kontent</b> — {page}/{pages}"
 SEARCH_GENRE_LIST = "🎭 <b>Janr bo'yicha qidiruv</b>\n\nJanrni tanlang:"
 SEARCH_EMPTY_RESULTS = "📭 Hozircha bu bo'limda kontent yo'q."
 
-# --- AI search (semantic, subscribers only) -----------------------------------
-AI_SEARCH_PROMPT = (
-	"🤖 <b>AI qidiruv</b>\n\n"
-	"Qidirayotganingizni o'z so'zingiz bilan yozing — masalan:\n"
-	"<i>menga sarguzasht va qo'rqinchli animelar ayt</i>\n\n"
-	"AI bazadagi kontentni nomi emas, ma'nosi bo'yicha topadi.\n"
+# --- AI yordamchi (AniVoy, subscribers only) ---------------------------------
+AI_ASSISTANT_PROMPT = (
+	"🤖 <b>AniVoy — AI yordamchi</b>\n\n"
+	"Savolingizni yoki qidirayotgan kontentingizni o'z so'zingiz bilan yozing:\n"
+	"<i>menga sarguzasht va qo'rqinchli animelar ayt</i>\n"
+	"<i>Naruto nechta qismdan iborat?</i>\n"
+	"<i>sevimlilarimga o'xshash nima bor?</i>\n\n"
+	"Yordamchi katalogdan o'zi qidirib, kerakli ma'lumotni oladi va o'zbekcha "
+	"javob beradi.\n"
 	"«🎯 Sevimlilar» tugmasini yoqsangiz, sevimlilaringiz va oxirgi "
-	"ko'rganlaringiz ham tahlilga qo'shiladi — «sevimlim mosini top» "
-	"kabi so'rovlar uchun.\n"
-	"Bekor qilish uchun «⬅️ Qidiruvga qaytish» tugmasini bosing."
+	"ko'rganlaringiz ham hisobga olinadi.\n"
+	"Bekor qilish uchun «⬅️ Asosiy menyu» tugmasini bosing."
 )
-AI_SEARCH_FAVS_ON = "✅ Endi sevimlilaringiz va oxirgi ko'rganlaringiz AI tahliliga qo'shiladi."
-AI_SEARCH_FAVS_OFF = "❌ Sevimlilar AI tahliliga qo'shilmaydi."
-AI_SEARCH_THINKING = (
-	"🤔 <b>AI o'ylayapti…</b>\n\n"
-	"So'rovingizni tahlil qilib, katalogdan eng mos kontentlarni tanlayapti."
+AI_ASSISTANT_PERSONAL_ON = (
+	"✅ Endi sevimlilaringiz va oxirgi ko'rganlaringiz yordamchiga beriladi."
 )
-AI_SEARCH_RESULTS = "🤖 <b>{query}</b> uchun AI topgan natijalar:"
-AI_SEARCH_MORE = (
-	"➕ Jami <b>{total} ta</b> mos kontent topildi — quyida eng mos {shown} tasi "
-	"ko'rsatildi."
+AI_ASSISTANT_PERSONAL_OFF = "❌ Sevimlilar yordamchiga berilmaydi."
+AI_ASSISTANT_THINKING = (
+	"🤔 <b>AniVoy o'ylayapti…</b>\n\n"
+	"So'rovingizni tahlil qilib, kerakli ma'lumotni katalogdan qidiryapti."
 )
-AI_SEARCH_EMPTY = (
+AI_ASSISTANT_RESULTS = "🤖 <b>{query}</b> bo'yicha AniVoy javobi:"
+AI_ASSISTANT_EMPTY = (
 	"😔 <b>{query}</b> bo'yicha mos kontent topilmadi.\n"
 	"So'rovni boshqacha yozib ko'ring (masalan, janr va kayfiyatni qo'shib)."
 )
-AI_SEARCH_REQUIRED = (
-	"🔒 <b>AI qidiruv faqat obunachilar uchun</b>\n\n"
-	"Bu qidiruv qidiruv modelini ishlatadi, shuning uchun faol obuna kerak.\n"
+AI_ASSISTANT_REQUIRED = (
+	"🔒 <b>AI yordamchi faqat obunachilar uchun</b>\n\n"
+	"Yordamchi online AI modelida ishlaydi, shuning uchun faol obuna kerak.\n"
 	"«🎫 Obuna» bo'limidan tarifni tanlang."
 )
-AI_SEARCH_UNAVAILABLE = (
-	"🛠 AI qidiruv hozircha ishga tushmagan.\n"
-	"Administratorlarga «✉️ Adminga xabar» orqali xabar bering yoki oddiy "
-	"qidiruvdan foydalaning."
+AI_ASSISTANT_UNAVAILABLE = (
+	"🛠 AI yordamchi hozircha javob bera olmaydi: model sozlanmagan yoki "
+	"barcha provayderlar limitda.\n"
+	"Keyinroq qayta urinib ko'ring yoki oddiy qidiruvdan foydalaning."
 )
-AI_SEARCH_ERROR = "⚠️ AI qidiruvda xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
+AI_ASSISTANT_ERROR = "⚠️ AI yordamchida xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
 
 CATALOG_TITLE = "📚 <b>Katalog</b>\n\nKategoriyani tanlang:"
 GENRE_LIST = "🎭 <b>Janrlar</b>\n\nJanrni tanlang:"
@@ -178,6 +180,50 @@ CANCELLED = "❌ Amal bekor qilindi."
 OPERATION_FAILED = "⚠️ Xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
 NOT_FOUND = "🔍 Ma'lumot topilmadi."
 EDIT_PROMPT = "✏️ Yangi qiymatni yuboring.\n\n{cancel_hint}"
+
+# --- in-bot quiz (the games questions, asked one message at a time) ---------
+QUIZ_QUESTION = (
+	"🧪 <b>Savol {index}/{total}</b> — {title}\n\n"
+	"{text}\n\n"
+	"⏱ {seconds} soniya · ✅ {pass_score} ta to'g'ri javob kerak"
+)
+# Appended to the first question only: it explains the speed bonus once.
+QUIZ_FIRST_HINT = "⭐ Tez javob bersangiz, ko'proq ball olasiz."
+QUIZ_TIME_UP = "⏳ Vaqt tugadi — bu savol ball keltirmadi."
+QUIZ_STALE = "ℹ️ Bu savol allaqachon yopildi."
+QUIZ_NO_QUESTIONS = "ℹ️ Bu kontent uchun savollar tayyor emas."
+QUIZ_NO_ACCOUNT = "⚠️ O'yinda qatnashish uchun hisobingizni saytga ulang."
+QUIZ_RESULT = (
+	"🧪 <b>Test yakunlandi</b> — {title}\n\n"
+	"✅ {correct} / {total} to'g'ri javob\n"
+	"🏆 Ballar: <b>{points}</b>\n\n"
+	"{outcome}"
+)
+QUIZ_PASSED = "🎉 Tabriklaymiz! Bu kontent tasdiqlandi."
+QUIZ_FAILED = "😕 O'tib bo'lmadi. Qayta urinish mavjud emas."
+QUIZ_SUSPICIOUS = "🚫 Javoblar shubhali darajada tez berilgani uchun ballar hisoblanmadi."
+QUIZ_RANK = "🏆 Reytingdagi o'rningiz: <b>#{rank}</b> · {points} ball · Lv.{level}"
+
+# --- rating table (the site's "Reyting" page, inside the bot) ---------------
+RATING_TITLE = (
+	"🏆 <b>Reyting jadvali</b>\n\n"
+	"O'yinda ball to'plang, reytingda yuqoriga chiqing. Oyning eng faol "
+	"o'yinchisi 1 oylik obuna yutadi."
+)
+RATING_OWN = (
+	"👤 <b>Sizning o'rningiz:</b> #{rank} · {points} ball · Lv.{level} ({level_name})\n"
+	"✅ Tasdiqlangan: {verified} ta · 🎯 Urinishlar: {attempts} ta"
+)
+# Shown when the Telegram visitor has not linked a website account yet: the
+# table is public, only the "my rank" part needs an account.
+RATING_GUEST = "👤 O'z o'rningizni ko'rish uchun hisobingizni saytga ulang."
+RATING_TOP = "🔥 <b>Eng faol o'yinchilar:</b>"
+RATING_ROW = "{mark} <b>{name}</b> — <b>{points}</b> ball · Lv.{level}"
+RATING_ROW_SELF = "{mark} <b>{name}</b> — <b>{points}</b> ball · Lv.{level} ◀ siz"
+RATING_EMPTY = (
+	"🏆 <b>Reyting jadvali</b>\n\n"
+	"Hali reyting yo'q — o'yinda birinchi bo'lib ball to'plang."
+)
 
 # --- admin ------------------------------------------------------------------
 ADMIN_PANEL = (

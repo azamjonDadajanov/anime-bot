@@ -37,10 +37,11 @@ SUBSCRIPTION = "subs"
 COUPON = "coupon"
 # Support: the user's "write to the administrators" screen.
 SUPPORT = "support"
-# AI search: the user's semantic search screen (subscribers only).
-AI_SEARCH = "ai"
-# AI search: opt in/out of sending the user's favourites/history to the model.
-AI_FAV = "aifav"
+# AI yordamchi: the assistant chat (subscribers only). The payload stays short
+# ("ai"), the constant is what names it in the handlers.
+AI_ASSISTANT = "ai"
+# AI yordamchi: opt in/out of giving the assistant the user's favourites/history.
+AI_PERSONAL = "aifav"
 # Referrals: invite menu and manual milestone claims (``refc:<milestone>``).
 REF = "ref"
 REF_CLAIM = "refc"
@@ -52,6 +53,15 @@ GENRE = "g"
 TITLE = "t"
 PART = "p"
 FAV_TOGGLE = "favt"
+# Actions attached under every delivered media message:
+# favourite toggle ``favm:<title_pk>:<part_pk>`` and the title's quiz
+# ``qz:<title_pk>``.
+FAV_MEDIA = "favm"
+QUIZ = "qz"
+# Quiz answer ``qza:<attempt_pk>:<question_index>:<choice_index>``.
+QUIZ_ANSWER = "qza"
+# Reyting: the site's rating table (top players, own rank) inside the bot.
+RATING = "rt"
 QUALITY = "q"
 
 # --- admin ------------------------------------------------------------------

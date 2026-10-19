@@ -55,11 +55,11 @@ async def ask_for_code(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(UserCouponStates.code)
-async def redeem(message: Message, state: FSMContext, is_admin: bool) -> None:
+async def redeem(message: Message, state: FSMContext, profile, is_admin: bool) -> None:
 	code = (message.text or "").strip()
 	await state.clear()
 	if not code:
-		await message.answer(COUPON_NOT_FOUND, reply_markup=main_menu(is_admin))
+		await message.answer(COUPON_NOT_FOUND, reply_markup=main_menu(is_admin, profile))
 		return
 
 	result = await redeem_coupon(code, telegram_id=message.from_user.id)
@@ -69,11 +69,11 @@ async def redeem(message: Message, state: FSMContext, is_admin: bool) -> None:
 				days=result.days,
 				expires=human_datetime(result.expires_at),
 			),
-			reply_markup=main_menu(is_admin),
+			reply_markup=main_menu(is_admin, profile),
 		)
 		return
 
 	await message.answer(
 		MESSAGES.get(result.status, COUPON_NOT_FOUND),
-		reply_markup=main_menu(is_admin),
+		reply_markup=main_menu(is_admin, profile),
 	)

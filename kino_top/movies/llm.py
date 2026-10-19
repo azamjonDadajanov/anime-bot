@@ -1,8 +1,8 @@
-"""Chat client for the AI search's reasoning step — with automatic failover.
+"""Chat client for the AI assistant — one model per try, with automatic failover.
 
 One provider is a single point of failure: its free tier runs out, its key gets
-rate limited, its endpoint hiccups. So the reasoning step is not tied to a
-provider but to a **chain** of them:
+rate limited, its endpoint hiccups. So the assistant is not tied to a provider
+but to a **chain** of them:
 
 * the chain comes from the ``AIProvider`` table (see :func:`provider_chain`), so
   an operator can change keys, add a second provider or re-order them without a
@@ -18,8 +18,9 @@ provider but to a **chain** of them:
 
 Everything is time-boxed: ``AI_LLM_TIMEOUT`` per attempt and ``AI_LLM_DEADLINE``
 for the whole chain, so a dead provider costs seconds, never the user's patience.
-If *no* provider answers, :class:`LLMUnavailable` is raised and the search falls
-back to its vector results (see :mod:`movies.ai_reasoning`).
+If *no* provider answers, :class:`LLMUnavailable` is raised and the caller
+reports the assistant unavailable (see :mod:`movies.ai_assistant`): there is no
+offline model to fall back to.
 """
 
 from __future__ import annotations
@@ -89,8 +90,8 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 class LLMUnavailable(RuntimeError):
 	"""No provider could answer, or none is configured at all.
 
-	Callers treat it as "answer from the vector search alone" — the search keeps
-	working, it just does not get an explanation.
+	Callers treat it as "the assistant cannot answer right now" — the clients say
+	so instead of showing a list of unrelated titles.
 	"""
 
 
@@ -107,6 +108,40 @@ class ProviderError(LLMUnavailable):
 		super().__init__(message)
 		self.quota = quota
 		self.retry_after = retry_after
+
+
+@dataclass(frozen=True)
+class ToolCall:
+	"""One function the model asked the assistant to run.
+
+	``arguments`` is the raw JSON string the provider sent (not parsed here):
+	the assistant decides which tool it belongs to and how strict to be, so a
+	malformed argument list can be reported to the model instead of killing the
+	whole request.
+
+	``extra`` is the provider's opaque follow-up metadata. Gemini 3 signs every
+	function call with a ``thought_signature`` under ``extra_content`` and rejects
+	the next round when it is not echoed back, so it is kept verbatim and sent
+	with the call; providers that send nothing leave it ``None``.
+	"""
+
+	id: str
+	name: str
+	arguments: str = ""
+	extra: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class ChatResult:
+	"""One completion: either words, or a request to run tools (or both)."""
+
+	content: str = ""
+	tool_calls: tuple = ()
+	provider: str = ""
+
+	@property
+	def wants_tools(self) -> bool:
+		return bool(self.tool_calls)
 
 
 @dataclass(frozen=True)
@@ -341,10 +376,10 @@ def is_configured() -> bool:
 	return bool(provider_chain())
 
 
-# The reasoning cache keys on *which* models may answer, and recomputing that
-# from the database on every (also cached) search would be a needless query on
-# the hot path. Thirty seconds is far below any human-noticeable staleness for
-# a configuration that changes when an operator edits a row.
+# The answer cache keys on *which* models may answer, and recomputing that from
+# the database on every (also cached) question would be a needless query on the
+# hot path. Thirty seconds is far below any human-noticeable staleness for a
+# configuration that changes when an operator edits a row.
 _SIGNATURE_TTL_SECONDS = 30
 _SIGNATURE: Dict[str, Any] = {"at": 0.0, "value": ()}
 
@@ -353,7 +388,7 @@ def chain_signature() -> tuple:
 	"""A cheap identity of the current chain: ``((name, model), ...)``.
 
 	Two answers produced by different models are not interchangeable, so the
-	reasoning cache must notice a provider change. Cached for
+	answer cache must notice a provider change. Cached for
 	:data:`_SIGNATURE_TTL_SECONDS` to keep the search path free of extra queries.
 	"""
 	now = time.monotonic()
@@ -375,7 +410,7 @@ def reset_signature_cache() -> None:
 def configuration() -> Dict[str, Any]:
 	"""A safe description for the management command; never returns a key.
 
-	``usable`` is the chain the next search would actually try, so a provider
+	``usable`` is the chain the next question would actually try, so a provider
 	that is cooling down is listed but not counted as available.
 	"""
 	chain = provider_chain(include_cooling=True)
@@ -500,22 +535,29 @@ def _retry_after_seconds(headers) -> Optional[int]:
 # --------------------------------------------------------------------------- #
 def _attempt(
 	config: ProviderConfig,
-	messages: Sequence[Dict[str, str]],
+	messages: Sequence[Dict[str, Any]],
 	*,
 	max_tokens: int,
 	temperature: float,
 	seconds: int,
-) -> str:
+	tools: Optional[Sequence[Dict[str, Any]]] = None,
+	tool_choice: str = "auto",
+) -> ChatResult:
 	"""Send one request; failures raise :class:`ProviderError` with a reason."""
 	payload: Dict[str, Any] = {
 		"model": config.model,
 		"messages": list(messages),
 		# Deterministic enough that the same request does not produce a different
-		# explanation every time.
+		# answer every time.
 		"temperature": float(temperature),
 		"max_tokens": int(max_tokens),
 	}
-	if json_mode():
+	if tools:
+		# OpenAI-compatible tool calling: the model answers with ``tool_calls``
+		# instead of prose, the assistant runs them and asks again.
+		payload["tools"] = list(tools)
+		payload["tool_choice"] = tool_choice or "auto"
+	elif json_mode():
 		payload["response_format"] = {"type": "json_object"}
 	request = urllib.request.Request(
 		f"{config.base_url}/chat/completions",
@@ -553,9 +595,27 @@ def _attempt(
 		raise ProviderError(f"{config.label} noto'g'ri javob qaytardi.") from exc
 
 	try:
-		return str(body["choices"][0]["message"]["content"] or "")
-	except (KeyError, IndexError, TypeError) as exc:
+		message = body["choices"][0]["message"]
+		extract = str(message.get("content") or "")
+	except (KeyError, IndexError, TypeError, AttributeError) as exc:
 		raise ProviderError(f"{config.label} javobida 'choices' yo'q.") from exc
+
+	calls = []
+	for index, item in enumerate(message.get("tool_calls") or []):
+		function = item.get("function") or {}
+		name = str(function.get("name") or "").strip()
+		if not name:
+			continue
+		extra = item.get("extra_content")
+		calls.append(
+			ToolCall(
+				id=str(item.get("id") or f"call_{index}"),
+				name=name,
+				arguments=str(function.get("arguments") or "{}"),
+				extra=extra if isinstance(extra, dict) and extra else None,
+			)
+		)
+	return ChatResult(content=extract, tool_calls=tuple(calls), provider=config.label)
 
 
 def chat(
@@ -578,6 +638,29 @@ def chat(
 	search during an outage as fast as one during normal operation. Raises
 	:class:`LLMUnavailable` when nobody answers.
 	"""
+	return chat_completion(
+		messages,
+		max_tokens=max_tokens,
+		temperature=temperature,
+		timeout_seconds=timeout_seconds,
+	).content
+
+
+def chat_completion(
+	messages: Sequence[Dict[str, Any]],
+	*,
+	max_tokens: int = 700,
+	temperature: float = 0.2,
+	timeout_seconds: Optional[int] = None,
+	tools: Optional[Sequence[Dict[str, Any]]] = None,
+	tool_choice: str = "auto",
+) -> ChatResult:
+	"""One completion over the chain, with optional tool calling.
+
+	Same failover contract as :func:`chat`, but the answer is kept whole: a
+	model that asks for tools returns :class:`ToolCall` objects, and the caller
+	runs them and asks again (see :mod:`movies.ai_assistant`).
+	"""
 	chain = provider_chain()
 	if not chain:
 		# No network attempt is made in this case: the answer comes from the
@@ -597,12 +680,14 @@ def chat(
 			break
 		started = _monotonic()
 		try:
-			text = _attempt(
+			result = _attempt(
 				config,
 				messages,
 				max_tokens=max_tokens,
 				temperature=temperature,
 				seconds=int(min(per_attempt, remaining)),
+				tools=tools,
+				tool_choice=tool_choice,
 			)
 		except LLMUnavailable as exc:
 			is_quota = bool(getattr(exc, "quota", False))
@@ -629,7 +714,7 @@ def chat(
 		clear_cooldown(config.key)
 		_record_success(config.row_id, elapsed_ms)
 		logger.debug("AI answer from %s in %sms", config.label, elapsed_ms)
-		return text
+		return result
 
 	raise LLMUnavailable("; ".join(errors) or "Hech bir provayder javob bermadi.")
 

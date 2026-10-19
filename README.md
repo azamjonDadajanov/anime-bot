@@ -9,9 +9,12 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 **Telegram bot**
 
 - 4 xonali kod, nom yoki janr bo'yicha qidiruv; katalog, janrlar va turlar bo'limlari.
-- **AI qidiruv** ("🤖 AI orqali qidirish" tugmasi, faqat faol obunachilar uchun):
-  "menga sarguzasht va qo'rqinchli animelar ayt" kabi so'rovlarni tushunadi va
+- **AI yordamchi — AniVoy** ("🤖 AI yordamchi" tugmasi, faqat faol obunachilar
+  uchun): online chat modeli katalog funksiyalarini (qidiruv, kontent ma'lumoti,
+  qismlar, janrlar, mashhur/yangi kontent) o'zi chaqirib, savolga javob beradi va
   mos kontentlarni havola + bir gaplik mazmun bilan ro'yxat qilib beradi.
+  Masalan: «qo'rqinchli anime ayt», «Naruto nechta qismdan iborat?»,
+  «sevimlilarimga o'xshash nima bor?».
 - Qism yuborilgach uning ostida **qismlar navigatori** chiqadi: qismlar 5 tadan qatorlarga
   joylashadi, tanlangani yashil belgi bilan ajratiladi, pastdagi `⬅️ fasl ➡️` tugmalari
   oldingi/keyingi qismni yuboradi va fasl tugaganda keyingi faslning birinchi qismiga o'tadi.
@@ -51,9 +54,10 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 - Manga o'quvchi (PDF va rasmlar), o'qish pozitsiyasini saqlash.
 - Sarlavhadagi "✉️" tugmasi — **Adminga xabar** modali: matn serverda saqlanadi va
   administratorlarga yuboriladi (natija foydalanuvchiga darhol aytiladi).
-- O'ng pastdagi **🤖 AI qidiruv** tugmasi — chat: savol matni botdagi bilan bir xil
-  modeldan o'tadi, natijalar havola, bir gaplik mazmun va moslik foizi bilan
-  chiqadi. Obuna bo'lmagan hisobga "Obunani tanlash" taklifi ko'rsatiladi.
+- O'ng pastdagi **🤖 AI yordamchi** tugmasi (faqat faol obunachilarga ko'rinadi) —
+  AniVoy bilan chat: botdagi bilan bir xil model va funksiyalar ishlaydi, natijalar
+  havola va bir gaplik mazmun bilan chiqadi. Obuna bo'lmagan hisobga tugma
+  ko'rsatilmaydi, API esa `403 subscription_required` qaytaradi.
 - Obuna tugashiga 3 kun qolganda yoki muddati o'tgach `/subscription` sahifasida
   ogohlantirish ko'rsatiladi (botdagi eslatma bilan bir xil qoida).
 - **Anime reyting o'yini** (`/game`): botda ≥3 qism ochilgan animelar bo'yicha
@@ -62,6 +66,10 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
   javoblar keyin ko'rsatilmaydi. Server tomonidan minimal javob vaqti va kunlik
   urinish limiti bilan anti-cheat. Oyning eng faol (obunasi bo'lmagan) o'yinchisi
   1 oylik obuna yutadi (`award_game_monthly_prize`, cron).
+- **Reyting jadvali** ikkala joyda ham bir xil manbadan (`games.services.leaderboard`)
+  olinadi: saytda `/rating` sahifasida, botda esa asosiy menyudagi **🏆 Reyting**
+  tugmasida — top 10 o'yinchi, o'z o'rni, tasdiqlanganlar va urinishlar soni.
+  Botda qiz tugagach natija ostida yangi o'rin ham ko'rsatiladi.
 - JWT asosidagi autentifikatsiya: parol, Telegram login widget va Telegram Mini App.
 
 ## Texnologiyalar
@@ -69,7 +77,7 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 | Qatlam    | Nima ishlatilgan                                                             |
 | --------- | ---------------------------------------------------------------------------- |
 | Bot       | aiogram 3, Django ORM bilan `sync_to_async` ko'prigi                          |
-| AI qidiruv| `paraphrase-multilingual-MiniLM-L12-v2` ONNX eksporti + onnxruntime + numpy    |
+| AI yordamchi| Online chat modeli (Groq/Gemini/OpenAI) + OpenAI-mos `tools` (function calling) |
 | Backend   | Django 5.2, Django REST Framework, SimpleJWT, drf-spectacular, CORS, whitenoise |
 | Baza      | SQLite (dev) yoki PostgreSQL (production)                                     |
 | Frontend  | React 19, Vite, Mantine 9, React Router, axios, bootstrap-icons               |
@@ -122,20 +130,25 @@ python manage.py botcheck            # sozlamalarni tekshirish
 
 Demo kontent kerak bo'lsa: `python manage.py seed_test_anime`.
 
-### AI qidiruvni yoqish
+### AI yordamchini yoqish
 
-AI qidiruv modelni talab qiladi (bir marta yuklanadi) va indeksni yig'ish kerak:
+Offline model yuklab olish ham, indeks yig'ish ham kerak emas: yordamchi faqat
+online model bilan ishlaydi. `kino_top/.env` da bitta kalit yetarli:
 
 ```bash
-python manage.py index_anime_embeddings --download-model   # ~470MB ONNX + tokenizer
-python manage.py index_anime_embeddings                    # katalogdagi hamma kontentni indekslaydi
-python manage.py index_anime_embeddings --status           # holat va eskirgan yozuvlar
-python manage.py index_anime_embeddings --check            # model ishlayaptimi
+AI_LLM_PROVIDER=groq        # groq | gemini | openai | custom
+AI_LLM_API_KEY=gsk_...      # https://console.groq.com/keys
 ```
 
-Keyin kontent qo'shilsa, tahrirlansa yoki o'chirilsa indeks o'zi yangilanadi
-(signal'lar orqali, faqat o'zgargan sarlavha qayta hisoblanadi). Batafsil
-ma'lumot va cheklovlar **[DEPLOY.md](DEPLOY.md)** da.
+Sozlamani tekshirish va bitta real so'rovni sinab ko'rish:
+
+```bash
+python manage.py ai_status          # zanjir: provayderlar, model, kalit, kutish
+python manage.py ai_status --test   # bitta real savol va chaqirilgan funksiyalar
+```
+
+Bir nechta kalitni zanjir qilib qo'yish (`/django-admin/` → *AI provayderlar*)
+batafsil **[DEPLOY.md](DEPLOY.md)** da.
 
 ### 2. Frontend
 
@@ -169,9 +182,10 @@ JWT bilan himoyalangan REST API (`/api/`):
 - `POST /api/auth/telegram/login/`, `POST /api/auth/telegram/mini-app/`
 - `/api/auth/subscription/plans/`, `subscription/card/`, `subscription/request/`
 - `POST /api/auth/support/` — Adminga xabar (barcha administratorlarga yetkaziladi)
-- `POST /api/catalog/ai-search/` — AI qidiruv: `{"query": "..."}` → havola,
-  bir gaplik mazmun va moslik bali bilan natijalar ro'yxati (faqat faol obuna;
-  model yoki indeks tayyor bo'lmasa `503`, obuna bo'lmasa `403`)
+- `POST /api/catalog/ai-assistant/` — AI yordamchi: `{"query": "..."}` (+ ixtiyoriy
+  `history`, `taste`, `support`, `type`, `limit`) → modelning javobi, u chaqirgan
+  funksiyalar ro'yxati va havola + bir gaplik mazmun bilan natijalar (faqat faol
+  obuna; provayder bo'lmasa `503 ai_unavailable`, obuna bo'lmasa `403`)
 - `/api/catalog/`, `/api/parts/`, `/api/reading/`, `/api/telegram-media/`, `/api/channels/`
 - O'yin: `/api/game/status/`, `game/titles/`, `game/quiz/start/`, `game/quiz/submit/`,
   `game/leaderboard/`
@@ -180,7 +194,7 @@ JWT bilan himoyalangan REST API (`/api/`):
 ## Testlar va tekshiruvlar
 
 ```bash
-cd kino_top && python manage.py test        # 443 ta test
+cd kino_top && python manage.py test        # 479 ta test
 python manage.py check --deploy             # production sozlamalari bo'yicha ogohlantirishlar
 
 cd frontend && npm run lint && npm run build
@@ -205,47 +219,87 @@ o'z admini `/django-admin/` ga ko'chirilgan (`kino_top/kino_top/urls.py`). Ilgar
 `/admin/` ni Django'ga proxy qilardi va panelning istalgan sahifasiga to'g'ridan-to'g'ri
 kirish yoki sahifani yangilash Django admin loginiga olib kelardi.
 
-## AI qidiruv (semantic search)
+## AI yordamchi (AniVoy)
 
-Katalogdagi sarlavhalar **`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`**
-modelining ONNX eksporti bilan 384 o'lchamli vektorga aylantiriladi (bu rasmiy
-eksport, shuning uchun natija PyTorch versiyasi bilan bir xil; bizda torch o'rniga
-faqat `onnxruntime` ishlaydi). Foydalanuvchi so'rovi ham shu modeldan o'tadi va
-natijalar kosinus o'xshashligi bo'yicha tartiblanadi — shuning uchun so'rovdagi
-so'zlar sarlavhada umuman uchramasa ham mos kontent topiladi.
 
-- **Obuna to'sig'i**: botda ham, saytda ham faqat `Subscription.is_active` bo'lgan
-  (ya'ni to'langan va muddati o'tmagan) hisoblar foydalanadi.
-- **Indeks**: `TitleEmbedding` jadvali (sarlavha ↔ vektor + matn hashi).
-  Qo'shilgan/tahrirlangan/o'chirilgan sarlavha (va janr o'zgarishi) o'zgargan
-  qatornigina qayta hisoblaydi; to'liq indeksni `index_anime_embeddings` yig'adi.
-- **Matn**: nom, tur, janrlar, yil, holat va tavsifning bir qismi (model 128
-  tokenda kesadi, shuning uchun tavsif qisqartiriladi).
-- **Fikrlash (ixtiyoriy, lekin tavsiya etiladi)**: qidiruv ikki qadamda ishlaydi —
-  avval encoder katalogdan nomzodlarni topadi, keyin chat modeli so'rovni tahlil
-  qilib, mos keladiganlarini tanlaydi, tartibini aniqlaydi va o'zbekcha qisqa javob
-  yozadi. Model bitta kalitga emas, **bazadagi provayderlar zanjiriga** bog'langan
-  (`/django-admin/` → *AI provayderlar*; bo'sh bo'lsa `.env`dagi
-  `AI_LLM_PROVIDER`/`AI_LLM_API_KEY` ishlaydi): so'rov ustuvorlik tartibida
-  bittalab yuboriladi, biri limitga yetsa yoki javob bermasa avtomatik keyingisiga
-  o'tiladi, o'sha provayder esa kutishga qo'yiladi — keyingi so'rovlar uni qayta
-  urinmaydi (`AI_LLM_TIMEOUT`, `AI_LLM_DEADLINE`). Zanjir butunlay limitda bo'lsa,
-  qidiruv tarmoqqa murojaat qilmasdan darhol vektor natijalarini qaytaradi. Botda
-  «🤔 AI o'ylayapti…» xabari javobga aylanadi, saytda javob va yig'ilgan
-  «Fikrlash jarayoni» ko'rsatiladi. Kalit o'rnatilmagan yoki provayder javob
-  bermagan taqdirda qidiruv ishlashda davom etadi — faqat izohsiz, vektor
-  tartibida qaytadi (`used_llm`/`reasoning` maydoni buni aytadi).
-- **Natijalar**: har bir sarlavha havola (saytda `/media/<slug>`, botda bosiladigan
-  tugma) va bir gapli qisqacha mazmun bilan chiqadi. Ro'yxat eng mos N tadan
-  iborat, lekin javobda **jami nechta mos kontent topilgani** ham aytiladi
-  ("Yana N tasini ko'rsatish" / "Jami N ta mos kontent topildi") — model butun
-  bazani titkilaydi, ko'rsatiladigan qismi esa faqat o'qish uchun qulay bo'lgani
-  uchun cheklanadi.
-- **Choralar/cheklovlar**: o'lchov (33 sarlavhali katalog, real model) — mavzuga
-  oid so'rovlarning eng yaxshi natijalari 0.70-0.84, aloqasi yo'q so'rovlarda esa
-  eng yuqori ball 0.42 dan oshmadi; shu sababli standart chegara
-  `AI_SEARCH_MIN_SCORE=0.45`. Model birinchi so'rovda xotiraga yuklanadi (~6 s),
-  keyin bitta qidiruv ~10 ms. Batafsil: DEPLOY.md.
+
+AniVoy — bu qidiruv maydoni ustiga qo'yilgan model emas, balki **funksiyalar
+
+bilan ishlaydigan online yordamchi**. Model senga berilgan funksiyalardan qaysi
+
+biri kerakligini o'zi hal qiladi, natijani o'qiydi va shundan keyin o'zbekcha
+
+javob yozadi (`movies.ai_assistant`):
+
+
+
+| Funksiya | Nima qiladi |
+
+| --- | --- |
+
+| `search_catalog` | Nomi, tavsifi, janri, turi yoki yili bo'yicha kontent qidiradi |
+
+| `title_details` | Bitta kontent haqida to'liq ma'lumot (janr, yil, reyting, tarif, tavsif) |
+
+| `list_parts` | Qismlar/mavsumlar ro'yxati («nechta qism bor?» uchun aniq javob) |
+
+| `list_genres` | Katalogdagi janrlar va ularning kontent soni |
+
+| `popular_titles` | Mashhur, eng yangi yoki kutilayotgan kontent |
+
+| `catalog_stats` | Turlar bo'yicha kontent soni |
+
+| `personal_taste` | Sevimlilar va oxirgi ko'rganlar — faqat foydalanuvchi yoqsa |
+
+
+
+- **Offline model yo'q**: vektor indeks, ONNX/model fayllari va `numpy`/
+
+  `onnxruntime`/`tokenizers` bog'liqliklari butunlay olib tashlangan. Yordamchi
+
+  faqat online model orqali ishlaydi; kalit bo'lmasa u javob bera olmasligini
+
+  aytadi (botda «🛠 AI yordamchi hozircha javob bera olmaydi…», saytda `503`).
+
+- **Obuna to'sig'i**: botda tugma faqat `Subscription.is_active` bo'lgan
+
+  hisoblarga chiqadi, saytda esa launcher ham, API ham (`403`) shu qoidani
+
+  qo'llaydi. Qidiruv ekranida AI tugmasi yo'q — yordamchi asosiy menyudagi
+
+  alohida «🤖 AI yordamchi» tugmasi orqali ochiladi.
+
+- **Provayder zanjiri**: model bitta kalitga emas, **bazadagi provayderlar
+
+  zanjiriga** bog'langan (`/django-admin/` → *AI provayderlar*; bo'sh bo'lsa
+
+  `.env`dagi `AI_LLM_PROVIDER`/`AI_LLM_API_KEY` ishlaydi). So'rov ustuvorlik
+
+  tartibida bittalab yuboriladi, biri limitga yetsa avtomatik keyingisiga
+
+  o'tiladi, o'sha provayder kutishga qo'yiladi (`AI_LLM_TIMEOUT`,
+
+  `AI_LLM_DEADLINE`). Zanjir butunlay limitda bo'lsa yordamchi darhol
+
+  «javob bera olmaydi» deb xabar qaytaradi — kutib qolmaydi.
+
+- **Grounded javob**: javob ostidagi har bir havola funksiya qaytargan haqiqiy
+
+  katalog qatori; model katalogda yo'q nom, qism soni yoki yilni o'ylab topmaydi
+
+  (promptda taqiqlangan, testlar buni tekshiradi).
+
+- **Tarix va kontekst**: sayt va bot oxirgi suhbat turlarini (`history`) yuboradi,
+
+  shuning uchun «nima aytgandingiz?» yoki «oldingisiga o'xshashini top» mazmunli
+
+  bo'ladi. «Sevimlilar» rejimi yoqilsa, `personal_taste` funksiyasi ro'yxatga
+
+  qo'shiladi — o'chirilgan bo'lsa model sevimlilarni umuman ko'rmaydi.
+
+- **Kesh**: bir xil savol 2 daqiqa ichida qayta berilsa javob keshdan olinadi.
+
+
 
 ## Xavfsizlik
 

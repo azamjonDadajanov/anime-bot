@@ -36,10 +36,10 @@ send_support_message = to_async(send_support_message_sync)
 
 @router.callback_query(F.data == cb.SUPPORT)
 async def ask_for_message(
-	callback: CallbackQuery, state: FSMContext, is_admin: bool
+	callback: CallbackQuery, state: FSMContext, profile, is_admin: bool
 ) -> None:
 	await state.set_state(UserSupportStates.message)
-	await render(callback, SUPPORT_PROMPT, markup=main_menu(is_admin), edit=True)
+	await render(callback, SUPPORT_PROMPT, markup=main_menu(is_admin, profile), edit=True)
 
 
 @router.message(UserSupportStates.message)
@@ -47,7 +47,7 @@ async def deliver(message: Message, state: FSMContext, profile, is_admin: bool) 
 	text = (message.text or "").strip()
 	await state.clear()
 	if not text:
-		await message.answer(SUPPORT_EMPTY, reply_markup=main_menu(is_admin))
+		await message.answer(SUPPORT_EMPTY, reply_markup=main_menu(is_admin, profile))
 		return
 
 	result = await send_support_message(
@@ -59,15 +59,15 @@ async def deliver(message: Message, state: FSMContext, profile, is_admin: bool) 
 	if result.status == TOO_SOON:
 		await message.answer(
 			SUPPORT_TOO_SOON.format(seconds=result.retry_after),
-			reply_markup=main_menu(is_admin),
+			reply_markup=main_menu(is_admin, profile),
 		)
 		return
 	if result.delivered:
-		await message.answer(SUPPORT_SENT, reply_markup=main_menu(is_admin))
+		await message.answer(SUPPORT_SENT, reply_markup=main_menu(is_admin, profile))
 		return
 	logger.warning(
 		"Support message %s from %s was not delivered.",
 		getattr(result.message, "pk", None),
 		profile.telegram_id,
 	)
-	await message.answer(SUPPORT_FAILED, reply_markup=main_menu(is_admin))
+	await message.answer(SUPPORT_FAILED, reply_markup=main_menu(is_admin, profile))

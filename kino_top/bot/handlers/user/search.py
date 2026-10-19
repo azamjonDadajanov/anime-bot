@@ -243,7 +243,7 @@ async def code_lookup(message: Message, state: FSMContext, profile, bot, is_admi
 	code = (message.text or "").strip()
 	title = await get_title_by_code(code)
 	if title is None:
-		await message.answer(NOT_FOUND, reply_markup=main_menu(is_admin))
+		await message.answer(NOT_FOUND, reply_markup=main_menu(is_admin, profile))
 		return
 	await state.clear()
 	await send_title_card(message, title, profile=profile, bot=bot, page=1, origin="cat")

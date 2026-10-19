@@ -1,5 +1,1 @@
 .env
-
-# AI search model (470MB ONNX export + tokenizer): downloaded per machine with
-# `python manage.py index_anime_embeddings --download-model`, never committed.
-ai_models/

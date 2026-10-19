@@ -147,7 +147,23 @@ class MediaLookupSerializer(serializers.ModelSerializer):
 		fields = ["id", "type", "title", "slug", "genres", "code", "synopsis", "episode_count", "quality_options", "default_quality", "language", "required_plan", "rating", "cover_content_type", "parts"]
 
 
-class AISearchQuerySerializer(serializers.Serializer):
+class AIHistoryMessageSerializer(serializers.Serializer):
+	"""One earlier turn of the chat, so follow-up questions still mean something."""
+
+	role = serializers.ChoiceField(
+		choices=["user", "ai"],
+		default="user",
+		error_messages={"invalid": "Xabar roli noto'g'ri."},
+	)
+	text = serializers.CharField(
+		max_length=300,
+		trim_whitespace=True,
+		allow_blank=True,
+		error_messages={"max_length": "Xabar 300 belgidan oshmasligi kerak."},
+	)
+
+
+class AIAssistantQuerySerializer(serializers.Serializer):
 	"""The request the user phrases in their own words."""
 
 	query = serializers.CharField(
@@ -160,13 +176,42 @@ class AISearchQuerySerializer(serializers.Serializer):
 			"max_length": "Savol 300 belgidan oshmasligi kerak.",
 		},
 	)
+	# The last few turns of the conversation ("adminga xabar" and the chat
+	# both ask follow-ups). Only the newest HISTORY_LIMIT are kept — the
+	# prompt needs the thread, not the transcript.
+	history = AIHistoryMessageSerializer(
+		many=True,
+		required=False,
+		allow_empty=True,
+		default=list,
+	)
+	# True for the "adminga xabar" flow: the model switches to the technical
+	# support persona and answers a problem with fix-it steps and advice.
+	support = serializers.BooleanField(
+		required=False,
+		default=False,
+		error_messages={"invalid": "support maydoni mantiqiy bo'lishi kerak."},
+	)
+	# True for the "Sevimlilar" mode: the account's favourites and last
+	# watched titles ride along as the model's personal-data block, so any
+	# query is answered against the user's actual taste.
+	taste = serializers.BooleanField(
+		required=False,
+		default=False,
+		error_messages={"invalid": "taste maydoni mantiqiy bo'lishi kerak."},
+	)
+
+	HISTORY_LIMIT = 10
+
+	def validate_history(self, value):
+		return value[-self.HISTORY_LIMIT :]
 
 
-class AISearchResultSerializer(serializers.Serializer):
-	"""One ranked title: the link plus the sentence shown under it.
+class AIAssistantResultSerializer(serializers.Serializer):
+	"""One title a tool returned: the link plus the sentence under it.
 
-	Declared explicitly (it is built from a ``SearchHit``, not from a model)
-	so the OpenAPI schema documents exactly what the clients receive.
+	Declared explicitly (it is built from a ``MediaTitle``, not from the
+	model) so the OpenAPI schema documents exactly what the clients receive.
 	"""
 
 	id = serializers.IntegerField()
@@ -180,24 +225,22 @@ class AISearchResultSerializer(serializers.Serializer):
 	genres = serializers.ListField(child=serializers.CharField())
 	summary = serializers.CharField()
 	url = serializers.CharField()
-	score = serializers.FloatField()
 
 
-class AISearchResponseSerializer(serializers.Serializer):
+class AIAssistantResponseSerializer(serializers.Serializer):
 	query = serializers.CharField()
 	count = serializers.IntegerField()
-	# Every match above the similarity threshold, ``count`` of which are in
-	# ``results``: ``has_more`` tells the client whether asking again with a
-	# larger ``limit`` would return anything new.
-	total = serializers.IntegerField()
-	has_more = serializers.BooleanField()
-	# The reasoning model's answer to the user and its short "fikrlash" trace.
-	# Both are empty strings (and ``reasoning`` false) when no model is
-	# configured or the call failed — the results are still valid then.
+	# The assistant's own words. Empty only when it could not answer at all —
+	# in that case the action returns a 503 instead of this payload.
 	answer = serializers.CharField()
-	thinking = serializers.CharField()
-	reasoning = serializers.BooleanField()
-	results = AISearchResultSerializer(many=True)
+	# True when the model answered a conversational question (no catalogue
+	# lookup), so ``results`` is empty on purpose and the client shows the
+	# words alone, without the "nothing found" copy.
+	conversational = serializers.BooleanField()
+	# The functions the assistant actually ran for this request
+	# (``search_catalog``, ``list_parts``, ``personal_taste``, ...).
+	tools = serializers.ListField(child=serializers.CharField())
+	results = AIAssistantResultSerializer(many=True)
 
 
 class ReadingProgressSerializer(serializers.ModelSerializer):

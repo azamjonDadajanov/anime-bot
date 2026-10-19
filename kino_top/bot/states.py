@@ -31,10 +31,23 @@ class UserSupportStates(StatesGroup):
 	message = State()
 
 
-class UserAIStates(StatesGroup):
-	"""Waiting for the free-text request the AI search has to answer."""
+class UserAssistantStates(StatesGroup):
+	"""Waiting for the message the AI yordamchi has to answer."""
 
 	query = State()
+
+
+class UserQuizStates(StatesGroup):
+	"""One question of the in-bot quiz; the FSM data carries the attempt.
+
+	``quiz_id`` — attempt pk, ``quiz_index`` / ``quiz_total`` — progress,
+	``quiz_answers`` / ``quiz_elapsed`` — what was collected so far,
+	``quiz_at`` — the moment the current question was asked (seconds),
+	``quiz_msg_id`` — the question message (deleted before the next one),
+	``quiz_title`` — the media title, ``quiz_pass_score`` — needed correct.
+	"""
+
+	question = State()
 
 
 class AdminMediaStates(StatesGroup):

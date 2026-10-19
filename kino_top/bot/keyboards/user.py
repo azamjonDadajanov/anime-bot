@@ -12,6 +12,10 @@ Callback contract (kept short for Telegram's 64 byte limit):
 * ``watch:<part_pk>`` / ``wt:<title_pk>`` / ``q:<part_pk>:<quality>``
 * manga titles use a plain ``url`` button to the website reader
 * ``favt:<title_pk>:<page>:<origin>``
+* ``favm:<title_pk>:<part_pk>`` — favourite toggle under a delivered file
+* ``ai`` — the AI yordamchi chat (subscribers only)
+* ``qz:<title_pk>`` / ``qza:<attempt_pk>:<index>:<choice>`` — the in-bot quiz
+* ``rt`` — the rating table (top players, the caller's own rank)
 * ``subchk`` — re-check mandatory subscription
 * ``support`` — write a message to the administrators
 
@@ -26,6 +30,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import quote
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from movies.ai_assistant import user_can_use
 
 from .. import callbacks as cb
 from ..config import game_url, webapp_url
@@ -42,12 +47,13 @@ PARTS_PER_PAGE = PARTS_PER_ROW * 2
 # create a profile (see the website's /telegram-auth route).
 AUTH_WEBAPP_PATH = "/telegram-auth"
 
-# Result lists produced by the AI search carry this origin, so the title card's
-# back button returns to the AI prompt (see :func:`origin_callback`).
-AI_ORIGIN = "ai"
+# Result lists produced by the AI yordamchi carry this origin, so the title
+# card's back button returns to the assistant prompt (see
+# :func:`origin_callback`).
+ASSISTANT_ORIGIN = "ai"
 # Telegram renders ten keycap emojis reliably; the label of the eleventh would
 # wrap in a narrow client.
-AI_NUMBER_EMOJI = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟")
+NUMBER_EMOJI = ("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟")
 
 
 def origin_callback(origin: str, page: int) -> str:
@@ -61,8 +67,8 @@ def origin_callback(origin: str, page: int) -> str:
 		return f"{cb.FAVORITES}:{page}"
 	if origin.startswith("search"):
 		return f"{cb.SEARCH_RESULTS}:{page}"
-	if origin.startswith(AI_ORIGIN):
-		return cb.AI_SEARCH
+	if origin.startswith(ASSISTANT_ORIGIN):
+		return cb.AI_ASSISTANT
 	return f"{cb.CATALOG}:{page}"
 
 
@@ -79,19 +85,32 @@ def webapp_row(text: str = "📱 Ilova", path: str = "") -> Optional[List[Inline
 	return [btn(text, web_app=url)]
 
 
-def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
+def main_menu(is_admin: bool = False, profile=None) -> InlineKeyboardMarkup:
+	"""The main menu; the AI yordamchi button exists only for subscribers.
+
+	``profile`` is the TelegramUser the context middleware injected. Without it
+	the button is simply absent (an anonymous menu), which is also what an
+	active-subscription check failure should look like rather than a broken
+	button.
+	"""
 	rows = [
 		[btn("🔍 Qidirish", cb.SEARCH), btn("📚 Katalog", cb.CATALOG_MENU)],
 		[btn("🎼 Janrlar", f"{cb.GENRES}:1"), btn("💖 Sevimlilar", f"{cb.FAVORITES}:1")],
 		[btn("👤 Profil", cb.PROFILE), btn("👥 Do'stlar", cb.REF)],
 		[btn("🎫 Obuna", cb.SUBSCRIPTION), btn("🎟 Kupon", cb.COUPON)],
-		[btn("ℹ️ Yordam", cb.HELP), btn("✉️ Adminga xabar", cb.SUPPORT)],
 	]
-	# The rating game lives on the website; the button appears only when a
-	# public site URL is configured so it is never broken.
+	if user_can_use(getattr(profile, "auth_user", None)):
+		# The assistant is a paid feature: an active subscription is required,
+		# so a free account never sees the button at all.
+		rows.append([btn("🤖 AI yordamchi", cb.AI_ASSISTANT)])
+	rows.append([btn("ℹ️ Yordam", cb.HELP), btn("✉️ Adminga xabar", cb.SUPPORT)])
+	# The rating table is public and lives right in the bot; playing the game
+	# itself opens the website, so that half only appears with a site URL.
 	game = game_url()
 	if game:
-		rows.insert(3, [btn("🎮 O'yin (reyting)", url=game)])
+		rows.insert(3, [btn("🎮 O'yin o'ynash", url=game), btn("🏆 Reyting", cb.RATING)])
+	else:
+		rows.insert(4, [btn("🏆 Reyting", cb.RATING)])
 	# The Mini App's Telegram-native screen covers sign-in and sign-up.
 	app = webapp_row("🔐 Kirish / Ro'yxatdan o'tish", path=AUTH_WEBAPP_PATH)
 	if app:
@@ -102,15 +121,16 @@ def main_menu(is_admin: bool = False) -> InlineKeyboardMarkup:
 
 
 def search_keyboard() -> InlineKeyboardMarkup:
-	"""The search screen: filter by media type or genre, or list everything."""
+	"""The plain search screen: filter by media type or genre, or list everything.
+
+	The AI yordamchi is deliberately not here: it has its own button on the main
+	menu, shown to subscribers only, so the search screen stays the fast
+	name/code/genre lookup it was.
+	"""
 	rows: List[List[InlineKeyboardButton]] = [
 		[btn("🎌 Anime", f"{cb.S_TYPE}:anime:1"), btn("📺 Serial", f"{cb.S_TYPE}:series:1")],
 		[btn("📖 Manga", f"{cb.S_TYPE}:manga:1"), btn("🎬 Kino", f"{cb.S_TYPE}:movie:1")],
 		[btn("🎭 Janr bo'yicha", f"{cb.S_GENRES}:1")],
-		# Semantic search, right where the user is already looking for content:
-		# "menga sarguzasht va qo'rqinchli animelar ayt" finds titles whose name
-		# (and genre) says nothing of the sort.
-		[btn("🤖 AI orqali qidirish", cb.AI_SEARCH)],
 		[btn("📚 Barchasini ko'rish", cb.S_ALL)],
 	]
 	app = webapp_row("📱 Ilovada qidirish")
@@ -129,49 +149,48 @@ def search_genres_keyboard(genres: Sequence, page: int, pages: int) -> InlineKey
 	return keyboard(*rows)
 
 
-def ai_prompt_keyboard(*, favs: bool = False) -> InlineKeyboardMarkup:
-	"""Shown while the AI search waits for the user's own words.
+def assistant_keyboard(*, personal: bool = False) -> InlineKeyboardMarkup:
+	"""Shown while the AI yordamchi waits for the user's message.
 
-	``favs`` reflects whether the user opted in to sending their favourites and
-	recent activity to the model ("agar user ozi hohlasa"): the toggle only
-	changes the prompt, the feature costs nothing when off.
+	``personal`` reflects whether the user opted in to giving the assistant
+	their favourites and recent activity ("agar user ozi hohlasa"): the toggle
+	only changes what the assistant may read, the feature costs nothing when off.
 	"""
-	favs_label = "🎯 Sevimlilar: ✅" if favs else "🎯 Sevimlilar: ❌"
+	personal_label = "🎯 Sevimlilar: ✅" if personal else "🎯 Sevimlilar: ❌"
 	return keyboard(
-		[btn(favs_label, cb.AI_FAV)],
-		[btn("🔍 Oddiy qidiruv", cb.SEARCH)],
+		[btn(personal_label, cb.AI_PERSONAL)],
 		[btn("⬅️ Asosiy menyu", cb.MENU)],
 	)
 
 
-def ai_locked_keyboard() -> InlineKeyboardMarkup:
+def assistant_locked_keyboard() -> InlineKeyboardMarkup:
 	"""The way forward for a visitor without an active subscription."""
 	return keyboard(
 		[btn("🎫 Obuna", cb.SUBSCRIPTION)],
-		[btn("⬅️ Qidiruvga qaytish", cb.SEARCH)],
+		[btn("⬅️ Asosiy menyu", cb.MENU)],
 	)
 
 
-def ai_results_keyboard(
-	items: Sequence[Dict[str, Any]], *, limit: int = len(AI_NUMBER_EMOJI)
+def assistant_results_keyboard(
+	items: Sequence[Dict[str, Any]], *, limit: int = len(NUMBER_EMOJI)
 ) -> InlineKeyboardMarkup:
-	"""Numbered buttons that open each AI result *inside* the bot.
+	"""Numbered buttons that open each title the assistant found, in the bot.
 
 	The message above already lists every hit with its link and one-line summary;
 	these buttons are how the user opens one without leaving Telegram.
 	"""
 	rows: List[List[InlineKeyboardButton]] = []
-	for index, item in enumerate(list(items)[: min(limit, len(AI_NUMBER_EMOJI))]):
+	for index, item in enumerate(list(items)[: min(limit, len(NUMBER_EMOJI))]):
 		rows.append(
 			[
 				btn(
-					f"{AI_NUMBER_EMOJI[index]} {truncate(item.get('title'), 40)}",
-					f"{cb.TITLE}:{item.get('id')}:1:{AI_ORIGIN}",
+					f"{NUMBER_EMOJI[index]} {truncate(item.get('title'), 40)}",
+					f"{cb.TITLE}:{item.get('id')}:1:{ASSISTANT_ORIGIN}",
 				)
 			]
 		)
-	rows.append([btn("🔎 Yana so'rash", cb.AI_SEARCH)])
-	rows.append([btn("⬅️ Qidiruvga qaytish", cb.SEARCH)])
+	rows.append([btn("🔎 Yana so'rash", cb.AI_ASSISTANT)])
+	rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
 	return keyboard(*rows)
 
 
@@ -348,6 +367,58 @@ def watch_parts_keyboard(parts: Sequence, current) -> InlineKeyboardMarkup:
 	if index < len(ordered) - 1:
 		nav[2] = btn("Keyingi qism ➡️", f"{cb.WATCH}:{ordered[index + 1].pk}")
 	rows.append(nav)
+	return keyboard(*rows)
+
+
+def media_keyboard(
+	title_pk: int,
+	current,
+	*,
+	is_favorite: bool = False,
+	has_quiz: bool = False,
+	parts: Sequence = (),
+	manga_url: str = "",
+) -> InlineKeyboardMarkup:
+	"""Keyboard that rides on every message delivering this title's media.
+
+	Order (top to bottom): the website reader link for manga, the parts
+	navigator when the title has more than one part, the favourite toggle, the
+	quiz button (only while the title has active questions) and the main menu.
+	The navigator keeps the exact layout of :func:`watch_parts_keyboard`, so
+	the action rows simply follow it.
+	"""
+	rows: List[List[InlineKeyboardButton]] = []
+	if manga_url:
+		rows.append([btn("📖 Saytda o'qish", url=manga_url)])
+	if current is not None and len(parts) > 1:
+		rows.extend(watch_parts_keyboard(parts, current).inline_keyboard)
+	favorite_label = (
+		"💔 Sevimlilardan olib tashlash" if is_favorite else "⭐️ Sevimlilarga qo'shish"
+	)
+	rows.append(
+		[btn(favorite_label, f"{cb.FAV_MEDIA}:{title_pk}:{getattr(current, 'pk', 0) or 0}")]
+	)
+	if has_quiz:
+		rows.append([btn("🧪 Testlarni ishlash", f"{cb.QUIZ}:{title_pk}")])
+	rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
+	return keyboard(*rows)
+
+
+def quiz_keyboard(attempt_id: int, index: int, choices: Sequence[str]) -> InlineKeyboardMarkup:
+	"""One button per shuffled answer choice of the current quiz question."""
+	rows = [
+		[btn(truncate(choice, 64), f"{cb.QUIZ_ANSWER}:{attempt_id}:{index}:{choice_index}")]
+		for choice_index, choice in enumerate(choices)
+	]
+	return keyboard(*rows)
+
+
+def rating_keyboard(site: str = "") -> InlineKeyboardMarkup:
+	"""Under the rating table: play on the website, refresh, or go back."""
+	rows: List[List[InlineKeyboardButton]] = []
+	if site:
+		rows.append([btn("🎮 O'yin o'ynash", url=site)])
+	rows.append([btn("🔄 Yangilash", cb.RATING), btn("⬅️ Asosiy menyu", cb.MENU)])
 	return keyboard(*rows)
 
 

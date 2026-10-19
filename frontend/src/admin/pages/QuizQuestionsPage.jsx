@@ -1,19 +1,21 @@
 import {
   ActionIcon,
   Badge,
+  Center,
   Checkbox,
+  Combobox,
   Group,
+  InputBase,
   Loader,
-  NumberInput,
-  Select,
   Stack,
   Switch,
   Text,
   TextInput,
-  Textarea,
   Title,
+  useCombobox,
 } from '@mantine/core'
-import { useCallback, useEffect, useState } from 'react'
+import { useDebouncedValue } from '@mantine/hooks'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { adminMediaApi, adminQuizApi } from '../api/adminApi'
 import {
   ConfirmDialog,
@@ -23,9 +25,10 @@ import {
   SectionHeading,
   SuccessAlert,
 } from '../components/adminShared'
-import { formatError, inputHandler, numberHandler, selectHandler } from '../utils/formUtils'
+import { formatError, inputHandler, selectHandler } from '../utils/formUtils'
 
 const PAGE_SIZE = 20
+const ANIME_PAGE_SIZE = 30
 
 const EMPTY_FORM = {
   title: '',
@@ -33,6 +36,164 @@ const EMPTY_FORM = {
   choices: ['', '', '', ''],
   correct_index: 0,
   is_active: true,
+}
+
+function AnimeSelect({
+  value,
+  onChange,
+  selectedLabel,
+  label,
+  placeholder = 'Tanlang',
+  required,
+  clearable,
+  disabled,
+  w,
+}) {
+  const combobox = useCombobox({
+    onDropdownClose: () => combobox.resetSelectedOption(),
+    onOptionSubmit: (optionValue) => {
+      onChange?.(optionValue)
+      combobox.closeDropdown()
+    },
+  })
+
+  const [options, setOptions] = useState([])
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [debouncedSearch] = useDebouncedValue(search, 300)
+  const requestRef = useRef(0)
+
+  const totalPages = Math.max(1, Math.ceil(total / ANIME_PAGE_SIZE))
+
+  const fetchPage = useCallback(async (targetPage, query) => {
+    const requestId = requestRef.current + 1
+    requestRef.current = requestId
+    setLoading(true)
+    try {
+      const params = { type: 'anime', page: targetPage, page_size: ANIME_PAGE_SIZE }
+      if (query) params.search = query
+      const res = await adminMediaApi.list(params)
+      if (requestId !== requestRef.current) return
+      const rows = Array.isArray(res?.results) ? res.results : []
+      const mapped = rows.map((t) => ({ value: String(t.id), label: t.title }))
+      setOptions((prev) => (targetPage === 1 ? mapped : [...prev, ...mapped]))
+      setTotal(res?.count || 0)
+      setPage(targetPage)
+    } catch {
+      if (requestId !== requestRef.current) return
+      if (targetPage === 1) {
+        setOptions([])
+        setTotal(0)
+        setPage(1)
+      }
+    } finally {
+      if (requestId === requestRef.current) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchPage(1, debouncedSearch)
+  }, [debouncedSearch, fetchPage])
+
+  function handleScroll(event) {
+    if (loading || page >= totalPages) return
+    const el = event.currentTarget
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 24) {
+      fetchPage(page + 1, debouncedSearch)
+    }
+  }
+
+  function clearValue(event) {
+    event.stopPropagation()
+    onChange?.('')
+    setSearch('')
+    combobox.closeDropdown()
+  }
+
+  const currentLabel =
+    options.find((o) => o.value === value)?.label ||
+    (value ? selectedLabel || `#${value}` : '')
+
+  return (
+    <Combobox
+      store={combobox}
+      withinPortal
+      onOptionSubmit={(optionValue) => {
+        onChange?.(optionValue)
+        combobox.closeDropdown()
+      }}
+    >
+      <Combobox.Target>
+        <InputBase
+          label={label}
+          required={required}
+          disabled={disabled}
+          w={w}
+          component="button"
+          type="button"
+          pointer
+          rightSectionPointerEvents="auto"
+          rightSection={
+            <Group gap={2} wrap="nowrap" pr={4}>
+              {clearable && value ? (
+                <ActionIcon size="sm" variant="subtle" color="gray" onClick={clearValue} title="Tozalash">
+                  <i className="bi bi-x-lg" />
+                </ActionIcon>
+              ) : null}
+              <Combobox.Chevron size={14} />
+            </Group>
+          }
+          onClick={() => combobox.toggleDropdown()}
+        >
+          {currentLabel ? (
+            currentLabel
+          ) : (
+            <Text component="span" c="dimmed" size="sm">
+              {placeholder}
+            </Text>
+          )}
+        </InputBase>
+      </Combobox.Target>
+      <Combobox.Dropdown>
+        <Combobox.Search
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+          placeholder="Qidirish…"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.preventDefault()
+          }}
+        />
+        <div style={{ maxHeight: 280, overflowY: 'auto' }} onScroll={handleScroll}>
+          <Combobox.Options>
+            {options.length === 0 && !loading ? (
+              <Combobox.Empty>Topilmadi</Combobox.Empty>
+            ) : (
+              options.map((option) => (
+                <Combobox.Option key={option.value} value={option.value}>
+                  {option.label}
+                </Combobox.Option>
+              ))
+            )}
+          </Combobox.Options>
+          {loading ? (
+            <Center py="xs">
+              <Loader size="xs" />
+            </Center>
+          ) : page < totalPages ? (
+            <Text size="xs" c="dimmed" ta="center" py={6}>
+              Pastga suring — yana yuklanadi…
+            </Text>
+          ) : options.length > 0 ? (
+            <Text size="xs" c="dimmed" ta="center" py={6}>
+              Barchasi yuklandi
+            </Text>
+          ) : null}
+        </div>
+      </Combobox.Dropdown>
+    </Combobox>
+  )
 }
 
 export default function QuizQuestionsPage() {
@@ -44,7 +205,6 @@ export default function QuizQuestionsPage() {
   const [query, setQuery] = useState('')
   const [titleFilter, setTitleFilter] = useState('')
   const [page, setPage] = useState(1)
-  const [titles, setTitles] = useState([])
   const [form, setForm] = useState(EMPTY_FORM)
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -70,15 +230,6 @@ export default function QuizQuestionsPage() {
   useEffect(() => {
     load()
   }, [load])
-
-  useEffect(() => {
-    adminMediaApi
-      .list({ type: 'anime', page_size: 200 })
-      .then((res) => setTitles(res.results || []))
-      .catch(() => setTitles([]))
-  }, [])
-
-  const titleOptions = titles.map((t) => ({ value: String(t.id), label: `${t.title} (${t.type})` }))
 
   function setChoice(index, value) {
     setForm((prev) => {
@@ -194,13 +345,12 @@ export default function QuizQuestionsPage() {
         <Title order={5} mb="sm">{editing ? `Tahrirlash: ${editing.text.slice(0, 40)}…` : 'Yangi savol'}</Title>
         <form onSubmit={handleSubmit}>
           <Group align="flex-end" grow>
-            <Select
+            <AnimeSelect
               label="Anime"
               placeholder="Tanlang"
-              data={titleOptions}
               value={form.title}
               onChange={selectHandler(setForm, 'title')}
-              searchable
+              selectedLabel={editing?.title_title}
               required
             />
             <TextInput
@@ -262,17 +412,15 @@ export default function QuizQuestionsPage() {
             }}
             w={{ base: '100%', sm: 280 }}
           />
-          <Select
+          <AnimeSelect
             label="Anime bo'yicha"
             placeholder="Barchasi"
-            data={titleOptions}
             value={titleFilter}
             onChange={(value) => {
               setTitleFilter(value || '')
               setPage(1)
             }}
             clearable
-            searchable
             w={{ base: '100%', sm: 260 }}
           />
           <button

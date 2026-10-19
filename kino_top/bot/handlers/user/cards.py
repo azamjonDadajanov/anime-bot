@@ -13,11 +13,10 @@ from users.models import FavoriteContent
 
 from ...config import manga_url
 from ...keyboards.user import (
-	manga_keyboard,
+	media_keyboard,
 	origin_callback,
 	part_keyboard,
 	title_detail_keyboard,
-	watch_parts_keyboard,
 )
 from ...middlewares.context import inner_event
 from ...services.access import AccessDenied, ensure_access
@@ -29,6 +28,7 @@ from ...services.media import (
 	record_media_view,
 	title_parts,
 )
+from ...services.quiz import has_questions
 from ...texts import (
 	MANGA_ON_SITE,
 	MEDIA_BLOCKED,
@@ -75,6 +75,36 @@ def _is_favorite_sync(profile, title) -> bool:
 
 _genres_text = to_async(_genres_text_sync)
 _is_favorite = to_async(_is_favorite_sync)
+
+
+async def media_markup(
+	profile,
+	title,
+	part,
+	*,
+	parts=None,
+	manga_url: str = "",
+):
+	"""Keyboard for the message delivering this title's media.
+
+	Navigator (when the title has several parts) followed by the action rows:
+	the favourite toggle, the quiz button while the title has questions, and the
+	main menu. ``manga_url`` adds the reader link on top for manga titles.
+	"""
+	if parts is None:
+		parts = await title_parts(title)
+	is_favorite, has_quiz = await asyncio.gather(
+		_is_favorite(profile, title),
+		has_questions(title),
+	)
+	return media_keyboard(
+		title.pk,
+		part,
+		is_favorite=is_favorite,
+		has_quiz=has_quiz,
+		parts=parts or (),
+		manga_url=manga_url,
+	)
 
 
 def title_card_text(title, genres_text: str, parts_count: int) -> str:
@@ -194,7 +224,7 @@ async def deliver_media_for_part(
 			await render(
 				target,
 				MANGA_ON_SITE.format(title=escape_html(title.title)),
-				markup=manga_keyboard(read_url),
+				markup=await media_markup(profile, title, part, parts=(), manga_url=read_url),
 				edit=edit,
 				preview=True,
 			)
@@ -202,9 +232,9 @@ async def deliver_media_for_part(
 			return False
 
 	# The parts navigator rides on the delivered media so the user can hop to
-	# another episode (or the next season) without leaving the player.
-	parts = await title_parts(title)
-	markup = watch_parts_keyboard(parts, part) if len(parts) > 1 else None
+	# another episode (or the next season) without leaving the player; the
+	# action rows (favourite, quiz, main menu) follow it.
+	markup = await media_markup(profile, title, part)
 
 	payload = inner_event(target)
 	message = getattr(payload, "message", None)
@@ -284,7 +314,7 @@ async def deliver_title_media(
 		await state.update_data(pending_part_id=None, pending_quality="")
 
 	first = parts[0]
-	markup = watch_parts_keyboard(parts, first) if len(parts) > 1 else None
+	markup = await media_markup(profile, title, first, parts=parts)
 
 	await render(target, MEDIA_SENDING)
 	try:

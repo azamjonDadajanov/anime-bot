@@ -1,7 +1,7 @@
 import { Loader } from '@mantine/core'
 import { NavLink, Navigate } from 'react-router-dom'
 import { useAuth } from '../apis/useAuth'
-import AiSearchChat from './AiSearchChat'
+import AiAssistantChat from './AiAssistantChat'
 import Header from './Header'
 
 function DashboardLayout({ children }) {
@@ -29,8 +29,10 @@ function DashboardLayout({ children }) {
         </div>
       </nav>
       <div className="dashboard-shell">{children}</div>
-      {/* AI search: a launcher in the bottom-right corner on every page. */}
-      <AiSearchChat />
+      {/* AI yordamchi: a launcher in the bottom-right corner, subscribers only.
+          The API enforces the same rule, so hiding it is only about not
+          advertising a paid feature to accounts that cannot use it. */}
+      {user.subscription?.is_active && <AiAssistantChat />}
     </>
   )
 }

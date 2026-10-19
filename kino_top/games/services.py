@@ -1,8 +1,9 @@
 """Game rules: unlock checks, quiz flow, anti-cheat scoring and the prize.
 
 All functions are synchronous (``*_sync``) so they can run inside Django REST
-views directly and be reused from management commands. The bot does not call
-this module — the game lives on the website.
+views directly, be reused from management commands and be awaited from the
+Telegram bot (``bot.services.quiz``), which asks one question per message and
+therefore knows the time the user spent on every single answer.
 """
 
 from __future__ import annotations
@@ -89,6 +90,32 @@ def min_parts() -> int:
 
 def min_answer_seconds() -> int:
 	return max(0, int(getattr(settings, "GAME_MIN_ANSWER_SECONDS", 3)))
+
+
+def question_seconds() -> int:
+	"""Seconds the bot gives for a single question (its speed bonus window)."""
+	return max(1, int(getattr(settings, "GAME_QUESTION_SECONDS", 30)))
+
+
+# A correct answer never pays less than this share of the full per-question
+# points, however close to the time limit the user was.
+SPEED_FLOOR = 0.5
+
+
+def speed_factor(elapsed_ms: int, limit_ms: Optional[int] = None) -> float:
+	"""1.0 for an instant answer, ``SPEED_FLOOR`` once the limit passes."""
+	if limit_ms is None:
+		limit_ms = question_seconds() * 1000
+	limit_ms = int(limit_ms or 0)
+	if limit_ms <= 0:
+		return 1.0
+	elapsed = max(0, int(elapsed_ms or 0))
+	return max(SPEED_FLOOR, min(1.0, 1.0 - (elapsed / limit_ms)))
+
+
+def speed_scaled_points(base, elapsed_ms: int, limit_ms: Optional[int] = None) -> float:
+	"""Points for one fast answer: quicker than the limit means more points."""
+	return float(base) * speed_factor(elapsed_ms, limit_ms)
 
 
 def max_attempts_per_day() -> int:
@@ -303,13 +330,50 @@ def start_attempt_sync(user, title_id: int, *, rng: Optional[random.Random] = No
 	}
 
 
+def attempt_payload(attempt: QuizAttempt) -> dict:
+	"""Rebuild the question payload of an unfinished attempt (bot resume).
+
+	Shares the shape returned by :func:`start_attempt_sync`, so the answers
+	gathered before the interruption keep their original shuffled order.
+	"""
+	questions = QuizQuestion.objects.in_bulk(list(attempt.question_ids or []))
+	orders = list(attempt.choice_orders or [])
+	questions_payload = []
+	for index, question_id in enumerate(attempt.question_ids or []):
+		question = questions.get(question_id)
+		if question is None:
+			continue
+		order = orders[index] if index < len(orders) else None
+		shown = order if order else list(range(len(question.choices)))
+		questions_payload.append(
+			{
+				"id": question.pk,
+				"text": question.text,
+				"choices": [str(question.choices[choice]) for choice in shown],
+			}
+		)
+	return {
+		"attempt_id": attempt.pk,
+		"title": {"id": attempt.title_id, "title": attempt.title.title},
+		"questions": questions_payload,
+		"pass_score": pass_score_for(len(questions_payload)),
+	}
+
+
 def submit_attempt_sync(
 	user,
 	attempt_id: int,
 	answers: List[int],
 	elapsed_ms: int = 0,
+	*,
+	question_elapsed_ms: Optional[List[int]] = None,
 ) -> dict:
-	"""Score a finished quiz; the response never reveals the correct answers."""
+	"""Score a finished quiz; the response never reveals the correct answers.
+
+	``question_elapsed_ms`` is the time the bot user spent on each question.
+	When given, every correct answer pays ``speed_scaled_points`` (faster is
+	worth more); without it the flat website scoring stays untouched.
+	"""
 	try:
 		attempt_id = int(attempt_id)
 		elapsed_ms = max(0, int(elapsed_ms or 0))
@@ -338,23 +402,42 @@ def submit_attempt_sync(
 	questions = QuizQuestion.objects.in_bulk(question_ids)
 	orders = list(attempt.choice_orders or [])
 	correct = 0
+	correct_flags: List[bool] = []
 	for index, question_id in enumerate(question_ids):
 		question = questions.get(question_id)
 		if question is None:
+			correct_flags.append(False)
 			continue
 		answer = int(answers[index])
 		# Foydalanuvchi ko'rgan variant tartibidan asl indeksga qaytamiz.
 		order = orders[index] if index < len(orders) else None
 		if order:
 			if not 0 <= answer < len(order):
+				correct_flags.append(False)
 				continue
 			answer = int(order[answer])
-		if answer == int(question.correct_index):
+		is_correct = answer == int(question.correct_index)
+		correct_flags.append(is_correct)
+		if is_correct:
 			correct += 1
 
 	total = len(question_ids) or 1
 	per_question = title_points(attempt.title) // total
-	points = correct * per_question
+	if question_elapsed_ms is None:
+		points = correct * per_question
+	else:
+		# Bot flow: every correct answer is worth more the quicker it was given.
+		times = [
+			max(0, int(value or 0)) for value in (list(question_elapsed_ms) or [])
+		]
+		limit_ms = question_seconds() * 1000
+		scaled = 0.0
+		for index, is_correct in enumerate(correct_flags):
+			if not is_correct:
+				continue
+			spent = times[index] if index < len(times) else limit_ms
+			scaled += speed_scaled_points(per_question, spent, limit_ms)
+		points = round(scaled)
 
 	# Anti-cheat: answering the whole quiz faster than physically possible
 	# zeroes the points and marks the attempt suspicious (still one-shot).
@@ -401,6 +484,32 @@ def submit_attempt_sync(
 	}
 
 
+def _display_name(profile, user_id: Optional[int] = None) -> str:
+	"""How a player is shown in the rating: Telegram name, username, then id.
+
+	``level_for`` also returns a ``name`` (the level title), so the level's own
+	label is exposed as ``level_name`` everywhere and ``name`` always stays the
+	player's.
+	"""
+	if profile is None:
+		return str(user_id) if user_id else ""
+	telegram = getattr(profile, "telegram_profile", None)
+	return (
+		getattr(telegram, "first_name", "")
+		or getattr(profile, "username", "")
+		or str(user_id or profile.pk)
+	)
+
+
+def _level_fields(points: int) -> dict:
+	level = level_for(points)
+	return {
+		"level": level["level"],
+		"level_name": level["name"],
+		"next_in": level["next_in"],
+	}
+
+
 def leaderboard(user=None, limit: int = 50) -> dict:
 	"""Top players by trustworthy points; ``user``'s own rank is included."""
 	limit = max(1, min(200, int(limit or 50)))
@@ -411,28 +520,20 @@ def leaderboard(user=None, limit: int = 50) -> dict:
 		.order_by("-points", "user_id")[:limit]
 	)
 
+	from django.contrib.auth import get_user_model
+
 	entries = []
 	for index, row in enumerate(rows, start=1):
-		profile = None
-		from django.contrib.auth import get_user_model
-
 		profile = get_user_model().objects.filter(pk=row["user_id"]).first()
-		name = ""
-		if profile is not None:
-			telegram = getattr(profile, "telegram_profile", None)
-			name = (
-				getattr(telegram, "first_name", "")
-				or getattr(profile, "username", "")
-				or str(row["user_id"])
-			)
+		points = int(row["points"] or 0)
 		entries.append(
 			{
 				"rank": index,
 				"user_id": row["user_id"],
-				"name": name,
-				"points": int(row["points"] or 0),
+				"name": _display_name(profile, row["user_id"]),
+				"points": points,
 				"verified": int(row["verified"] or 0),
-				**level_for(int(row["points"] or 0)),
+				**_level_fields(points),
 			}
 		)
 
@@ -446,7 +547,12 @@ def leaderboard(user=None, limit: int = 50) -> dict:
 			.filter(points__gt=own_points)
 			.count()
 		)
-		own = {"rank": higher + 1, "points": own_points, **level_for(own_points)}
+		own = {
+			"rank": higher + 1,
+			"points": own_points,
+			"name": _display_name(user, getattr(user, "pk", None)),
+			**_level_fields(own_points),
+		}
 
 	return {"results": entries, "own": own}
 

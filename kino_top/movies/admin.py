@@ -145,7 +145,7 @@ class AIProviderAdmin(admin.ModelAdmin):
 				continue
 			started = time.monotonic()
 			try:
-				answer = llm._attempt(
+				result = llm._attempt(
 					settings_row,
 					[{"role": "user", "content": "Ha yoki yo'q deb javob ber."}],
 					max_tokens=16,
@@ -156,7 +156,8 @@ class AIProviderAdmin(admin.ModelAdmin):
 				self.message_user(request, f"{row.name}: xato — {exc}")
 				continue
 			elapsed = int((time.monotonic() - started) * 1000)
-			self.message_user(request, f"{row.name}: {elapsed}ms — {answer.strip()[:80]}")
+			answer = result.content.strip()[:80] or "(bo'sh javob)"
+			self.message_user(request, f"{row.name}: {elapsed}ms — {answer}")
 
 	@admin.action(description="Kutishni (cooldown) tozalash")
 	def clear_cooldowns(self, request, queryset) -> None:

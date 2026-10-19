@@ -88,7 +88,7 @@ async def send_welcome(
 		logger.warning("Could not load welcome_text settings.", exc_info=True)
 	await message.answer(
 		text,
-		reply_markup=main_menu(is_admin),
+		reply_markup=main_menu(is_admin, profile),
 	)
 
 
@@ -162,7 +162,7 @@ async def start_with_payload(
 		inviter_id = parse_referral_payload(payload)
 		if inviter_id is not None:
 			await to_async(register_referral_sync)(invitee=profile, inviter_tg_id=inviter_id)
-		await message.answer(REFERRAL_JOINED, reply_markup=main_menu(is_admin))
+		await message.answer(REFERRAL_JOINED, reply_markup=main_menu(is_admin, profile))
 		return
 	# A bare payload (the website profile link) names a site account first and
 	# only falls back to a title slug when no such account exists.
@@ -184,24 +184,24 @@ async def start_plain(
 
 
 @router.message(Command("help", "yordam"))
-async def help_command(message: Message, is_admin: bool) -> None:
-	await message.answer(HELP_TEXT.format(brand=BRAND), reply_markup=main_menu(is_admin))
+async def help_command(message: Message, profile, is_admin: bool) -> None:
+	await message.answer(HELP_TEXT.format(brand=BRAND), reply_markup=main_menu(is_admin, profile))
 
 
 @router.callback_query(F.data == cb.MENU)
-async def show_menu(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def show_menu(callback: CallbackQuery, state: FSMContext, profile, is_admin: bool) -> None:
 	await state.clear()
 	await render(
 		callback,
 		MAIN_MENU.format(brand=BRAND),
-		markup=main_menu(is_admin),
+		markup=main_menu(is_admin, profile),
 		edit=True,
 	)
 
 
 @router.callback_query(F.data == cb.HELP)
-async def show_help(callback: CallbackQuery, is_admin: bool) -> None:
-	await render(callback, HELP_TEXT.format(brand=BRAND), markup=main_menu(is_admin), edit=True)
+async def show_help(callback: CallbackQuery, profile, is_admin: bool) -> None:
+	await render(callback, HELP_TEXT.format(brand=BRAND), markup=main_menu(is_admin, profile), edit=True)
 
 
 @router.callback_query(F.data == cb.PROFILE)

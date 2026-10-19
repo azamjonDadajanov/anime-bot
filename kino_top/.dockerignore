@@ -13,6 +13,3 @@ __pycache__
 .git
 .gitignore
 .dockerignore
-# The ONNX model is fetched at build/run time (build arg or --download-model),
-# never copied from the working tree: it is ~470MB and machine specific.
-ai_models

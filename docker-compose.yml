@@ -39,10 +39,6 @@ services:
     volumes:
       - static:/app/staticfiles
       - media:/app/media
-      # The ONNX model + tokenizer of the AI search (~470MB). Shared with the
-      # bot so the download happens once:
-      #   docker compose run --rm web python manage.py index_anime_embeddings --download-model
-      - aimodels:/app/ai_models
     expose:
       - "8000"
     depends_on:
@@ -69,7 +65,6 @@ services:
       DB_PORT: "5432"
     volumes:
       - media:/app/media
-      - aimodels:/app/ai_models
     depends_on:
       # The schema exists once `web` is healthy, so the bot never starts against
       # an unmigrated database.
@@ -101,4 +96,3 @@ volumes:
   pgdata:
   static:
   media:
-  aimodels:

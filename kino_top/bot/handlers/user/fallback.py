@@ -26,14 +26,14 @@ ADMIN_CALLBACK_PREFIXES = ("a:", "adm:")
 
 
 @router.message(Command("admin", "panel", "boshqaruv"))
-async def refuse_admin_command(message: Message, is_admin: bool) -> None:
+async def refuse_admin_command(message: Message, profile, is_admin: bool) -> None:
 	"""A non-administrator ran /admin: the admin router filtered it out."""
 	logger.warning("Non-administrator %s tried /admin.", message.from_user and message.from_user.id)
-	await message.answer(ADMIN_ONLY, reply_markup=main_menu(is_admin))
+	await message.answer(ADMIN_ONLY, reply_markup=main_menu(is_admin, profile))
 
 
 @router.callback_query(F.data.startswith(ADMIN_CALLBACK_PREFIXES))
-async def refuse_admin_callback(callback: CallbackQuery, is_admin: bool) -> None:
+async def refuse_admin_callback(callback: CallbackQuery, profile, is_admin: bool) -> None:
 	if is_admin:
 		# An administrator pressing an unknown admin button: the panel simply
 		# does not know this payload. Never claim they are "not an admin".
@@ -45,17 +45,17 @@ async def refuse_admin_callback(callback: CallbackQuery, is_admin: bool) -> None
 		callback.data,
 	)
 	await callback.answer(ADMIN_ONLY, show_alert=True)
-	await render(callback, ADMIN_ONLY, markup=main_menu(is_admin), edit=True)
+	await render(callback, ADMIN_ONLY, markup=main_menu(is_admin, profile), edit=True)
 
 
 @router.message(F.text)
-async def unknown_text(message: Message, is_admin: bool) -> None:
+async def unknown_text(message: Message, profile, is_admin: bool) -> None:
 	await message.answer(
 		f"{SEARCH_EMPTY_QUERY}\n\n{HELP_TEXT.format(brand=BRAND)}",
-		reply_markup=main_menu(is_admin),
+		reply_markup=main_menu(is_admin, profile),
 	)
 
 
 @router.message()
-async def unknown_update(message: Message, is_admin: bool) -> None:
-	await render(message, HELP_TEXT.format(brand=BRAND), markup=main_menu(is_admin))
+async def unknown_update(message: Message, profile, is_admin: bool) -> None:
+	await render(message, HELP_TEXT.format(brand=BRAND), markup=main_menu(is_admin, profile))

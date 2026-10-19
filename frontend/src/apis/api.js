@@ -215,14 +215,26 @@ export const readingApi = {
 }
 
 export const aiApi = {
-  // AI (semantic) catalogue search: finds titles by meaning, not by name.
+  // AI yordamchi (AniVoy): an online chat model with catalogue functions. It
+  // decides which lookups it needs (search, title details, parts, genres,
+  // popular titles, and the user's taste when `taste` is on) and answers.
   // Subscribers only — a free account gets a 403 with `code`
-  // `subscription_required`, and an unbuilt index a 503 (`index_empty`).
-  async search(query, { type = '', limit = 0 } = {}) {
+  // `subscription_required`, and an outage a 503 (`ai_unavailable`).
+  // `history` is the last turns of the chat (`{role, text}`), so a follow-up
+  // question like "nima aytgandingiz?" still means something to the model.
+  // `support` switches the assistant to the technical-support persona
+  // ("adminga xabar"): a problem is answered with fix-it steps and advice.
+  async ask(query, { type = '', limit = 0, history = [], support = false, taste = false } = {}) {
     const payload = { query }
     if (type) payload.type = type
     if (limit) payload.limit = limit
-    const { data } = await api.post('/catalog/ai-search/', payload)
+    if (history.length) payload.history = history
+    if (support) payload.support = true
+    // `taste` ("Sevimlilar" mode): the server enables the assistant's
+    // personal_taste function, so the answer is grounded in the user's own
+    // favourites and last watched titles.
+    if (taste) payload.taste = true
+    const { data } = await api.post('/catalog/ai-assistant/', payload)
     return data
   },
 }

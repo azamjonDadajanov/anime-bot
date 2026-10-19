@@ -63,20 +63,10 @@ export function MediaDetailPage() {
     return () => { active = false }
   }, [slug, item])
 
-  if (loading) return <main className="dashboard-page"><div className="page-loader"><Loader /></div></main>
-  if (errorSlug === slug && error) {
-    return <main className="dashboard-page"><Alert color="red" title="Media topilmadi">{error}</Alert></main>
-  }
-  if (!item) {
-    return <main className="dashboard-page"><Alert color="red" title="Media topilmadi">Bu media katalogda mavjud emas.</Alert></main>
-  }
-
-  const cover = item.cover
-    ? `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
-    : ''
-  const isManga = item.type === 'manga'
-  const parts = isManga ? orderParts(item.parts || []) : (item.parts || [])
-  const resume = isManga ? computeResume(progress, parts) : null
+  const parts = useMemo(() => {
+    if (!item) return []
+    return item.type === 'manga' ? orderParts(item.parts || []) : (item.parts || [])
+  }, [item])
 
   // Group parts by season number
   const seasons = useMemo(() => {
@@ -105,6 +95,20 @@ export function MediaDetailPage() {
       setActiveSeason(seasons[0].key)
     }
   }, [seasons, activeSeason])
+
+  if (loading) return <main className="dashboard-page"><div className="page-loader"><Loader /></div></main>
+  if (errorSlug === slug && error) {
+    return <main className="dashboard-page"><Alert color="red" title="Media topilmadi">{error}</Alert></main>
+  }
+  if (!item) {
+    return <main className="dashboard-page"><Alert color="red" title="Media topilmadi">Bu media katalogda mavjud emas.</Alert></main>
+  }
+
+  const cover = item.cover
+    ? `data:${item.cover_content_type || 'image/jpeg'};base64,${item.cover}`
+    : ''
+  const isManga = item.type === 'manga'
+  const resume = isManga ? computeResume(progress, parts) : null
 
   const currentSeason = seasons.find((s) => s.key === activeSeason) || seasons[0]
   const currentParts = currentSeason ? currentSeason.parts : []

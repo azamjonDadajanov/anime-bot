@@ -1,4 +1,3 @@
-import array
 import secrets
 
 from django.conf import settings
@@ -318,64 +317,12 @@ class ReadingProgress(models.Model):
 		return f"{self.user} - {self.part} - {self.page}-sahifa"
 
 
-class TitleEmbedding(models.Model):
-	"""Vector of one catalogue title in the multilingual sentence space.
-
-	Kept in its own table instead of on ``MediaTitle`` so the vector is written
-	only by the indexer, never travels with the catalogue payloads, and a missing
-	row simply means "not indexed yet". ``on_delete=CASCADE`` is what removes the
-	vector when its title disappears.
-
-	``document_hash`` is the digest of the text the vector was built from, so
-	the indexer can tell an untouched title from an edited one (a renamed title,
-	a new genre, a rewritten synopsis) and re-embed only the latter.
-	"""
-
-	title = models.OneToOneField(
-		MediaTitle,
-		on_delete=models.CASCADE,
-		related_name="ai_embedding",
-	)
-	# Which encoder produced the vector: a deployment that switches model gets a
-	# clean re-index instead of comparing incomparable vectors.
-	model_name = models.CharField(max_length=120)
-	dim = models.PositiveSmallIntegerField(default=384)
-	document_hash = models.CharField(max_length=64)
-	vector = models.BinaryField()
-	indexed_at = models.DateTimeField(auto_now=True)
-
-	class Meta:
-		ordering = ["title_id"]
-		indexes = [models.Index(fields=["model_name"], name="titleembedding_model_idx")]
-
-	def __str__(self):
-		return f"{self.title} ({self.model_name})"
-
-	@staticmethod
-	def pack(vector) -> bytes:
-		"""Pack a sequence of floats into the bytes stored in ``vector``."""
-		return array.array("f", [float(value) for value in vector]).tobytes()
-
-	def to_vector(self) -> list:
-		"""The stored floats as a plain list (without pulling in numpy)."""
-		if not self.vector:
-			return []
-		values = array.array("f")
-		values.frombytes(bytes(self.vector))
-		return values.tolist()
-
-	@property
-	def dimensions(self) -> int:
-		"""Float count actually stored (0 when the column is empty)."""
-		return len(bytes(self.vector or b"")) // array.array("f").itemsize
-
-
 class AIProvider(models.Model):
-	"""One chat model the AI search's reasoning step may call, in preference order.
+	"""One online chat model the AI assistant may call, in preference order.
 
-	The reasoning step must survive a provider running out of quota, so it is
-	not configured in one place but as a *chain* of rows: ``movies.llm`` reads
-	them with a function and tries them one at a time (see
+	The assistant must survive a provider running out of quota, so it is not
+	configured in one place but as a *chain* of rows: ``movies.llm`` reads them
+	with a function and tries them one at a time (see
 	:func:`movies.llm.provider_chain`). A row is also where the runtime state
 	lives — measured latency, failure count, cooldown — so every gunicorn worker
 	and the bot process share the same picture of which provider still works, and

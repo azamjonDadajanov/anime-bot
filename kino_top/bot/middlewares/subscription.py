@@ -10,9 +10,11 @@ Two deliberate exceptions keep the flow usable without weakening the rule:
 * the ``✅ Tekshirish`` callback is allowed through, because its handler
   re-checks membership itself and either finishes the pending action or shows
   the same prompt;
-* the media callbacks (``watch:``/``wt:``/``q:``) are allowed through because
+* the media callbacks (``watch:``/``wt:``/``q:``) and the buttons riding on a
+  delivered file (``favm:``/``qz:``/``qza:``) are allowed through because
   their handlers already enforce access *and* remember the requested episode,
-  so pressing ``✅ Tekshirish`` right after joining delivers it;
+  so pressing ``✅ Tekshirish`` right after joining delivers it, while a quiz
+  already in progress is never interrupted;
 * the ``✉️ Adminga xabar`` screen stays open (button *and* the message that
   follows it) because "I joined but the bot still refuses me" is exactly the
   question an administrator has to answer.
@@ -47,7 +49,16 @@ ALLOWED_WHILE_CLOSED = (cb.SUB_CHECK, cb.REF, cb.SUPPORT)
 # allowed screen, so the gate must not swallow it.
 SUPPORT_STATE = UserSupportStates.message.state
 REF_CLAIM_PREFIX = f"{cb.REF_CLAIM}:"
-MEDIA_CALLBACK_PREFIXES = (f"{cb.WATCH}:", f"{cb.WATCH_TITLE}:", f"{cb.QUALITY}:")
+MEDIA_CALLBACK_PREFIXES = (
+	f"{cb.WATCH}:",
+	f"{cb.WATCH_TITLE}:",
+	f"{cb.QUALITY}:",
+	# Actions riding on an already delivered file: favourite toggle and the
+	# title's quiz (including every answer button of a quiz in progress).
+	f"{cb.FAV_MEDIA}:",
+	f"{cb.QUIZ}:",
+	f"{cb.QUIZ_ANSWER}:",
+)
 
 
 def format_channels(channels: Iterable[Any]) -> str:

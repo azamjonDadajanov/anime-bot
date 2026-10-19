@@ -1,8 +1,9 @@
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from movies.models import MediaTitle, MediaView
 from rest_framework.test import APIClient
 from users.models import Subscription
@@ -22,12 +23,15 @@ from .services import (
 	NO_RETRY,
 	NOT_FOUND,
 	NOT_WATCHED,
+	SPEED_FLOOR,
 	UNFINISHED,
 	GameError,
 	award_monthly_prize_sync,
 	bot_views_for,
 	eligible_titles,
 	level_for,
+	speed_factor,
+	speed_scaled_points,
 	start_attempt_sync,
 	submit_attempt_sync,
 	user_points,
@@ -84,6 +88,19 @@ class GameServiceTests(TestCase):
 		self.title = make_title()
 		make_questions(self.title)
 		watch_via_bot(self.user, self.title)
+
+	def _finish_with_times(self, title, times: list) -> dict:
+		"""Play a full quiz where every answer landed after ``times[i]`` ms."""
+		payload = start_attempt_sync(self.user, title.pk)
+		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
+		answers = original_answers_for(attempt)
+		return submit_attempt_sync(
+			self.user,
+			attempt.pk,
+			answers,
+			elapsed_ms=sum(times),
+			question_elapsed_ms=times,
+		)
 
 	def test_unlock_requires_min_bot_views(self) -> None:
 		fresh_user = make_user("fresh")
@@ -244,6 +261,46 @@ class GameServiceTests(TestCase):
 		attempt.refresh_from_db()
 		self.assertTrue(attempt.is_suspicious)
 
+	def test_faster_correct_answers_are_worth_more_points(self) -> None:
+		fast = make_title("Fast")
+		slow = make_title("Slow")
+		make_questions(fast)
+		make_questions(slow)
+		watch_via_bot(self.user, fast)
+		watch_via_bot(self.user, slow)
+
+		fast_result = self._finish_with_times(fast, [4_000] * 5)
+		slow_result = self._finish_with_times(slow, [28_000] * 5)
+
+		# Flat scoring would pay 10 either way; the window turns it into
+		# ~8.7 and 5 points, and the near-limit answer keeps only its half.
+		self.assertEqual(fast_result["points_awarded"], 9)
+		self.assertEqual(slow_result["points_awarded"], 5)
+		self.assertGreater(
+			fast_result["points_awarded"], slow_result["points_awarded"]
+		)
+		self.assertFalse(fast_result["suspicious"])
+		self.assertFalse(slow_result["suspicious"])
+
+	def test_missing_times_fall_back_to_half_points(self) -> None:
+		payload = start_attempt_sync(self.user, self.title.pk)
+		attempt = QuizAttempt.objects.get(pk=payload["attempt_id"])
+		answers = original_answers_for(attempt)
+
+		result = submit_attempt_sync(
+			self.user,
+			attempt.pk,
+			answers,
+			elapsed_ms=100_000,
+			question_elapsed_ms=[],
+		)
+
+		# Without per-question times each answer falls back to the end of
+		# the window, i.e. the floor of half the 2-point share.
+		self.assertEqual(result["correct"], 5)
+		self.assertEqual(result["points_awarded"], 5)
+		self.assertFalse(result["suspicious"])
+
 	def test_bad_answers_length_is_rejected(self) -> None:
 		payload = start_attempt_sync(self.user, self.title.pk)
 		with self.assertRaises(GameError) as ctx:
@@ -268,6 +325,22 @@ class GameServiceTests(TestCase):
 		self.assertEqual(level_for(49)["level"], 1)
 		self.assertEqual(level_for(50)["level"], 2)
 		self.assertEqual(level_for(120)["level"], 3)
+
+
+class SpeedFactorTests(SimpleTestCase):
+	"""The speed bonus slides from full points down to the half floor."""
+
+	def test_the_factor_slides_from_one_to_the_floor(self) -> None:
+		self.assertEqual(speed_factor(0), 1.0)
+		self.assertEqual(speed_factor(15_000), 0.5)
+		self.assertEqual(speed_factor(30_000), SPEED_FLOOR)
+		self.assertEqual(speed_factor(120_000), SPEED_FLOOR)
+		self.assertEqual(speed_factor(-1), 1.0)
+
+	def test_points_are_scaled_but_never_below_half(self) -> None:
+		self.assertEqual(speed_scaled_points(10, 0), 10.0)
+		self.assertEqual(speed_scaled_points(10, 15_000), 5.0)
+		self.assertEqual(speed_scaled_points(10, 120_000), 5.0)
 
 
 class MonthlyPrizeTests(TestCase):
@@ -382,3 +455,28 @@ class GameApiTests(TestCase):
 		self.assertIn("results", response.data)
 		self.assertIn("own", response.data)
 		self.assertEqual(response.data["own"]["points"], 0)
+
+	def test_leaderboard_keeps_the_player_name_and_the_level_label_apart(self) -> None:
+		player = make_user("ali")
+		title = make_title("Bleach")
+		QuizAttempt.objects.create(
+			user=player,
+			title=title,
+			question_ids=[],
+			finished_at=timezone.now(),
+			passed=True,
+			points_awarded=120,
+			elapsed_ms=30_000,
+		)
+
+		response = self.client.get(reverse("games:game-leaderboard"))
+
+		row = response.data["results"][0]
+		self.assertEqual(row["name"], "ali")
+		self.assertEqual(row["level"], 3)
+		self.assertEqual(row["level_name"], "O'quvchi")
+
+		self.client.force_authenticate(player)
+		own = self.client.get(reverse("games:game-leaderboard")).data["own"]
+		self.assertEqual(own["name"], "ali")
+		self.assertEqual(own["rank"], 1)

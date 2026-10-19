@@ -11,11 +11,3 @@ whitenoise>=6.7,<7.0
 gunicorn>=23.0,<24.0
 # Pillow is required by Django's ImageField (subscription payment screenshots).
 Pillow>=11.0,<14.0
-
-# AI catalogue search (movies/embeddings.py): the official ONNX export of
-# sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 is executed with
-# onnxruntime — no PyTorch, no transformers, no CUDA in the image. The model
-# itself is downloaded with `manage.py index_anime_embeddings --download-model`.
-numpy>=1.26,<3.0
-onnxruntime>=1.18,<2.0
-tokenizers>=0.20,<1.0

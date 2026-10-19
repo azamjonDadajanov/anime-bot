@@ -14,17 +14,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# The most titles one AI search may return in a single response. The search is
-# exact, so this is a payload/rendering cap, not a technical one: a client that
-# wants the rest of its matches asks again with a larger ``limit``.
-AI_SEARCH_MAX_RESULTS = 30
-
-from . import ai_reasoning, ai_search, embeddings
+from . import ai_assistant
 from .models import MediaPart, MediaTitle, MediaView, ReadingProgress, TelegramChannel, TelegramMedia
 from .permissions import IsAdminOrReadOnly
 from .serializers import (
-	AISearchQuerySerializer,
-	AISearchResponseSerializer,
+	AIAssistantQuerySerializer,
+	AIAssistantResponseSerializer,
 	MediaLookupSerializer,
 	MediaPartSerializer,
 	MediaTitleSerializer,
@@ -51,6 +46,64 @@ def _looks_like_pdf(upload) -> bool:
 	name = (getattr(upload, "name", "") or "").lower()
 	content_type = (getattr(upload, "content_type", "") or "").lower()
 	return name.endswith(".pdf") or content_type == "application/pdf"
+
+
+# How much of the user's taste the "Sevimlilar" analysis sees: the last ten
+# favourites and the last ten watched titles — enough for a pattern, small
+# enough that the prompt stays cheap.
+TASTE_FAVORITES_LIMIT = 10
+TASTE_VIEWS_LIMIT = 10
+
+
+def _taste_line(title) -> str:
+	genres = ", ".join(genre.name for genre in title.genres.all()[:3])
+	parts = [title.get_type_display().lower()]
+	if genres:
+		parts.append(genres)
+	return "(" + ", ".join(parts) + ")"
+
+
+def _taste_context(user) -> tuple:
+	"""A short block about the user's taste, plus how much it saw.
+
+	Returns ``(context, favorites_count, views_count)``. Favourites come
+	first (newest), then the last watched titles not already covered — the
+	same shape the bot's AI context uses. Empty context when the account has
+	neither yet.
+	"""
+	# Local import: the users app owns FavoriteContent, and movies must not
+	# depend on it at module level.
+	from users.models import FavoriteContent
+
+	profile = getattr(user, "telegram_profile", None)
+	favorites = []
+	if profile is not None:
+		favorites = list(
+			FavoriteContent.objects.filter(user=profile)
+			.select_related("content")
+			.prefetch_related("content__genres")
+			.order_by("-created_at")[:TASTE_FAVORITES_LIMIT]
+		)
+	views = list(
+		MediaView.objects.filter(user=user)
+		.select_related("title")
+		.prefetch_related("title__genres")
+		.order_by("-updated_at")[:TASTE_VIEWS_LIMIT]
+	)
+	lines = []
+	if favorites:
+		items = ", ".join(
+			f"{row.content.title[:40]} {_taste_line(row.content)}" for row in favorites
+		)
+		lines.append(f"Sevimlilar: {items}")
+	seen = {row.content_id for row in favorites}
+	watched = [row for row in views if row.title_id not in seen]
+	if watched:
+		items = ", ".join(
+			f"{row.title.title[:40]} {_taste_line(row.title)}" for row in watched
+		)
+		lines.append(f"Oxirgi ko'rganlari: {items}")
+	return "\n".join(lines), len(favorites), len(views)
 
 
 class CatalogPagination(PageNumberPagination):
@@ -137,48 +190,34 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		return Response({"status": "ok", "view_id": view.pk if view else None})
 
 	@extend_schema(
-		request=AISearchQuerySerializer,
-		responses={200: AISearchResponseSerializer},
+		request=AIAssistantQuerySerializer,
+		responses={200: AIAssistantResponseSerializer},
 		tags=["Catalog"],
 	)
 	@action(
 		detail=False,
 		methods=["post"],
-		url_path="ai-search",
+		url_path="ai-assistant",
 		permission_classes=[IsAuthenticated],
 	)
-	def ai_search(self, request):
-		"""Find titles by meaning instead of by name (subscribers only).
+	def ai_assistant(self, request):
+		"""AniVoy: ask the AI assistant (subscribers only).
 
-		The request is embedded with the multilingual sentence encoder and ranked
-		against the vectors of every indexed title, so "sarguzasht va qo'rqinchli
-		animelar" matches adventure/horror titles even though no such word appears
-		in their names or genres. Each result carries the link and a one-sentence
-		summary; the model cannot answer a question the catalogue does not cover,
-		so an unrelated request comes back empty rather than misleading.
+		The assistant is an online chat model with catalogue functions: it
+		searches titles, reads their details or parts, lists genres and popular
+		content, and only then writes the answer. ``results`` are the titles its
+		functions actually returned, so a link the user can press is always a
+		real catalogue row.
 		"""
-		serializer = AISearchQuerySerializer(data=request.data)
+		serializer = AIAssistantQuerySerializer(data=request.data)
 		serializer.is_valid(raise_exception=True)
-		if not ai_search.user_can_search(request.user):
+		if not ai_assistant.user_can_use(request.user):
 			return Response(
 				{
 					"code": "subscription_required",
-					"detail": ai_search.SUBSCRIPTION_REQUIRED_TEXT,
+					"detail": ai_assistant.SUBSCRIPTION_REQUIRED_TEXT,
 				},
 				status=status.HTTP_403_FORBIDDEN,
-			)
-		if not ai_search.enabled() or not embeddings.is_ready():
-			return Response(
-				{"code": "ai_unavailable", "detail": ai_search.INDEX_UNAVAILABLE_TEXT},
-				status=status.HTTP_503_SERVICE_UNAVAILABLE,
-			)
-		if ai_search.index_is_empty():
-			# The model is there but nothing was ever embedded: a deployment that
-			# has not run `index_anime_embeddings` yet. Say so instead of
-			# answering "nothing found", which would look like a broken search.
-			return Response(
-				{"code": "index_empty", "detail": ai_search.INDEX_UNAVAILABLE_TEXT},
-				status=status.HTTP_503_SERVICE_UNAVAILABLE,
 			)
 		try:
 			limit = int(request.data.get("limit") or 0) or None
@@ -187,40 +226,45 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		media_type = str(request.data.get("type") or "").strip()
 		if media_type and media_type not in MediaTitle.MediaType.values:
 			media_type = ""
-		try:
-			# Retrieval (encoder) runs always; the reasoning model adds the
-			# explanation and re-orders the picks, and is skipped entirely when
-			# no key is configured or the provider is unreachable.
-			answer = ai_reasoning.answer_search(
-				serializer.validated_data["query"],
-				limit=min(limit or ai_search.top_k(), AI_SEARCH_MAX_RESULTS),
-				media_type=media_type,
-			)
-		except embeddings.EmbeddingUnavailable as exc:
-			logger.warning("AI search is unavailable: %s", exc)
+		result = ai_assistant.answer(
+			serializer.validated_data["query"],
+			limit=limit,
+			media_type=media_type,
+			# The chat the question came from: the assistant answers "nima
+			# aytgandingiz?" from the last turns instead of guessing.
+			history=serializer.validated_data.get("history") or [],
+			# "Adminga xabar": technical problems get fix-it steps.
+			support=bool(serializer.validated_data.get("support")),
+			# "Sevimlilar": the account's favourites and last watched titles
+			# become the assistant's personal_taste tool.
+			personal_context=(
+				_taste_context(request.user)[0]
+				if serializer.validated_data.get("taste")
+				else ""
+			),
+		)
+		if not result.used_llm:
+			# Only online models can answer: a deployment without a key, or a
+			# chain that is fully on cooldown, has no offline fallback any more.
+			if result.error:
+				logger.warning("AI assistant is unavailable: %s", result.error)
 			return Response(
-				{"code": "ai_unavailable", "detail": ai_search.INDEX_UNAVAILABLE_TEXT},
+				{"code": "ai_unavailable", "detail": ai_assistant.UNAVAILABLE_TEXT},
 				status=status.HTTP_503_SERVICE_UNAVAILABLE,
 			)
 		site_url = getattr(settings, "BOT_SITE_URL", "") or ""
-		results = [hit.as_dict(site_url=site_url) for hit in answer.hits]
+		results = [ai_assistant.title_payload(title, site_url=site_url) for title in result.titles]
 		return Response(
 			{
-				"query": answer.query,
+				"query": result.query,
 				"count": len(results),
-				# Every title above the similarity threshold, so the client can say
-				# how many matches exist beyond the returned page.
-				"total": answer.total,
-				"has_more": answer.has_more,
-				# The reasoning model's own words (empty when it is not configured
-				# or failed), plus its "fikrlash" trace.
-				"answer": answer.answer,
-				"thinking": answer.thinking,
-				"reasoning": answer.used_llm,
-				# True when the model answered a conversational question instead
-				# of searching: ``results`` is empty on purpose and the client
-				# should show ``answer`` alone, without the "nothing found" copy.
-				"conversational": answer.conversational,
+				"answer": result.answer,
+				# True when the assistant answered a conversational question
+				# instead of searching: ``results`` is empty on purpose and the
+				# client shows ``answer`` alone, without the "nothing found" copy.
+				"conversational": result.conversational,
+				# The functions that ran, so a client can show what it looked up.
+				"tools": list(result.tools),
 				"results": results,
 			}
 		)

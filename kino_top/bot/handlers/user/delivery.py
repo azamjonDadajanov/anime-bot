@@ -111,6 +111,6 @@ async def recheck_subscription(
 	await render(
 		callback,
 		MAIN_MENU.format(brand=BRAND),
-		markup=main_menu(is_admin),
+		markup=main_menu(is_admin, profile),
 		edit=True,
 	)
