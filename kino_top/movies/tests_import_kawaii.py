@@ -2,11 +2,16 @@
 
 These stay offline: they exercise the name parser, the JSON-LD extractor and
 the metadata mapper against a trimmed copy of a real ``/anime/<hash_id>`` page.
+Deduplication (slug / title+type) is covered with a lightweight fake ORM.
 """
+
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
 from movies.management.commands.import_kawaii import (
+	Command,
 	build_metadata,
 	derive_status,
 	extract_ld_graphs,
@@ -97,3 +102,47 @@ class MappingTests(SimpleTestCase):
 		self.assertIsNone(normalize_rating("n/a"))
 		self.assertEqual(guess_image_type("https://x/y.webp"), "image/webp")
 		self.assertEqual(guess_image_type("https://x/y.png?v=2"), "image/png")
+
+
+class DedupTests(SimpleTestCase):
+	"""Already-imported titles (slug or title+type) must never be re-created."""
+
+	def _command(self) -> Command:
+		return Command()
+
+	def test_slug_match_marks_imported(self) -> None:
+		cmd = self._command()
+		with patch("movies.management.commands.import_kawaii.MediaTitle") as model:
+			model.objects.filter.return_value.exists.return_value = True
+			self.assertTrue(cmd._already_imported("rqtzpkrd", "Uyalchang", "series"))
+			model.objects.filter.assert_called_with(slug="rqtzpkrd")
+
+	def test_title_and_type_match_marks_imported(self) -> None:
+		cmd = self._command()
+		existing = SimpleNamespace(slug="uyalchang-series")
+
+		class _QS:
+			def exists(self):
+				return True
+
+		def filter(**kwargs):
+			if kwargs.get("slug") == "rqtzpkrd":
+				return SimpleNamespace(exists=lambda: False)
+			if kwargs == {"title__iexact": "Uyalchang", "type": "series"}:
+				return _QS()
+			raise AssertionError(f"unexpected filter: {kwargs}")
+
+		with patch("movies.management.commands.import_kawaii.MediaTitle") as model:
+			model.objects.filter.side_effect = filter
+			self.assertTrue(cmd._already_imported("rqtzpkrd", "Uyalchang", "series"))
+
+	def test_unknown_title_is_not_imported(self) -> None:
+		cmd = self._command()
+
+		class _QS:
+			def exists(self):
+				return False
+
+		with patch("movies.management.commands.import_kawaii.MediaTitle") as model:
+			model.objects.filter.side_effect = lambda **kw: _QS()
+			self.assertFalse(cmd._already_imported("newhash", "Yangi", "anime"))

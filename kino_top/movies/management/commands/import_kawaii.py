@@ -12,11 +12,18 @@ bot.kawaii.uz is a React/Next.js front end. Two rules shape this command:
   why no headless browser is needed: we fetch the page HTML and read the
   embedded JSON-LD.
 
-The command is resumable. Titles are stored with ``slug = hash_id``; on every
-run the already-imported ones are skipped, so it keeps going from wherever the
-previous run stopped. ``--limit`` caps how many titles a single run stores
-(default 10, hard maximum 10). When nothing new is left, the command changes
-nothing and simply reports that everything is already imported.
+The command is resumable and **never re-imports** a title that is already in
+the database. A row is considered imported when either its ``slug`` equals the
+kawaii ``hash_id`` (the normal path) **or** the same ``title`` + ``type``
+already exists (covers rows created earlier by the bot/admin with a different
+slug). ``--limit`` caps how many titles a single run stores (default 10, hard
+maximum 10).
+
+Each run is paced so it takes **at least ~10 seconds** of wall time (network
+requests are spread out with ``--delay`` and, if the work finished too quickly,
+the remainder is slept at the end) — this keeps the importer from looking like
+a burst attack against bot.kawaii.uz. Re-run the command until it reports that
+nothing new is left.
 
 Posters are downloaded and stored in the database (``MediaTitle.cover``).
 
@@ -50,6 +57,9 @@ DEFAULT_NAMES_FILE = Path(__file__).resolve().parents[2] / "data" / "kawaii_anim
 # re-run in small batches, so a single run never stores more than this.
 MAX_LIMIT = 10
 DEFAULT_LIMIT = 10
+# Minimum wall-clock seconds per run so a batch does not look like a burst.
+MIN_RUN_SECONDS = 10.0
+DEFAULT_DELAY = 1.0
 
 USER_AGENT = (
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -282,13 +292,25 @@ class Command(BaseCommand):
 			default=DEFAULT_LIMIT,
 			help=f"Titles to store in this run (default {DEFAULT_LIMIT}, maximum {MAX_LIMIT}).",
 		)
-		parser.add_argument("--delay", type=float, default=0.2, help="Seconds to sleep between requests.")
+		parser.add_argument(
+			"--delay",
+			type=float,
+			default=DEFAULT_DELAY,
+			help=f"Seconds to sleep between requests (default {DEFAULT_DELAY}).",
+		)
+		parser.add_argument(
+			"--min-run-seconds",
+			type=float,
+			default=MIN_RUN_SECONDS,
+			help=f"Pad each run to at least this many seconds (default {MIN_RUN_SECONDS}).",
+		)
 		parser.add_argument("--timeout", type=float, default=25.0, help="Per-request timeout in seconds.")
 		parser.add_argument("--min-length", type=int, default=3, help="Skip shorter search terms (API minimum).")
 		parser.add_argument("--no-covers", action="store_true", help="Do not download/store poster images.")
 		parser.add_argument("--dry-run", action="store_true", help="Fetch and parse, but write nothing.")
 
 	def handle(self, *args, **options) -> None:
+		started = time.monotonic()
 		names = self._collect_names(options)
 		if not names:
 			raise CommandError("No anime names to search for. Pass names, -q or --names-file.")
@@ -315,7 +337,17 @@ class Command(BaseCommand):
 		finally:
 			client.close()
 
-		if stats["stored"] == 0:
+		elapsed = time.monotonic() - started
+		min_run = float(options.get("min_run_seconds") or 0)
+		if min_run > 0 and elapsed < min_run and not options["dry_run"]:
+			pad = min_run - elapsed
+			self.stdout.write(f"Pacing: sleeping {pad:.1f}s so the run takes >= {min_run:.0f}s.")
+			time.sleep(pad)
+			elapsed = time.monotonic() - started
+
+		self.stdout.write(f"Elapsed: {elapsed:.1f}s")
+
+		if stats["stored"] == 0 and stats["skipped"] == 0:
 			self.stdout.write(
 				self.style.WARNING(
 					f"Hech nima qilinmadi: bazada mavjud bo'lmagan yangi anime topilmadi "
@@ -323,10 +355,17 @@ class Command(BaseCommand):
 				)
 			)
 			return
+		if stats["stored"] == 0:
+			self.stdout.write(
+				self.style.SUCCESS(
+					f"Hammasi allaqachon bazada: skipped={stats['skipped']} failed={stats['failed']}."
+				)
+			)
+			return
 		self.stdout.write(
 			self.style.SUCCESS(
 				f"Done. created={stats['created']} updated={stats['updated']} "
-				f"failed={stats['failed']} · {stats['stored']}/{limit} this run"
+				f"skipped={stats['skipped']} failed={stats['failed']} · {stats['stored']}/{limit} this run"
 			)
 		)
 
@@ -368,13 +407,15 @@ class Command(BaseCommand):
 	def _run(self, client, names: List[str], options, limit: int) -> Dict[str, int]:
 		"""Search the names in order and store the next not-yet-stored titles.
 
-		Titles already present (``slug == hash_id``) are skipped, so each run
-		continues where the previous one stopped until every result is stored.
+		A title is skipped when it is already in the database under the kawaii
+		``hash_id`` slug **or** under the same ``title`` + ``type`` (imported
+		earlier via the bot/admin with a different slug). That way re-runs never
+		create a second row for the same anime.
 		"""
 		dry_run = bool(options["dry_run"])
 		with_cover = not options["no_covers"]
 
-		stats = {"created": 0, "updated": 0, "failed": 0, "stored": 0, "found": 0}
+		stats = {"created": 0, "updated": 0, "failed": 0, "stored": 0, "found": 0, "skipped": 0}
 		processed: Set[str] = set()
 		total = len(names)
 
@@ -398,16 +439,29 @@ class Command(BaseCommand):
 				if not hash_id or hash_id in processed:
 					continue
 				processed.add(hash_id)
-				if MediaTitle.objects.filter(slug=hash_id).exists():
-					continue  # already imported by an earlier run
+				title_guess = _first_text(item.get("title_uzb"), item.get("title_org"))
+				type_guess = map_media_type(item.get("type_uzb"), None, "")
+				if self._already_imported(hash_id, title_guess, type_guess):
+					stats["skipped"] += 1
+					continue
 				if self._store(client, hash_id, item, stats, with_cover=with_cover, dry_run=dry_run):
 					fresh += 1
 					stats["stored"] += 1
 			self.stdout.write(
-				f"[{index}/{total}] {name!r}: {len(results)} result(s), {fresh} new (run total {stats['stored']}/{limit})"
+				f"[{index}/{total}] {name!r}: {len(results)} result(s), {fresh} new "
+				f"(run total {stats['stored']}/{limit}, skipped={stats['skipped']})"
 			)
 			self._sleep(options)
 		return stats
+
+	def _already_imported(self, hash_id: str, title: str, media_type: str) -> bool:
+		"""True when this kawaii title already has a row in the database."""
+		if MediaTitle.objects.filter(slug=hash_id).exists():
+			return True
+		if title and media_type:
+			if MediaTitle.objects.filter(title__iexact=title, type=media_type).exists():
+				return True
+		return False
 
 	def _store(self, client, hash_id: str, item: Dict[str, Any], stats, *, with_cover: bool, dry_run: bool) -> bool:
 		"""Fetch one anime page and persist it. Returns ``True`` when handled."""
@@ -472,9 +526,18 @@ class Command(BaseCommand):
 		return response.content, content_type[:50]
 
 	def _upsert(self, metadata: Dict[str, Any], cover: Optional[bytes], cover_type: str) -> str:
-		"""Create (or refresh) the ``MediaTitle`` identified by ``hash_id``."""
+		"""Create (or refresh) the ``MediaTitle`` for this kawaii hash.
+
+		Match order: ``slug == hash_id`` first, then the same ``title`` + ``type``
+		(row created earlier by the bot/admin). Never creates a second row for
+		an anime that is already in the catalog.
+		"""
 		slug = metadata["hash_id"]
 		existing = MediaTitle.objects.filter(slug=slug).first()
+		if existing is None and metadata["title"]:
+			existing = MediaTitle.objects.filter(
+				title__iexact=metadata["title"], type=metadata["type"]
+			).first()
 		if existing is not None:
 			changed: List[str] = []
 			for field, value in (
