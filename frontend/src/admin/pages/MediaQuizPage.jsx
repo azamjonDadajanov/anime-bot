@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { adminMediaApi, adminQuizApi } from '../api/adminApi'
+import { adminPath } from '../adminBase'
 import {
   ConfirmDialog,
   EmptyState,
@@ -200,13 +201,13 @@ export default function MediaQuizPage() {
         description="Anime ko'rgach beriladigan quiz: savollar qo'shing va nechta savolga javob berilishini belgilang. Savollar va variantlar foydalanuvchiga tasodifiy tartibda ko'rsatiladi."
         actions={
           <Group gap="xs">
-            <Link className="admin-btn admin-btn-secondary" to={`/admin/media/${slug}`}>
+            <Link className="admin-btn admin-btn-secondary" to={adminPath(`/media/${slug}`)}>
               Qismlar
             </Link>
-            <Link className="admin-btn admin-btn-secondary" to="/admin/quiz">
+            <Link className="admin-btn admin-btn-secondary" to={adminPath('/quiz')}>
               Barcha savollar
             </Link>
-            <Link className="admin-btn admin-btn-secondary" to="/admin/media">
+            <Link className="admin-btn admin-btn-secondary" to={adminPath('/media')}>
               Ro'yxat
             </Link>
           </Group>

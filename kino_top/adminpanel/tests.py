@@ -677,12 +677,15 @@ class GameAdminPermissionTests(GameAdminTestCase):
 
 
 class AdminPanelRoutingTests(SimpleTestCase):
-	"""The React panel is a SPA served under /admin.
+	"""The React panel is a SPA — on its own host (admin.anichopar.uz).
 
 	nginx only hands a path to Django when the SPA does not own it. While
 	Django's own admin still answered on /admin/, opening a panel URL directly —
 	or simply refreshing one — returned Django's login page instead of the panel,
 	so pages such as /admin/game-ratings and /admin/quiz were unreachable.
+	Production now refuses /admin on the public site entirely (it answers 404)
+	and serves the panel as the document on admin.anichopar.uz; these checks
+	guard the invariant that Django never claims the prefix in either case.
 	"""
 
 	PANEL_PATHS = (

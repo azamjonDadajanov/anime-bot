@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { adminPath } from './adminBase'
 import { AdminAuthProvider } from './auth/AdminAuthProvider'
 import { AdminRoute } from './auth/AdminRoute'
 import AdminLayout from './components/AdminLayout'
@@ -54,7 +55,7 @@ export default function AdminApp() {
           <Route path="logs" element={<LogsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/admin" replace />} />
+        <Route path="*" element={<Navigate to={adminPath('/')} replace />} />
       </Routes>
     </AdminAuthProvider>
   )

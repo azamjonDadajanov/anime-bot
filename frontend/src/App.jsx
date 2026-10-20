@@ -22,6 +22,8 @@ import ProfileSettingsPage from './pages/profile/ProfileSettingsPage'
 import 'bootstrap-icons/font/bootstrap-icons.css'
 import './App.css'
 
+// In production nginx answers /admin with 404 — the panel lives only on
+// admin.anichopar.uz — so this route exists purely for local development.
 const AdminApp = lazy(() => import('./admin/AdminApp'))
 
 const sectionRoutes = ['latest', 'popular', 'upcoming', 'movies', 'anime', 'manga', 'series']

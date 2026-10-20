@@ -158,9 +158,10 @@ npm install
 npm run dev                          # http://localhost:5173
 ```
 
-Veb-ilova API manzilini `VITE_API_BASE_URL` dan oladi (standart:
-`http://127.0.0.1:8000/api`). Sayt va botni bir-biriga ulash uchun `kino_top/.env` dagi
-`BOT_SITE_URL` ni frontend manziliga moslang.
+Veb-ilova API manzilini `VITE_API_BASE_URL` dan oladi (lokal standart:
+`http://127.0.0.1:8000/api`; production build'i compose'da
+`//api.anichopar.uz/api` bilan quriladi). Sayt va botni bir-biriga ulash uchun
+`kino_top/.env` dagi `BOT_SITE_URL` ni frontend manziliga moslang.
 
 ## Bot buyruqlari
 
@@ -174,7 +175,8 @@ Veb-ilova API manzilini `VITE_API_BASE_URL` dan oladi (standart:
 
 ## API
 
-JWT bilan himoyalangan REST API (`/api/`):
+JWT bilan himoyalangan REST API (`/api/`; production'da
+`api.anichopar.uz/api/`, `anichopar.uz/api` esa 404):
 
 - `POST /api/auth/register/`, `POST /api/auth/token/`, `POST /api/auth/token/refresh/`
 - `GET|PATCH /api/auth/me/`, `/api/auth/settings/`, `/api/auth/favorites/`
@@ -210,14 +212,18 @@ cp .env.production.example .env      # sirlarni to'ldiring
 docker compose up -d --build
 ```
 
-`nginx` konteyneri SPA'ni beradi, `/api/` va `/django-admin/` ni gunicorn'ga proxy
-qiladi, `/static/` va `/media/` ni esa to'g'ridan-to'g'ri volume'lardan uzatadi — barchasi
-bitta origin bo'lgani uchun production'da CORS kerak emas.
+`nginx` konteyneri uchta hostni bitta joydan beradi: `anichopar.uz` — SPA,
+`/django-admin`, `/static`, `/media`; `admin.anichopar.uz` — React panel o'z
+boshiga document sifatida; `api.anichopar.uz` — `/api/` gunicorn'ga proxy.
+`anichopar.uz/api` va `anichopar.uz/admin` esa 404: ikkinchi kirish nuqtasi
+qolmasligi uchun. API alohida hostga ko'chgani uchun production'da CORS
+ishlaydi (`CORS_ALLOWED_ORIGINS`).
 
 `/admin` **React administrator paneliga** tegishli (SPA route), shuning uchun Django'ning
 o'z admini `/django-admin/` ga ko'chirilgan (`kino_top/kino_top/urls.py`). Ilgari nginx
 `/admin/` ni Django'ga proxy qilardi va panelning istalgan sahifasiga to'g'ridan-to'g'ri
-kirish yoki sahifani yangilash Django admin loginiga olib kelardi.
+kirish yoki sahifani yangilash Django admin loginiga olib kelardi; hozir production'da
+bu prefiks umuman yopiq, panel faqat `admin.anichopar.uz` da ochiladi.
 
 ## AI yordamchi (AniVoy)
 

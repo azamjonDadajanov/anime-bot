@@ -7,7 +7,7 @@ Bitta `docker compose` steki to'rt xizmatdan iborat:
 | `db`    | PostgreSQL 17 (ma'lumotlar `pgdata` volume'da)                            |
 | `web`   | Django + gunicorn (`:8000`), konteyner ishga tushishida migratsiya + `collectstatic` + muqovalarni tuzatish (`fix_covers`) |
 | `bot`   | `python manage.py runbot` — aiogram long-polling (faqat bitta replika!)   |
-| `nginx` | Qurilgan SPA'ni beradi (`/admin` — React panel), `/api` va `/django-admin` ni `web` ga proxy qiladi, `/static` va `/media` ni to'g'ridan-to'g'ri volume'dan uzatadi |
+| `nginx` | Uch hostni bitta konteynerda beradi: `anichopar.uz` → SPA + `/static` + `/media` + `/django-admin` (`/admin` va `/api` **404**), `admin.anichopar.uz` → React panel o'z boshiga document sifatida, `api.anichopar.uz` → `/api` ni `web` ga proxy qiladi |
 
 ## 1. Sozlash
 
@@ -41,16 +41,25 @@ docker compose exec web python manage.py createsuperuser
 
 ## 3. Domen va HTTPS
 
-TLS'ni ikki yo'l bilan ulash mumkin:
+Hozircha TLS **Cloudflare'da** (SSL mode **Flexible**: edge → origin oddiy
+http/80) tugatiladi; nginx kelgan `X-Forwarded-Proto` ni Django'ga o'tkazadi.
+Kerakli DNS recordlari (barchasi bir xil serverga, proxy yoqilgan holda):
 
-1. **Tashqi proxy** (Caddy, Traefik, host nginx, Cloudflare) — 80-portni u yerga
-   bering va shu stekni orqasiga qo'ying.
-2. **Shu nginx ichida** — sertifikatni mount qilib, `frontend/nginx.conf` oxiridagi
-   izohda ko'rsatilgan `443 ssl` blokini qo'shing.
+```text
+anichopar.uz   A  37.60.237.72
+www            A  37.60.237.72
+bot            A  37.60.237.72
+admin          A  37.60.237.72   # panel: admin.anichopar.uz/
+api            A  37.60.237.72   # REST API: api.anichopar.uz/api/...
+```
 
-Har ikki holatda `X-Forwarded-Proto` uzatiladi; Django uni
+`api` recordi shart: SPA `//api.anichopar.uz/api` ga chaqiradi va
+`anichopar.uz/api` nginx'da 404. TLS'ni origin'ga ko'chirmoqchi bo'lsangiz —
+`frontend/nginx.conf` oxiridagi HTTPS bloki izohiga qarang.
+
+Har qanday proxy holatida `X-Forwarded-Proto` uzatiladi; Django uni
 `SECURE_PROXY_SSL_HEADER` orqali o'qiydi, shuning uchun `/django-admin/` CSRF
-tekshiruvi va absolute havolalar `https` bo'lib qoladi.
+tekshiruvi va absolute havolalar to'g'ri sxemada bo'lib qoladi.
 
 Port band bo'lsa `.env` da `HTTP_PORT=8080` qilib o'zgartiring.
 
@@ -73,12 +82,19 @@ faqat-o'qish uchun ulanadi.
 
 ```bash
 curl -I http://localhost/                 # 200, SPA index.html
-curl -I http://localhost/admin/game-ratings   # 200, SPA (React panel) — Django admin EMAS
+curl -I http://localhost/admin/game-ratings   # 404 — panel endi admin.anichopar.uz da
+curl -I -H 'Host: admin.anichopar.uz' http://localhost/login  # 200, panel SPA login
 curl -I http://localhost/django-admin/    # 302, Django admin login
-curl -I http://localhost/api/schema/      # 200, DRF sxema
+curl -I -H 'Host: api.anichopar.uz' http://localhost/api/schema/  # 200, DRF sxema
+curl -I http://localhost/api/schema/      # 404 — API faqat api.anichopar.uz da
 curl -I http://localhost/static/admin/css/base.css   # nginx beradi, DEBUG=false da ham
-curl -I http://localhost/profile   # 200 + CSP/nosniff (SPA yo'llari ham)
+curl -I http://localhost/media/tlhxlgfj   # 200, SPA media sahifasi (deep link)
 docker compose exec web python manage.py check --deploy
+
+# tashqaridan (DNS+Cloudflare sozlangan bo'lsa):
+curl -sI https://anichopar.uz/            # 200
+curl -sI https://admin.anichopar.uz/login # 200
+curl -s  https://api.anichopar.uz/api/schema/ | head -c 200
 ```
 
 ## Eslatmalar
@@ -106,14 +122,17 @@ docker compose exec web python manage.py check --deploy
   brauzerda yuklab olish (pdf.js) olib tashlangan; API dagi `page_image`
   endpointi nginx faylni topa olgandagina fallback sifatida qolgan.
 - `media/manga/render/` ishchi katalogi (xom PDF'lar) nginx'dan yashirin —
-  `/media/manga/` yo'nalishi to'g'ridan-to'g'ri `return 444` qiladi, faqat
+  `/media/manga/` yo'nalishi to'g'ridan-to'g'ri `return 404` qiladi, faqat
   `pages/` `^~` qoidalari orqali ochiladi.
 - Himoya qatlami: auth endpointlari 5 r/m (`anichopar_auth`), API 25 r/s +
   64 bir vaqtdagi ulanish (`limit_conn`), skaner agentlari (sqlmap, masscan
   va h.k.) 403, `/wp-admin` kabi tez-tez uriladigan yo'llar `444`, `.env` kabi
-  nuqtali fayllar `404`. Sarlavha/CSP nginx'da `location = /index.html` da
-  (SPA yo'llari `try_files` orqali shu yerga kiradi). HTTPS'ni tashqi proxyda
-  yoqilganda `frontend/nginx.conf` oxiridagi HTTPS blokini, `DJANGO_SECURE_*`
+  nuqtali fayllar `404`. Cheklovlar Cloudflare proxied so'rovlarda ham
+  haqiqiy mijoz bo'yicha ishlaydi (`CF-Connecting-IP` map'i), aks holda butun
+  sayt bitta edge IP bilan umumiy byudjetda bo'lib qolardi. Sarlavha/CSP
+  nginx'da `location = /index.html` da (SPA yo'llari `try_files` orqali shu
+  yerga kiradi), `connect-src` da API hosti ham bor. HTTPS'ni origin'ga
+  ko'chirganda `frontend/nginx.conf` oxiridagi HTTPS blokini, `DJANGO_SECURE_*`
   o'zgaruvchilarini esa `.env.production.example` dagi izohlarga qarab
   sozlang.
 - **Oylik o'yin mukofoti** uchun cron qo'ying (har oyining 1-si, 06:00 da oldingi

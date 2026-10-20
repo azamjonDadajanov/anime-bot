@@ -13,6 +13,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { adminUsersApi } from '../api/adminApi'
+import { adminPath } from '../adminBase'
 import {
   ConfirmDialog,
   EmptyState,
@@ -218,7 +219,7 @@ export default function UsersPage() {
                         variant="subtle"
                         color="blue"
                         component={Link}
-                        to={`/admin/users/${user.id}`}
+                        to={adminPath(`/users/${user.id}`)}
                         title="Batafsil"
                       >
                         <i className="bi bi-eye" />
@@ -327,7 +328,7 @@ export function UserDetailPage() {
         title={user.username || user.full_name || String(user.telegram_id)}
         description="Foydalanuvchi profili va to'lov tarixi."
         actions={
-          <Link className="admin-btn admin-btn-secondary" to="/admin/users">
+          <Link className="admin-btn admin-btn-secondary" to={adminPath('/users')}>
             Ro'yxat
           </Link>
         }

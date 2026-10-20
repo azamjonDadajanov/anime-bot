@@ -21,6 +21,7 @@ import {
   adminMediaApi,
   coverDataUrl,
 } from '../api/adminApi'
+import { adminPath } from '../adminBase'
 import { coverSrc } from '../../apis/mediaUrl'
 import {
   ACCESS_PLAN_LABELS,
@@ -136,7 +137,7 @@ export function MediaListPage({ typeFilter = null }) {
         title={typeFilter ? MEDIA_TYPE_LABELS[typeFilter] || typeFilter : 'Medialar'}
         description="Katalogni boshqarish: qo'shish, tahrirlash, o'chirish."
         actions={
-          <Link className="admin-btn admin-btn-primary" to="/admin/media/new">
+          <Link className="admin-btn admin-btn-primary" to={adminPath('/media/new')}>
             <i className="bi bi-plus-lg" aria-hidden="true" /> Yangi media
           </Link>
         }
@@ -164,7 +165,7 @@ export function MediaListPage({ typeFilter = null }) {
           title="Media topilmadi"
           description="Yangi media qo'shing yoki qidiruvni o'zgartiring."
           action={
-            <Link className="admin-btn admin-btn-primary" to="/admin/media/new">
+            <Link className="admin-btn admin-btn-primary" to={adminPath('/media/new')}>
               Yangi media
             </Link>
           }
@@ -222,7 +223,7 @@ export function MediaListPage({ typeFilter = null }) {
                         variant="subtle"
                         color="blue"
                         component={Link}
-                        to={`/admin/media/${item.slug}`}
+                        to={adminPath(`/media/${item.slug}`)}
                         title="Qismlar"
                       >
                         <i className="bi bi-collection-play" />
@@ -231,7 +232,7 @@ export function MediaListPage({ typeFilter = null }) {
                         variant="subtle"
                         color="green"
                         component={Link}
-                        to={`/admin/media/${item.slug}/quiz`}
+                        to={adminPath(`/media/${item.slug}/quiz`)}
                         title="Test savollari"
                       >
                         <i className="bi bi-question-circle" />
@@ -240,7 +241,7 @@ export function MediaListPage({ typeFilter = null }) {
                         variant="subtle"
                         color="blue"
                         component={Link}
-                        to={`/admin/media/${item.slug}/edit`}
+                        to={adminPath(`/media/${item.slug}/edit`)}
                         title="Tahrirlash"
                       >
                         <i className="bi bi-pencil" />
@@ -410,7 +411,7 @@ export function MediaFormPage() {
       }
       setSuccess(isEdit ? 'Media yangilandi.' : 'Media yaratildi.')
       if (!isEdit && saved?.slug) {
-        navigate(`/admin/media/${saved.slug}`)
+        navigate(adminPath(`/media/${saved.slug}`))
       }
     } catch (err) {
       setError(formatError(err, "Saqlashda xatolik."))
@@ -427,7 +428,7 @@ export function MediaFormPage() {
         title={isEdit ? 'Mediani tahrirlash' : 'Yangi media'}
         description="Katalog uchun asosiy ma'lumotlar va muqova. Slug avtomatik yaratiladi."
         actions={
-          <Link className="admin-btn admin-btn-secondary" to="/admin/media">
+          <Link className="admin-btn admin-btn-secondary" to={adminPath('/media')}>
             Orqaga
           </Link>
         }
@@ -729,10 +730,10 @@ export function MediaPartsPage() {
         description="Qismlar, Telegram file_id va PDF fayllarni boshqarish."
         actions={
           <Group gap="xs">
-            <Link className="admin-btn admin-btn-secondary" to="/admin/media">
+            <Link className="admin-btn admin-btn-secondary" to={adminPath('/media')}>
               Ro'yxat
             </Link>
-            <Link className="admin-btn admin-btn-secondary" to={`/admin/media/${slug}/quiz`}>
+            <Link className="admin-btn admin-btn-secondary" to={adminPath(`/media/${slug}/quiz`)}>
               <i className="bi bi-question-circle" aria-hidden="true" /> Test savollari
             </Link>
             <button type="button" className="admin-btn admin-btn-primary" onClick={openCreatePart}>

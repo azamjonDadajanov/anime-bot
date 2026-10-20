@@ -2,6 +2,7 @@ import { Group, Stack, Text, TextInput, Title } from '@mantine/core'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { adminBroadcastApi } from '../api/adminApi'
+import { adminPath } from '../adminBase'
 import {
   ErrorAlert,
   SectionHeading,
@@ -55,7 +56,7 @@ export default function PodcastPage() {
         title="Podcast yuborish"
         description="Audio fayl (Telegram file_id) orqali barcha foydalanuvchilarga podcast yuborish."
         actions={
-          <Link className="admin-btn admin-btn-secondary" to="/admin/media/new">
+          <Link className="admin-btn admin-btn-secondary" to={adminPath('/media/new')}>
             Katalogga qo'shish
           </Link>
         }

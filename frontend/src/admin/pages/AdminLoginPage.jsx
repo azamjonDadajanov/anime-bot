@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button, PasswordInput, TextInput } from '@mantine/core'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAdminAuth } from '../auth/useAdminAuth'
+import { adminPath } from '../adminBase'
 import { ErrorAlert } from '../components/adminShared'
 
 export default function AdminLoginPage() {
@@ -14,7 +15,7 @@ export default function AdminLoginPage() {
   const [loading, setLoading] = useState(false)
 
   if (user) {
-    return <Navigate to="/admin" replace />
+    return <Navigate to={adminPath('/')} replace />
   }
 
   async function handleSubmit(event) {
@@ -23,7 +24,7 @@ export default function AdminLoginPage() {
     setError(null)
     try {
       await login({ username, password })
-      const from = location.state?.from || '/admin'
+      const from = location.state?.from || adminPath('/')
       navigate(from, { replace: true })
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || 'Kirishda xatolik.')

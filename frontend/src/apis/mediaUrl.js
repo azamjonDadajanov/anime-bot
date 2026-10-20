@@ -1,14 +1,19 @@
 // Media files (posters, screenshots, rendered chapter pages) are ordinary
 // files under /media/, written by Django and served by nginx with long-lived
 // cache headers — the API only ever reports their path. The browser therefore
-// needs the right origin: in production the SPA and /media/ share one origin,
-// while during development Vite serves the SPA on its own port and Django
-// serves /media/ on 8000.
+// needs the right origin: every server block (anichopar.uz,
+// admin.anichopar.uz) serves /media/, so media stays on the page's own origin
+// even though the API itself moved to api.anichopar.uz — a scheme-relative
+// base like //api.anichopar.uz/api therefore resolves to the page origin here.
+// During development Vite serves the SPA on its own port and Django serves
+// /media/ on 8000.
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'
 
 function apiOrigin() {
   if (typeof window === 'undefined') return ''
+  // '/api' and '//api.anichopar.uz/api' both name the page's own origin for
+  // media purposes (see the file header).
   if (apiBaseUrl.startsWith('/')) return window.location.origin
   try {
     return new URL(apiBaseUrl, window.location.origin).origin

@@ -75,7 +75,9 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_BASE_URL: /api
+        # Scheme-relative on purpose: the browser resolves //api... against the
+        # page, so http and future https both keep working.
+        VITE_API_BASE_URL: "//api.anichopar.uz/api"
     restart: unless-stopped
     ports:
       - "${HTTP_PORT:-80}:80"

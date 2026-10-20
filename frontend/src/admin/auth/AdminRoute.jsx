@@ -1,5 +1,6 @@
 import { Loader } from '@mantine/core'
 import { Navigate, useLocation } from 'react-router-dom'
+import { adminPath } from '../adminBase'
 import { useAdminAuth } from './useAdminAuth'
 
 export function AdminRoute({ children }) {
@@ -15,7 +16,7 @@ export function AdminRoute({ children }) {
   }
 
   if (!user) {
-    return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />
+    return <Navigate to={adminPath('/login')} replace state={{ from: location.pathname }} />
   }
 
   return children
