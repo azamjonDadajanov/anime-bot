@@ -32,6 +32,8 @@ media/
 
 # ACME http-01 webroot served by the nginx container (see docker-compose.yml).
 certbot-www/
+# Copy of the Let's Encrypt certificate (private key!) the container mounts.
+certs/
 
 .pytest_cache/
 .mypy_cache/

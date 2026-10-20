@@ -42,15 +42,30 @@ docker compose exec web python manage.py createsuperuser
 ## 3. Domen, sertifikat va HTTPS
 
 TLS **nginx konteynerida** tugatiladi: `certbot` host'da bitta sertifikat oladi
-(barcha besh nom uchun), compose esa `/etc/letsencrypt` ni read-only konteynerga
-ulaydi va `frontend/nginx.conf` uni 443 da ishlatadi. Shuning uchun `docker
-compose up` dan **oldin** ikki shart bajarilishi kerak:
+(barcha besh nom uchun), compose esa uni `./certs` dan read-only ulaydi va
+`frontend/nginx.conf` 443 da ishlatadi.
 
-1. **Sertifikat olingan bo'lishi** (yo'q bo'lsa nginx konteyneri ishga
-   tushmaydi — bu ataylab qilingan):
+`./certs` — bu `/etc/letsencrypt` ning **nusxasi** (`fullchain.pem`,
+`privkey.pem`, `options-ssl-nginx.conf`, `ssl-dhparams.pem`). To'g'ridan-to'g'ri
+`/etc/letsencrypt` ni ulab bo'lmaydi: bu serverdagi docker **snap** paketida
+daemon o'z mount namespace'ida ishlaydi va yangi yaratilgan katalogni bind
+mount qilganda konteynerda **bo'sh** katalog ko'rinadi. Home katalog ostidagi
+mount'lar esa to'liq ishlaydi, shuning uchun nusxa shu yo'l bilan olinadi.
+Nusxani root yaratadi va har bir renew'da yangilaydi (deploy hook, quyida).
+
+`docker compose up` dan **oldin** ikki shart bajarilishi kerak:
+
+1. **Sertifikat olingan bo'lishi va `./certs` ga nusxalangan bo'lishi** (yo'q
+   bo'lsa nginx konteyneri ishga tushmaydi — bu ataylab qilingan):
 
    ```bash
    sudo certbot --nginx -d anichopar.uz -d www.anichopar.uz -d admin.anichopar.uz -d bot.anichopar.uz -d api.anichopar.uz
+   sudo mkdir -p /home/ai_agent/anime-bot/certs
+   sudo cp /etc/letsencrypt/live/anichopar.uz/fullchain.pem \
+           /etc/letsencrypt/live/anichopar.uz/privkey.pem \
+           /etc/letsencrypt/options-ssl-nginx.conf \
+           /etc/letsencrypt/ssl-dhparams.pem \
+           /home/ai_agent/anime-bot/certs/
    ```
 
 2. **Host nginx 80/443 ni egallamasligi** — portlar konteynerga tegishli.
@@ -113,7 +128,8 @@ konfiguratsiyada (root, bir marta qo'yiladi):
     webroot_path = /home/ai_agent/anime-bot/certbot-www
 
 /etc/letsencrypt/renewal-hooks/deploy/reload-anichopar-nginx   # 0755
-    # sertifikat yangilangandan keyin konteyner nginx'ini qayta yuklaydi
+    # 1) yangilangan sertifikatni /etc/letsencrypt/live/… dan ./certs ga nusxalaydi
+    # 2) konteyner nginx'ini qayta yuklaydi (yangi fayllar shu zahoti o'qiladi)
 ```
 
 `certbot-www` xostda yaratiladi, compose uni `/var/www/certbot` ga read-only
@@ -123,6 +139,10 @@ edge → origin:80 → konteyner → token fayli). Tekshirish:
 ```bash
 sudo certbot renew --dry-run
 ```
+
+`./certs` fayllari o'zgarganda (qo'lda nusxalasangiz) konteynerni qayta
+yuklash kerak: `docker compose restart nginx` — nginx fayllarni faqat
+boshlanishda/o'qishda (`-s reload`) o'qiydi.
 
 ## 4. Yangilash va zaxiralash
 

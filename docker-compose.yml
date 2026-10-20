@@ -86,11 +86,14 @@ services:
       # Served directly by nginx instead of being proxied through gunicorn.
       - static:/var/www/static:ro
       - media:/var/www/media:ro
-      # TLS: the host's certbot output, read-only. nginx runs its master as
-      # root, so the root-owned key under /etc/letsencrypt/archive is readable
-      # here. Create the certificate first (`certbot --nginx -d ...`), otherwise
-      # the container refuses to start — that is the intended failure.
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # TLS material, copied there by root from /etc/letsencrypt (the host's
+      # certbot output). nginx runs its master as root, so the root-owned key is
+      # readable here. The snap-packaged docker daemon cannot bind-mount a fresh
+      # /etc/letsencrypt — it resolves to an empty directory — which is why the
+      # certificate is a copy: the renewal deploy hook refreshes it on every
+      # renew and reloads this container. No ./certs yet? Create the certificate
+      # first, otherwise the container refuses to start (intended failure).
+      - ./certs:/etc/nginx/certs:ro
       # http-01 webroot: certbot on the host writes the token, nginx serves it
       # (location /.well-known/acme-challenge/ in frontend/nginx.conf).
       - ./certbot-www:/var/www/certbot:ro
