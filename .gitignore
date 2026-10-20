@@ -30,6 +30,9 @@ db.sqlite3-journal
 staticfiles/
 media/
 
+# ACME http-01 webroot served by the nginx container (see docker-compose.yml).
+certbot-www/
+
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

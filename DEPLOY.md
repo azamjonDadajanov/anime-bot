@@ -7,7 +7,7 @@ Bitta `docker compose` steki to'rt xizmatdan iborat:
 | `db`    | PostgreSQL 17 (ma'lumotlar `pgdata` volume'da)                            |
 | `web`   | Django + gunicorn (`:8000`), konteyner ishga tushishida migratsiya + `collectstatic` + muqovalarni tuzatish (`fix_covers`) |
 | `bot`   | `python manage.py runbot` — aiogram long-polling (faqat bitta replika!)   |
-| `nginx` | Uch hostni bitta konteynerda beradi: `anichopar.uz` → SPA + `/static` + `/media` + `/django-admin` (`/admin` va `/api` **404**), `admin.anichopar.uz` → React panel o'z boshiga document sifatida, `api.anichopar.uz` → `/api` ni `web` ga proxy qiladi |
+| `nginx` | Uch hostni bitta konteynerda beradi: `anichopar.uz` → SPA + `/static` + `/media` + `/django-admin` (`/admin` va `/api` **404**), `admin.anichopar.uz` → React panel o'z boshiga document sifatida, `api.anichopar.uz` → `/api` ni `web` ga proxy qiladi. **TLS shu yerda**: 80 va 443 bir xil kontent beradi, sertifikat `/etc/letsencrypt` dan (certbot) olinadi |
 
 ## 1. Sozlash
 
@@ -39,11 +39,33 @@ Administrator hisobini yaratish:
 docker compose exec web python manage.py createsuperuser
 ```
 
-## 3. Domen va HTTPS
+## 3. Domen, sertifikat va HTTPS
 
-Hozircha TLS **Cloudflare'da** (SSL mode **Flexible**: edge → origin oddiy
-http/80) tugatiladi; nginx kelgan `X-Forwarded-Proto` ni Django'ga o'tkazadi.
-Kerakli DNS recordlari (barchasi bir xil serverga, proxy yoqilgan holda):
+TLS **nginx konteynerida** tugatiladi: `certbot` host'da bitta sertifikat oladi
+(barcha besh nom uchun), compose esa `/etc/letsencrypt` ni read-only konteynerga
+ulaydi va `frontend/nginx.conf` uni 443 da ishlatadi. Shuning uchun `docker
+compose up` dan **oldin** ikki shart bajarilishi kerak:
+
+1. **Sertifikat olingan bo'lishi** (yo'q bo'lsa nginx konteyneri ishga
+   tushmaydi — bu ataylab qilingan):
+
+   ```bash
+   sudo certbot --nginx -d anichopar.uz -d www.anichopar.uz -d admin.anichopar.uz -d bot.anichopar.uz -d api.anichopar.uz
+   ```
+
+2. **Host nginx 80/443 ni egallamasligi** — portlar konteynerga tegishli.
+   Certbot `--nginx` installer'i bilan yozgan konfiguratsiyasi keyin aralashmasligi
+   uchun host xizmatini o'chirib qo'ying (portni faqat shu bilan bo'shatish
+   mumkin, `ai_agent` sudo'siz `systemctl` ishlatolmaydi):
+
+   ```bash
+   sudo systemctl disable --now nginx
+   ```
+
+   Host nginx ishlab turgan bo'lsa, konteyner `port is already in use` bilan
+   tinmaydi va sayt umuman ochilmaydi.
+
+DNS recordlari (barchasi bir xil serverga, Cloudflare proxy **yoqilgan** holda):
 
 ```text
 anichopar.uz   A  37.60.237.72
@@ -54,14 +76,53 @@ api            A  37.60.237.72   # REST API: api.anichopar.uz/api/...
 ```
 
 `api` recordi shart: SPA `//api.anichopar.uz/api` ga chaqiradi va
-`anichopar.uz/api` nginx'da 404. TLS'ni origin'ga ko'chirmoqchi bo'lsangiz —
-`frontend/nginx.conf` oxiridagi HTTPS bloki izohiga qarang.
+`anichopar.uz/api` nginx'da 404.
+
+Edge'ning SSL mode'i ikkala holatda ham ishlaydi:
+
+- **Flexible** (edge → origin oddiy http:80): konteyner 80-urinishga ham 443-dagi
+  kontentni beradi va **hech qayerga redirect qilmaydi**. Redirect shu mode'da
+  cheksiz loopga aylanadi: https so'rov edge orqali yana origin:80 ga tushadi va
+  `301 https://…` ni qayta oladi (sayt ochilmaydigan holat — aynan shu bo'lib
+  turgan edi).
+- **Full / Full (strict)** (edge → origin https:443): shu sertifikat
+  ko'rsatiladi, Strict'da ham Let's Encrypt zanjiri to'g'ri keladi. Origin TLS'ni
+  haqiqatan ishlatmoqchi bo'lsangiz shu mode'ga o'ting.
 
 Har qanday proxy holatida `X-Forwarded-Proto` uzatiladi; Django uni
 `SECURE_PROXY_SSL_HEADER` orqali o'qiydi, shuning uchun `/django-admin/` CSRF
-tekshiruvi va absolute havolalar to'g'ri sxemada bo'lib qoladi.
+tekshiruvi va absolute havolalar to'g'ri sxemada bo'lib qoladi. To'g'ridan-to'g'ri
+443 ga urilgan so'rovda header bo'lmaydi, lekin `frontend/nginx.conf` dagi
+`$anichopar_proto` xaritasi `$scheme` ga tushadi — yana https.
 
-Port band bo'lsa `.env` da `HTTP_PORT=8080` qilib o'zgartiring.
+Port band bo'lsa `.env` da `HTTP_PORT` / `HTTPS_PORT` ni o'zgartiring
+(Cloudflare'da record ham shu portga qarab ishlaydi — odatda 80/443 ni
+o'zgartirmang).
+
+### Sertifikatni yangilash
+
+Renewal host'dagi `certbot.timer` tomonidan avtomatik bajariladi
+(~30 kun qolganda), lekin `nginx` authenticator o'rniga **webroot** ishlatiladi —
+host nginx o'chirilgani uchun challenge'ni u portda bera olmaydi. Bu ikki fayl
+konfiguratsiyada (root, bir marta qo'yiladi):
+
+```text
+/etc/letsencrypt/renewal/anichopar.uz.conf
+    [renewalparams]
+    authenticator = webroot
+    webroot_path = /home/ai_agent/anime-bot/certbot-www
+
+/etc/letsencrypt/renewal-hooks/deploy/reload-anichopar-nginx   # 0755
+    # sertifikat yangilangandan keyin konteyner nginx'ini qayta yuklaydi
+```
+
+`certbot-www` xostda yaratiladi, compose uni `/var/www/certbot` ga read-only
+ulaydi va `/.well-known/acme-challenge/` shu yerdan o'qiladi (to'liq oqim:
+edge → origin:80 → konteyner → token fayli). Tekshirish:
+
+```bash
+sudo certbot renew --dry-run
+```
 
 ## 4. Yangilash va zaxiralash
 
@@ -89,12 +150,22 @@ curl -I -H 'Host: api.anichopar.uz' http://localhost/api/schema/  # 200, DRF sxe
 curl -I http://localhost/api/schema/      # 404 — API faqat api.anichopar.uz da
 curl -I http://localhost/static/admin/css/base.css   # nginx beradi, DEBUG=false da ham
 curl -I http://localhost/media/tlhxlgfj   # 200, SPA media sahifasi (deep link)
+
+# TLS konteynerda: 80 ham, 443 ham bir xil kontent beradi (80 da redirect
+# bo'lmasligi kerak — Flexible'da u loopga aylanadi)
+curl -skI -H 'Host: anichopar.uz' https://localhost/                  # 200
+curl -skI -H 'Host: api.anichopar.uz' https://localhost/api/schema/   # 200
+curl -sI  -H 'Host: anichopar.uz' http://localhost/                   # 200 (redirect yo'q)
+curl -svo /dev/null -H 'Host: anichopar.uz' https://localhost/ 2>&1 | grep -E 'subject:|expire date'   # Let's Encrypt
+
 docker compose exec web python manage.py check --deploy
 
 # tashqaridan (DNS+Cloudflare sozlangan bo'lsa):
 curl -sI https://anichopar.uz/            # 200
 curl -sI https://admin.anichopar.uz/login # 200
 curl -s  https://api.anichopar.uz/api/schema/ | head -c 200
+# oldin: infinite 301 loop edi (origin:80 redirect qilardi, edge esa Flexible
+# bilan yana origin:80 ga kelardi) — endi 200 bo'lishi shart
 ```
 
 ## Eslatmalar
@@ -131,10 +202,10 @@ curl -s  https://api.anichopar.uz/api/schema/ | head -c 200
   haqiqiy mijoz bo'yicha ishlaydi (`CF-Connecting-IP` map'i), aks holda butun
   sayt bitta edge IP bilan umumiy byudjetda bo'lib qolardi. Sarlavha/CSP
   nginx'da `location = /index.html` da (SPA yo'llari `try_files` orqali shu
-  yerga kiradi), `connect-src` da API hosti ham bor. HTTPS'ni origin'ga
-  ko'chirganda `frontend/nginx.conf` oxiridagi HTTPS blokini, `DJANGO_SECURE_*`
-  o'zgaruvchilarini esa `.env.production.example` dagi izohlarga qarab
-  sozlang.
+  yerga kiradi), `connect-src` da API hosti ham bor (http varianti ham qoldirilgan —
+  edge Flexible'da yoki to'g'ridan-to'g'ri kirilganda ham ishlaydi). TLS konteynerda
+  (3-bosqich qarang); `DJANGO_SECURE_*` o'zgaruvchilarini esa faqat edge Full'ga
+  o'tganda `.env.production.example` dagi izohlarga qarab yoqing.
 - **Oylik o'yin mukofoti** uchun cron qo'ying (har oyining 1-si, 06:00 da oldingi
   oy g'olibini e'lon qiladi; bir xil oy uchun ikki marta ishga tushirsa ham
   mukofot takrorlanmaydi):
@@ -213,9 +284,12 @@ curl -s  https://api.anichopar.uz/api/schema/ | head -c 200
   Eslatma yuborilmasa (masalan, Telegram xatosi) yozuv belgilanmaydi va keyingi
   ishga tushirishda qayta uriniladi. Eslatma matni va muddatlari
   `users/reminders.py` da (`REMIND_BEFORE_DAYS`, `REMIND_AFTER_DAYS`).
-- `manage.py check --deploy` qolgan ogohlantirishlar HTTPS yoqilgandan keyin
-  hal qilinadi (shuning uchun kodda standart holicha qoldirilgan):
-  `SECURE_SSL_REDIRECT=True`, `SECURE_HSTS_SECONDS=31536000`
-  (+`SECURE_HSTS_INCLUDE_SUBDOMAINS`), `SESSION_COOKIE_SECURE=True`,
-  `CSRF_COOKIE_SECURE=True`. HSTS'ni ehtiyotkorlik bilan yoqing — uni bekor
-  qilish qiyin.
+- `manage.py check --deploy` qolgan ogohlantirishlar kodda standart holicha
+  qoldirilgan; `.env` dagi `DJANGO_SECURE_*` bilan yoqiladi — lekin faqat
+  **har bir** tashrif https orqali kelganda: `DJANGO_SECURE_SSL_REDIRECT=true`,
+  `DJANGO_SECURE_COOKIES=true`, `DJANGO_SECURE_HSTS_SECONDS=31536000`
+  (+`SECURE_HSTS_INCLUDE_SUBDOMAINS` avtomat). Cloudflare **Flexible** ishlab
+  turganda SSL redirect loopga, Secure cookie esa http:// orqali kirgan
+  foydalanuvchining `/django-admin/` kirishini buzadi. HSTS'ni eng oxirida
+  yoqing — uni bekor qilish qiyin (edge'da o'chirsangiz ham brauzer eslab
+  qoladi).
