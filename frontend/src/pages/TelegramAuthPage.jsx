@@ -46,7 +46,7 @@ function TelegramAuthPage() {
         <Text className="eyebrow">ANICHOPAR / TELEGRAM MINI APP</Text>
         <Title order={1}>Telegram bilan davom eting</Title>
         <Text c="dimmed" size="sm" mt="sm" mb="xl">
-          Mavjud akkauntni bog'lash uchun email va uning parolini kiriting. Email bo'lmasa, email maydonini bo'sh qoldirib yangi profil parolini belgilang.
+          Email va parolingizni kiriting. Akkauntingiz bo'lmasa, yangi akkaunt avtomatik yaratiladi: username sifatida Telegram username'ingiz ishlatiladi, u bo'lmasa — email.
         </Text>
         {!initData && <Alert color="yellow" title="Telegram Mini App ichida oching" mb="md">
           Telegram tasdiqlash ma'lumoti topilmadi. Bu sahifani botingizdagi Mini App tugmasi orqali oching.
@@ -55,13 +55,13 @@ function TelegramAuthPage() {
         <form onSubmit={handleSubmit}>
           <Stack gap="md">
             <TextInput label="Email" placeholder="siz@example.com" type="email" autoComplete="email"
-              description="Ixtiyoriy. Mavjud akkauntni topish va unga ulash uchun."
+              description="Mavjud akkauntni topish uchun. Akkaunt bo'lmasa shu email bilan yangi akkaunt ochiladi."
               value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
             <PasswordInput label="Parol" placeholder="Akkaunt paroli yoki yangi parol"
               autoComplete="current-password" value={password}
               onChange={(event) => setPassword(event.currentTarget.value)} required />
             <Button type="submit" size="md" fullWidth loading={submitting} disabled={!initData}>
-              Telegram akkauntini ulash
+              Kirish yoki ro'yxatdan o'tish
             </Button>
           </Stack>
         </form>

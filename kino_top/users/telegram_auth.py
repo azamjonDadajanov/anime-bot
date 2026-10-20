@@ -26,6 +26,30 @@ def _is_temporary_auth_user(auth_user, telegram_id) -> bool:
 	)
 
 
+def _preferred_username(user_data, *, email, fallback) -> str:
+	"""Telegram username first, then the email, then ``fallback``."""
+	username = str(user_data.get("username") or "").strip().lstrip("@")
+	if not username:
+		username = (email or "").strip()
+	return username or fallback
+
+
+def _unique_username(user_model, base_username, *, exclude_pk=None) -> str:
+	"""Append ``_2``, ``_3``… while ``base_username`` is already taken."""
+	max_length = user_model._meta.get_field("username").max_length or 150
+	base_username = str(base_username)[:max_length]
+	candidates = user_model.objects.all()
+	if exclude_pk is not None:
+		candidates = candidates.exclude(pk=exclude_pk)
+	username = base_username
+	suffix = 1
+	while candidates.filter(username=username).exists():
+		suffix += 1
+		suffix_text = f"_{suffix}"
+		username = f"{base_username[: max_length - len(suffix_text)]}{suffix_text}"
+	return username
+
+
 def _verify_payload(fields, *, mini_app):
 	bot_token = settings.TELEGRAM_BOT_TOKEN
 	if not bot_token:
@@ -187,15 +211,28 @@ def link_mini_app_user(user_data, *, email, password):
 			except DjangoValidationError as exc:
 				raise ValidationError({"password": exc.messages}) from exc
 			auth_user.set_password(password)
-			auth_user.save(update_fields=["email", "password"])
+			preferred_username = _preferred_username(
+				user_data,
+				email=normalized_email,
+				fallback=auth_user.username,
+			)
+			if preferred_username != auth_user.username:
+				auth_user.username = _unique_username(
+					user_model,
+					preferred_username,
+					exclude_pk=auth_user.pk,
+				)
+			auth_user.save(update_fields=["email", "password", "username"])
 		else:
-			base_username = f"telegram_{telegram_id}"
-			username = base_username
-			suffix = 1
-			while user_model.objects.filter(username=username).exists():
-				suffix += 1
-				username = f"{base_username}_{suffix}"
-			auth_user = user_model(username=username, email=normalized_email)
+			base_username = _preferred_username(
+				user_data,
+				email=normalized_email,
+				fallback=f"telegram_{telegram_id}",
+			)
+			auth_user = user_model(
+				username=_unique_username(user_model, base_username),
+				email=normalized_email,
+			)
 			try:
 				password_validation.validate_password(password, user=auth_user)
 			except DjangoValidationError as exc:

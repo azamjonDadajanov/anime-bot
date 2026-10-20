@@ -102,6 +102,7 @@ class AuthenticationApiTests(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.data["user"]["telegram_id"], 987654321)
+		self.assertEqual(response.data["user"]["username"], "mini_user")
 		self.assertEqual(AccessToken(response.data["access"])["telegram_id"], 987654321)
 		profile = TelegramUser.objects.get(telegram_id=987654321)
 		self.assertEqual(
@@ -109,6 +110,58 @@ class AuthenticationApiTests(TestCase):
 			AccessToken(response.data["access"])["user_id"],
 		)
 		self.assertTrue(profile.auth_user.check_password("mini-secure-password-4829"))
+
+	def test_mini_app_uses_email_as_username_when_telegram_has_none(self):
+		init_data = sign_mini_app_data({"id": 987654330, "first_name": "NoName"})
+
+		response = self.client.post(
+			"/api/auth/telegram/mini-app/",
+			{
+				"init_data": init_data,
+				"email": "noname@example.com",
+				"password": "mini-secure-password-4829",
+			},
+			format="json",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data["user"]["username"], "noname@example.com")
+		self.assertEqual(response.data["user"]["email"], "noname@example.com")
+
+	def test_mini_app_suffixes_a_username_that_already_exists(self):
+		get_user_model().objects.create_user(username="taken_user", password="secret-4829")
+		init_data = sign_mini_app_data({"id": 987654331, "username": "taken_user"})
+
+		response = self.client.post(
+			"/api/auth/telegram/mini-app/",
+			{
+				"init_data": init_data,
+				"email": "suffix@example.com",
+				"password": "mini-secure-password-4829",
+			},
+			format="json",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data["user"]["username"], "taken_user_2")
+
+	def test_mini_app_claiming_a_bot_created_account_renames_it_to_telegram_username(self):
+		legacy_profile = get_or_create_telegram_user({"id": 987654332, "username": "old_name"})
+
+		response = self.client.post(
+			"/api/auth/telegram/mini-app/",
+			{
+				"init_data": sign_mini_app_data({"id": 987654332, "username": "renamed_user"}),
+				"email": "renamed@example.com",
+				"password": "mini-secure-password-4829",
+			},
+			format="json",
+		)
+
+		self.assertEqual(response.status_code, 200)
+		legacy_profile.refresh_from_db()
+		self.assertEqual(legacy_profile.auth_user.username, "renamed_user")
+		self.assertTrue(legacy_profile.auth_user.check_password("mini-secure-password-4829"))
 
 	def test_mini_app_links_existing_account_after_password_confirmation(self):
 		existing_user = get_user_model().objects.create_user(
