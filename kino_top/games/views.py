@@ -12,6 +12,8 @@ Routes (mounted under ``/api/game/``):
 from __future__ import annotations
 
 from django.utils import timezone
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -19,7 +21,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import services
-from .serializers import LeaderboardSerializer, QuizStartSerializer, QuizSubmitSerializer
+from .serializers import (
+	GameStatusSerializer,
+	GameTitlesSerializer,
+	LeaderboardResultSerializer,
+	LeaderboardSerializer,
+	QuizStartResponseSerializer,
+	QuizStartSerializer,
+	QuizSubmitResponseSerializer,
+	QuizSubmitSerializer,
+)
 
 
 class GameErrorMixin:
@@ -42,6 +53,7 @@ class GameErrorMixin:
 		)
 
 
+@extend_schema(responses=GameStatusSerializer, tags=["Games"])
 class GameStatusView(APIView, GameErrorMixin):
 	permission_classes = [IsAuthenticated]
 
@@ -49,6 +61,15 @@ class GameStatusView(APIView, GameErrorMixin):
 		return Response(services.user_status(request.user))
 
 
+@extend_schema(
+	responses=GameTitlesSerializer,
+	parameters=[
+		OpenApiParameter(
+			name="q", type=OpenApiTypes.STR, required=False, description="Title filter"
+		)
+	],
+	tags=["Games"],
+)
 class GameTitlesView(APIView, GameErrorMixin):
 	permission_classes = [IsAuthenticated]
 
@@ -57,6 +78,11 @@ class GameTitlesView(APIView, GameErrorMixin):
 		return Response(services.eligible_titles(request.user, query))
 
 
+@extend_schema(
+	request=QuizStartSerializer,
+	responses={201: QuizStartResponseSerializer},
+	tags=["Games"],
+)
 class QuizStartView(APIView, GameErrorMixin):
 	permission_classes = [IsAuthenticated]
 
@@ -72,6 +98,9 @@ class QuizStartView(APIView, GameErrorMixin):
 		return Response(payload, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+	request=QuizSubmitSerializer, responses=QuizSubmitResponseSerializer, tags=["Games"]
+)
 class QuizSubmitView(APIView, GameErrorMixin):
 	permission_classes = [IsAuthenticated]
 
@@ -91,6 +120,18 @@ class QuizSubmitView(APIView, GameErrorMixin):
 		return Response(payload)
 
 
+@extend_schema(
+	responses=LeaderboardResultSerializer,
+	parameters=[
+		OpenApiParameter(
+			name="limit",
+			type=OpenApiTypes.INT,
+			required=False,
+			description="How many players to return (1-200).",
+		)
+	],
+	tags=["Games"],
+)
 class LeaderboardView(APIView, GameErrorMixin):
 	permission_classes = [IsAuthenticated]
 
