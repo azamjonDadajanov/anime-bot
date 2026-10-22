@@ -1,32 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Group,
-  Loader,
-  Progress,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core'
+import { Alert, Button, Loader } from '@mantine/core'
+import { Link } from 'react-router-dom'
 import { gameApi } from '../apis/api'
-
-const typeLabels = {
-  anime: 'Anime',
-  series: 'Serial',
-  movie: 'Kino',
-  manga: 'Manga',
-}
+import SectionHead from '../components/SectionHead'
+import { typeLabel } from '../mediaMeta'
 
 function errorText(error) {
   const data = error.response?.data
-  if (!data) return 'Server bilan bog\'lanishda xatolik yuz berdi.'
+  if (!data) return "Server bilan bog'lanishda xatolik yuz berdi."
   if (typeof data.detail === 'string') return data.detail
   return Object.values(data).flat().map(String).join(' ')
 }
+
+const CHOICE_KEYS = ['A', 'B', 'C', 'D', 'E']
 
 export function AnimeGamePage() {
   const [status, setStatus] = useState(null)
@@ -73,8 +59,7 @@ export function AnimeGamePage() {
         startedAtRef.current = Date.now()
       })
       .catch((requestError) => {
-        const message = errorText(requestError)
-        setError(message)
+        setError(errorText(requestError))
         loadAll()
       })
   }
@@ -122,7 +107,7 @@ export function AnimeGamePage() {
   if (loading) {
     return (
       <main className="dashboard-page">
-        <div className="page-loader"><Loader /></div>
+        <div className="page-loader"><Loader size="sm" /></div>
       </main>
     )
   }
@@ -134,38 +119,43 @@ export function AnimeGamePage() {
 
     return (
       <main className="dashboard-page">
-        <Stack gap="lg" maw={720} mx="auto">
-          <div>
-            <Text className="eyebrow">O'YIN · {quiz.title.title}</Text>
-            <Title order={1} className="home-hero-title">
-              Savol {current + 1} / {total}
-            </Title>
+        <div className="quiz-shell">
+          <div className="quiz-head">
+            <span className="eyebrow">O&apos;yin · {quiz.title.title}</span>
+            <h1>
+              Savol {current + 1} <span style={{ opacity: 0.4 }}>/ {total}</span>
+            </h1>
+            <div className="quiz-progress">
+              <span className="count">{answered} / {total} javob</span>
+              <div className="bar">
+                <span style={{ width: `${((current + 1) / total) * 100}%` }} />
+              </div>
+            </div>
           </div>
 
-          <Progress value={((current + 1) / total) * 100} size="lg" radius="xl" />
-
-          <Card withBorder padding="xl" radius="md">
-            <Text fw={600} size="lg" mb="md">{question.text}</Text>
-            <Stack gap="sm">
+          <div className="quiz-card">
+            <p className="quiz-question">{question.text}</p>
+            <div className="quiz-choices">
               {question.choices.map((choice, index) => (
-                <Button
+                <button
                   key={choice + String(index)}
-                  variant={answers[current] === index ? 'filled' : 'outline'}
-                  justify="flex-start"
+                  className={`quiz-choice${answers[current] === index ? ' is-selected' : ''}`}
+                  type="button"
+                  aria-pressed={answers[current] === index}
                   onClick={() => selectAnswer(index)}
-                  fullWidth
                 >
+                  <span className="key" aria-hidden="true">{CHOICE_KEYS[index] || index + 1}</span>
                   {choice}
-                </Button>
+                </button>
               ))}
-            </Stack>
-          </Card>
+            </div>
+          </div>
 
-          <Group justify="space-between">
+          <div className="quiz-nav">
             <Button variant="default" disabled={current === 0} onClick={goPrev}>
               Orqaga
             </Button>
-            <Text size="sm" c="dimmed">{answered} / {total} javob berildi</Text>
+            <span className="quiz-note">Javoblar keyin ko&apos;rsatilmaydi — bu yagona urinish.</span>
             {current < total - 1 ? (
               <Button disabled={answers[current] === null} onClick={goNext}>
                 Keyingi
@@ -180,131 +170,160 @@ export function AnimeGamePage() {
                 Yakunlash
               </Button>
             )}
-          </Group>
-
-          <Text size="xs" c="dimmed">
-            Javoblar keyin ko'rsatilmaydi — bu yagona urinish.
-          </Text>
-        </Stack>
+          </div>
+        </div>
       </main>
     )
   }
 
   return (
     <main className="dashboard-page">
-      <section className="home-hero">
-        <div className="home-hero-copy">
-          <Text className="eyebrow">ANIME REYTING O'YINI</Text>
-          <Title order={1} className="home-hero-title">O'yin</Title>
-          <Text c="dimmed" className="home-hero-text">
-            Botda ko'rgan animearingiz bo'yicha savollarga javob bering, ball to'plang va
-            reytingda yuqoriga chiqing. O'tgan animelar uchun rozilik nishoni olasiz.
-          </Text>
-          <ul className="home-hero-pills">
-            <li><i className="bi bi-trophy" aria-hidden="true" /> {status?.points ?? 0} ball</li>
-            <li><i className="bi bi-star" aria-hidden="true" /> {status?.name ?? '—'} (Lv.{status?.level ?? 1})</li>
-            <li><i className="bi bi-patch-check" aria-hidden="true" /> {status?.verified_count ?? 0} tasdiqlangan</li>
-            <li><i className="bi bi-ui-checks" aria-hidden="true" /> {status?.attempts ?? 0} urinish</li>
-          </ul>
+      <section className="game-hero">
+        <div className="game-copy">
+          <span className="eyebrow">Anime reyting o&apos;yini</span>
+          <h1 className="game-title">
+            Bilimingizni <em>sinang.</em>
+          </h1>
+          <p className="game-text">
+            Botda ko&apos;rgan animelaringiz bo&apos;yicha savollarga javob
+            bering, ball to&apos;plang va reytingda yuqoriga chiqing. O&apos;tgan
+            animelar uchun tasdiq nishoni olasiz.
+          </p>
+        </div>
+        <div className="game-stats">
+          <div className="game-stat">
+            <b>{status?.points ?? 0}</b>
+            <span>Ball</span>
+          </div>
+          <div className="game-stat">
+            <b>Lv.{status?.level ?? 1}</b>
+            <span>{status?.name ?? "O'yinchi"}</span>
+          </div>
+          <div className="game-stat">
+            <b>{status?.verified_count ?? 0}</b>
+            <span>Tasdiqlangan</span>
+          </div>
+          <div className="game-stat">
+            <b>{status?.attempts ?? 0}</b>
+            <span>Urinish</span>
+          </div>
         </div>
       </section>
 
-      {error && <Alert color="red" mb="lg">{error}</Alert>}
-      {notice && <Alert color="green" mb="lg" onClose={() => setNotice('')} withCloseButton>{notice}</Alert>}
+      {error && <Alert color="red" mb="md">{error}</Alert>}
+      {notice && <Alert color="green" mb="md" onClose={() => setNotice('')} withCloseButton>{notice}</Alert>}
 
       {result && (
-        <Alert color={result.verified ? 'green' : 'orange'} mb="lg">
-          <Text fw={700}>
-            {result.correct} / {result.total} to'g'ri javob
+        <Alert color={result.verified ? 'green' : 'orange'} mb="md">
+          <b>
+            {result.correct} / {result.total} to&apos;g&apos;ri javob
             {result.verified ? ' — tasdiqlandi!' : " — o'tib bo'lmadi."}
-          </Text>
-          <Text size="sm">
-            +{result.points_awarded} ball. Javoblar ko'rsatilmaydi.
-          </Text>
+          </b>
+          <div>+{result.points_awarded} ball. Javoblar ko&apos;rsatilmaydi.</div>
         </Alert>
       )}
 
-      <section style={{ marginTop: '2rem' }}>
-        <Text component="h2" className="rail-title" mb="md">Mavjud animelar</Text>
+      <section className="game-section">
+        <SectionHead
+          index="01"
+          title="Mavjud animelar"
+          jp="挑戦"
+          description="Botda kamida bir necha qismi ochilgan animelar o'yin uchun tayyor."
+        />
         {!titles?.unlocked?.length ? (
           <div className="empty-state">
             <i className="bi bi-lock" aria-hidden="true" />
-            <Text fw={600}>Hozircha o'yin uchun anime yo'q</Text>
-            <Text size="sm" c="dimmed">
-              Botda kamida {titles?.min_parts ?? 3} ta qism ochilgan animelar shu yerda paydo bo'ladi.
-            </Text>
+            <h2>Hozircha o&apos;yin uchun anime yo&apos;q</h2>
+            <p>
+              Botda kamida {titles?.min_parts ?? 3} ta qism ochilgan animelar shu
+              yerda paydo bo&apos;ladi.
+            </p>
           </div>
         ) : (
-          <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
+          <div className="game-grid">
             {titles.unlocked.map((item) => (
-              <Card key={item.id} withBorder padding="lg" radius="md">
-                <Group justify="space-between" mb="xs">
-                  <Text fw={600} lineClamp={1}>{item.title}</Text>
-                  <Badge size="sm" variant="light">{typeLabels[item.type] || item.type}</Badge>
-                </Group>
-                <Text size="sm" c="dimmed" mb="md">
+              <article className="game-card" key={item.id}>
+                <div className="game-card-top">
+                  <h3>{item.title}</h3>
+                  <span className="pill">{typeLabel(item)}</span>
+                </div>
+                <span className="game-card-meta">
                   {item.points} ball · {item.bot_views} marta ochilgan
                   {item.quiz_size ? ` · ${item.quiz_size} savol` : ''}
-                </Text>
+                </span>
                 <Button
                   fullWidth
+                  variant={item.ready ? 'filled' : 'default'}
                   disabled={!item.ready}
                   onClick={() => startQuiz(item.id)}
                 >
-                  {item.ready ? 'Boshlash' : `Savollar tayyor emas (${item.questions}/${item.quiz_size || 5})`}
+                  {item.ready
+                    ? 'Boshlash'
+                    : `Savollar tayyor emas (${item.questions}/${item.quiz_size || 5})`}
                 </Button>
-              </Card>
+              </article>
             ))}
-          </SimpleGrid>
+          </div>
         )}
       </section>
 
       {titles?.verified?.length > 0 && (
-        <section style={{ marginTop: '2.5rem' }}>
-          <Text component="h2" className="rail-title" mb="md">Tasdiqlangan animelar</Text>
-          <SimpleGrid cols={{ base: 2, sm: 3, md: 5 }} spacing="sm">
+        <section className="game-section">
+          <SectionHead
+            index="02"
+            title="Tasdiqlangan animelar"
+            jp="認定"
+            description="Siz yutgan va tasdiqlangan hikoyalar."
+          />
+          <div className="verified-grid">
             {titles.verified.map((item) => (
-              <Card key={item.id} withBorder padding="sm" radius="md">
-                <Text size="sm" fw={600} lineClamp={1}>{item.title}</Text>
-                <Badge size="xs" color="green" mt={4} variant="light">
-                  +{item.points} ball
-                </Badge>
-              </Card>
+              <div className="verified-card" key={item.id}>
+                <b>{item.title}</b>
+                <span>+{item.points} ball</span>
+              </div>
             ))}
-          </SimpleGrid>
+          </div>
         </section>
       )}
 
       {leaderboard?.results?.length > 0 && (
-        <section style={{ marginTop: '2.5rem' }}>
-          <Group justify="space-between" mb="md">
-            <Text component="h2" className="rail-title">Reyting jadvali</Text>
-            {leaderboard.own && (
-              <Text size="sm" c="dimmed">
-                Siz: {leaderboard.own.rank}-o'rin · {leaderboard.own.points} ball
-              </Text>
-            )}
-          </Group>
-          <Card withBorder padding="md" radius="md">
-            <Stack gap="xs">
-              {leaderboard.results.map((row) => (
-                <Group key={row.user_id} justify="space-between">
-                  <Group gap="xs">
-                    <Badge size="sm" variant="light" color={row.rank <= 3 ? 'yellow' : 'gray'}>
-                      #{row.rank}
-                    </Badge>
-                    <Text size="sm">{row.name}</Text>
-                  </Group>
-                  <Group gap="xs">
-                    <Text size="sm" c="dimmed">{row.verified} tasdiq</Text>
-                    <Text size="sm" fw={600}>{row.points} ball</Text>
-                  </Group>
-                </Group>
-              ))}
-            </Stack>
-          </Card>
+        <section className="game-section">
+          <SectionHead
+            index="03"
+            title="Reyting jadvali"
+            jp="順位"
+            href="/rating"
+            linkLabel="To'liq jadval"
+            description={leaderboard.own
+              ? `Siz: ${leaderboard.own.rank}-o'rin · ${leaderboard.own.points} ball`
+              : undefined}
+          />
+          <div className="leaderboard">
+            <div className="leaderboard-head" aria-hidden="true">
+              <span>#</span>
+              <span>O&apos;yinchi</span>
+              <span style={{ textAlign: 'right' }}>Tasdiq</span>
+              <span style={{ textAlign: 'right' }}>Ball</span>
+            </div>
+            {leaderboard.results.slice(0, 8).map((row) => (
+              <div className="leaderboard-row" key={row.user_id}>
+                <span className={`lb-rank${row.rank === 1 ? ' is-top' : ''}${row.rank > 1 && row.rank <= 3 ? ' is-second' : ''}`}>
+                  {row.rank}
+                </span>
+                <span className="lb-name">{row.name}</span>
+                <span className="lb-cell">{row.verified}</span>
+                <span className="lb-cell lb-points">{row.points}</span>
+              </div>
+            ))}
+          </div>
         </section>
       )}
+
+      <div className="game-section">
+        <Link className="section-link" to="/explore">
+          Katalogga qaytish <i className="bi bi-arrow-right" aria-hidden="true" />
+        </Link>
+      </div>
     </main>
   )
 }

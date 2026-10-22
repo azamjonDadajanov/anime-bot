@@ -8,6 +8,7 @@ from aiogram.enums import ChatType
 from . import (
 	ai_assistant,
 	catalog,
+	comments,
 	coupons,
 	delivery,
 	fallback,
@@ -42,6 +43,9 @@ user_router.include_router(support.router)
 # plain search router: that one also reacts to bare messages (a four-digit code
 # typed while the assistant prompt is open has to be a question, not a lookup).
 user_router.include_router(ai_assistant.router)
+# Izohlar work the same way: while a comment is being written, the text the
+# user sends belongs to the FSM, not to the search box.
+user_router.include_router(comments.router)
 user_router.include_router(search.router)
 user_router.include_router(delivery.router)
 user_router.include_router(fallback.router)

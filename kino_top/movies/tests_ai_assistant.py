@@ -291,6 +291,32 @@ class AssistantApiTests(AssistantTestCase):
 		self.assertEqual(response.status_code, 503)
 		self.assertEqual(response.data["code"], "ai_unavailable")
 
+	def test_the_user_gets_the_same_message_as_everybody_else(self):
+		"""The reason is for the operator, not for the subscriber."""
+		self.client.force_authenticate(self.make_subscriber())
+
+		with override_settings(**NO_PROVIDER):
+			response = self.client.post(self.url, {"query": "nima bor"}, format="json")
+
+		self.assertEqual(response.data["detail"], ai_assistant.UNAVAILABLE_TEXT)
+		self.assertNotIn("reason", response.data)
+
+	def test_the_administrator_gets_the_reason(self):
+		"""A dead model and a spent quota need different fixes."""
+		admin = self.make_subscriber(username="root-ai")
+		admin.is_staff = True
+		admin.is_superuser = True
+		admin.save(update_fields=["is_staff", "is_superuser"])
+		admin.refresh_from_db()
+		self.client.force_authenticate(admin)
+
+		with override_settings(**NO_PROVIDER):
+			response = self.client.post(self.url, {"query": "nima bor"}, format="json")
+
+		self.assertEqual(response.status_code, 503)
+		self.assertEqual(response.data["detail"], ai_assistant.UNAVAILABLE_TEXT)
+		self.assertTrue(response.data["reason"])
+
 	def test_the_taste_flag_registers_the_personal_tool(self):
 		user = self.make_subscriber()
 		profile = TelegramUser.objects.create(telegram_id=111222333, auth_user=user)
@@ -330,6 +356,60 @@ class AssistantApiTests(AssistantTestCase):
 		messages = completions.call_args_list[0].args[0]
 		self.assertEqual(messages[1], {"role": "user", "content": "qo'rqinchli anime ayt"})
 		self.assertEqual(messages[2], {"role": "assistant", "content": "Mana bir nechta."})
+
+	# ------------------------------------------------------- the action card
+	def test_a_proposed_action_rides_back_with_the_answer(self):
+		title = self.make_title("Qorong'i O'rmon")
+		self.client.force_authenticate(self.make_subscriber())
+		completions = mock.Mock(
+			side_effect=[
+				tool_call(
+					"submit_action",
+					{
+						"amal": "write_comment",
+						"qiymatlar": {"title_id": title.pk, "body": "Zor anime edi."},
+					},
+				),
+				say("Izoh tayyor — tasdiqlang."),
+			]
+		)
+
+		with mock.patch("movies.llm.chat_completion", completions):
+			response = self.client.post(self.url, {"query": "izoh qoldir"}, format="json")
+
+		self.assertEqual(response.status_code, 200)
+		action = response.data["action"]
+		self.assertEqual(action["action"], "write_comment")
+		self.assertEqual(action["kind"], "confirm")
+		self.assertEqual(action["source"], "site")
+		self.assertTrue(action["token"])
+		body = next(field for field in action["fields"] if field["key"] == "body")
+		self.assertEqual(body["value"], "Zor anime edi.")
+
+	def test_a_plain_answer_carries_no_action(self):
+		self.client.force_authenticate(self.make_subscriber())
+		completions = mock.Mock(return_value=say("Javob."))
+
+		with mock.patch("movies.llm.chat_completion", completions):
+			response = self.client.post(self.url, {"query": "salom"}, format="json")
+
+		self.assertEqual(response.status_code, 200)
+		self.assertIsNone(response.data["action"])
+
+	def test_the_support_persona_never_offers_submit_action(self):
+		self.client.force_authenticate(self.make_subscriber())
+		completions = mock.Mock(return_value=say("Maslahat."))
+
+		with mock.patch("movies.llm.chat_completion", completions):
+			response = self.client.post(
+				self.url, {"query": "izoh qoldir", "support": True}, format="json"
+			)
+
+		self.assertEqual(response.status_code, 200)
+		offered = [
+			tool["function"]["name"] for tool in completions.call_args_list[0].kwargs["tools"]
+		]
+		self.assertNotIn("submit_action", offered)
 
 
 class _FakeResponse:
@@ -549,6 +629,41 @@ class AssistantProviderPayloadTests(TestCase):
 
 		offered = [tool["function"]["name"] for tool in payloads[0]["tools"]]
 		self.assertNotIn("personal_taste", offered)
+
+	def test_a_provider_without_functions_still_answers(self):
+		"""A model that cannot call the catalogue is asked without it.
+
+		The question still goes out - the user gets words instead of silence -
+		and the model is told that the catalogue is out of reach, so it does
+		not invent titles.
+		"""
+		MediaTitle.objects.create(type=MediaTitle.MediaType.ANIME, title="Yolg'an titul")
+		AIProvider.objects.create(
+			name="Matnli",
+			kind=AIProvider.Kind.CUSTOM,
+			api_key="test-key-4829",
+			model="test-model",
+			base_url="https://provider.test/v1",
+			supports_tools=False,
+		)
+		payloads = []
+
+		def fake_urlopen(request, timeout=None):
+			payloads.append(json.loads(request.data.decode("utf-8")))
+			return _FakeResponse({"choices": [{"message": {"content": "Salom."}}]})
+
+		with mock.patch("movies.llm.urllib.request.urlopen", fake_urlopen):
+			result = ai_assistant.answer("salom")
+
+		self.assertTrue(result.used_llm)
+		self.assertEqual(result.answer, "Salom.")
+		# No functions were offered, and the model was warned about it.
+		self.assertNotIn("tools", payloads[0])
+		system = payloads[0]["messages"][0]["content"]
+		self.assertIn(llm.TEXT_ONLY_NOTE.strip(), system)
+		# Nothing was looked up, so nothing is claimed.
+		self.assertEqual(result.titles, ())
+		self.assertTrue(result.conversational)
 
 
 class AssistantCommandTests(TestCase):

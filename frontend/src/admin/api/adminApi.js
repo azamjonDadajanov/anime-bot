@@ -31,6 +31,18 @@ export const adminMediaApi = {
     const { data } = await api.get('/admin/media-stats/', { params })
     return data
   },
+  // «📢 E'lon qilish»: the preview is the exact message, then POST either posts
+  // it to the channel, fans it out to every bot user, or does both.
+  async announcePreview(slug, scope) {
+    const { data } = await api.get(`/admin/media/${encodeURIComponent(slug)}/announce/`, {
+      params: scope ? { scope } : {},
+    })
+    return data
+  },
+  async announce(slug, payload) {
+    const { data } = await api.post(`/admin/media/${encodeURIComponent(slug)}/announce/`, payload)
+    return data
+  },
   async parts(contentId, params = {}) {
     const { data } = await api.get('/parts/', { params: { ...params, content: contentId } })
     return data
@@ -311,6 +323,37 @@ export const adminGameApi = {
 export const adminLogApi = {
   async list(params = {}) {
     const { data } = await api.get('/admin/logs/', { params })
+    return data
+  },
+}
+
+// Moderation of the one comment table the site and the bot share. Deleting a
+// rating goes through the same panel: the server recomputes the title's
+// average when a score leaves.
+export const adminCommentsApi = {
+  async list(params = {}) {
+    const { data } = await api.get('/admin/comments/', { params })
+    return data
+  },
+  async remove(id) {
+    await api.delete(`/admin/comments/${id}/`)
+  },
+  async bulkDelete(ids) {
+    const { data } = await api.post('/admin/comments/bulk-delete/', { ids })
+    return data
+  },
+}
+
+export const adminRatingsApi = {
+  async list(params = {}) {
+    const { data } = await api.get('/admin/ratings/', { params })
+    return data
+  },
+  async remove(id) {
+    await api.delete(`/admin/ratings/${id}/`)
+  },
+  async bulkDelete(ids) {
+    const { data } = await api.post('/admin/ratings/bulk-delete/', { ids })
     return data
   },
 }

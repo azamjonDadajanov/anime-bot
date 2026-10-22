@@ -35,25 +35,8 @@ export function formatPrice(value) {
   return `${amount.toLocaleString('uz-UZ')} so'm`
 }
 
-export function formatDate(value) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString('uz-UZ', { day: '2-digit', month: 'long', year: 'numeric' })
-}
-
-export function formatDateTime(value) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleString('uz-UZ', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+// Barcha datelar dd.mm.YYYY ko'rinishida (frontend/src/utils/dates.js).
+export { formatDate, formatDateTime } from '../../utils/dates'
 
 // Covers are media files now; re-exported under the name the profile screens
 // already use.

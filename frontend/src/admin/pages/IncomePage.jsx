@@ -1,4 +1,4 @@
-import {
+﻿import {
   ActionIcon,
   Group,
   Loader,
@@ -12,6 +12,7 @@ import {
 } from '@mantine/core'
 import { useCallback, useEffect, useState } from 'react'
 import { adminIncomeApi } from '../api/adminApi'
+import { formatDate } from '../../utils/dates'
 import {
   ConfirmDialog,
   EmptyState,
@@ -28,7 +29,7 @@ import { currentYearMonth, formatError, inputHandler, numberHandler, selectHandl
 const SOURCE_OPTIONS = Object.entries(INCOME_SOURCE_LABELS).map(([value, label]) => ({ value, label }))
 const METHOD_OPTIONS = Object.entries(INCOME_METHOD_LABELS).map(([value, label]) => ({ value, label }))
 const PLAN_OPTIONS = [
-  { value: '', label: "—" },
+  { value: '', label: "â€”" },
   ...Object.entries(PLAN_LABELS).map(([value, label]) => ({ value, label })),
 ]
 
@@ -197,7 +198,7 @@ export default function IncomePage() {
               value={form.plan}
               onChange={selectHandler(setForm, 'plan')}
               allowDeselect
-              placeholder="—"
+              placeholder="â€”"
             />
             <TextInput
               type="date"
@@ -220,7 +221,7 @@ export default function IncomePage() {
               </button>
             ) : null}
             <button type="submit" className="admin-btn admin-btn-primary" disabled={saving}>
-              {saving ? 'Saqlanmoqda…' : editing ? 'Yangilash' : "Qo'shish"}
+              {saving ? 'Saqlanmoqdaâ€¦' : editing ? 'Yangilash' : "Qo'shish"}
             </button>
           </Group>
         </form>
@@ -251,13 +252,13 @@ export default function IncomePage() {
             <tbody>
               {results.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.paid_at ? new Date(item.paid_at).toLocaleDateString() : '—'}</td>
+                  <td>{formatDate(item.paid_at)}</td>
                   <td style={{ fontWeight: 600 }}>{Number(item.amount).toLocaleString()}</td>
                   <td>{item.source_label || INCOME_SOURCE_LABELS[item.source] || item.source}</td>
                   <td>{item.method_label || INCOME_METHOD_LABELS[item.method] || item.method}</td>
-                  <td>{PLAN_LABELS[item.plan] || item.plan || '—'}</td>
+                  <td>{PLAN_LABELS[item.plan] || item.plan || 'â€”'}</td>
                   <td>
-                    <Text size="xs" lineClamp={2}>{item.note || '—'}</Text>
+                    <Text size="xs" lineClamp={2}>{item.note || 'â€”'}</Text>
                   </td>
                   <td>
                     <Group gap={4} wrap="nowrap">

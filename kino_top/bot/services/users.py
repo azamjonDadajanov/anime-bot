@@ -17,7 +17,11 @@ from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed
 
 from users.models import Subscription, TelegramUser
-from users.telegram_auth import get_or_create_telegram_user, link_profile_by_username
+from users.telegram_auth import (
+	get_or_create_telegram_user,
+	link_profile_by_username,
+	link_profile_status,
+)
 
 from ..utils import human_datetime, to_async
 
@@ -64,6 +68,8 @@ load_profile = to_async(sync_profile_sync)
 
 # ``/start <username>``: bind the Telegram profile to a website account.
 link_account_by_username = to_async(link_profile_by_username)
+# The same outcome without writing — the confirm card is shown from this.
+check_link_by_username = to_async(link_profile_status)
 
 
 def profile_exists_sync(telegram_id: int) -> bool:

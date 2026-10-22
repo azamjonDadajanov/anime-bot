@@ -244,6 +244,10 @@ BOT_SITE_URL = env("BOT_SITE_URL", "")
 # Public HTTPS URL of the Telegram Mini App (the website) the bot opens in
 # inline buttons for auth and in-app search. Empty hides those buttons.
 BOT_WEBAPP_URL = env("BOT_WEBAPP_URL", "")
+# @username of the Telegram bot, without the @. The website builds the
+# «Telegramga ulash» deep link (``/api/auth/telegram/link/``) from it; empty
+# means the frontend falls back to its own bot handle.
+BOT_USERNAME = env("BOT_USERNAME", "")
 BOT_BROADCAST_RATE = env_int("BOT_BROADCAST_RATE", 25)
 BOT_BROADCAST_CONCURRENCY = env_int("BOT_BROADCAST_CONCURRENCY", 5)
 BOT_THROTTLE_RATE = float(env("BOT_THROTTLE_RATE", "0.4") or 0.4)

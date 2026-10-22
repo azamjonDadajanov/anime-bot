@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { Alert, Badge, Button, FileButton, Group, Loader, Text, Title } from '@mantine/core'
 import { useAuth } from '../apis/useAuth'
 import { subscriptionApi } from '../apis/api'
+import { formatDate } from '../utils/dates'
 import PageHeading from '../components/PageHeading'
+import PremiumBadge, { CrownIcon } from '../components/PremiumBadge'
 
 const STATUS_LABELS = {
   pending: 'Ko\'rib chiqilmoqda',
@@ -141,8 +143,8 @@ export function SubscriptionPage() {
           mb="lg"
         >
           {reminder.stage === 'expired'
-            ? `Obunangiz ${new Date(reminder.expires_at).toLocaleDateString()} da tugagan. Kontentni yana ochish uchun tarifni tanlang.`
-            : `Obunangiz ${reminder.days} kundan keyin (${new Date(reminder.expires_at).toLocaleDateString()}) tugaydi. Uzaytirish uchun tarifni tanlang.`}
+            ? `Obunangiz ${formatDate(reminder.expires_at)} da tugagan. Kontentni yana ochish uchun tarifni tanlang.`
+            : `Obunangiz ${reminder.days} kundan keyin (${formatDate(reminder.expires_at)}) tugaydi. Uzaytirish uchun tarifni tanlang.`}
         </Alert>
       )}
       {!loading && !loadError && plans.length === 0 && (
@@ -156,8 +158,14 @@ export function SubscriptionPage() {
           icon={<i className={activePlan ? 'bi bi-stars' : 'bi bi-person'} aria-hidden="true" />}
         >
           Joriy tarif: <b>{currentLabel}</b>
+          {activePlan && currentPlan !== 'free' && (
+            <>
+              {' '}
+              <PremiumBadge />
+            </>
+          )}
           {activePlan && expiresAt
-            ? ` · ${new Date(expiresAt).toLocaleDateString()} gacha amal qiladi`
+            ? ` · ${formatDate(expiresAt)} gacha amal qiladi`
             : ''}
           {!activePlan && currentPlan !== 'free' ? " · muddati o'tgan" : ''}
         </Alert>
@@ -190,7 +198,11 @@ export function SubscriptionPage() {
                 <div className="plan-details">
                   <Group gap="sm" mb={6}>
                     <Title order={3}>{item.label}</Title>
-                    {isCurrent && <Badge color="blue">Joriy tarif</Badge>}
+                    {isCurrent && (
+                      <Badge color="blue" leftSection={<CrownIcon size={12} />}>
+                        Joriy tarif
+                      </Badge>
+                    )}
                     {isPending && <Badge color="yellow">Ko'rib chiqilmoqda</Badge>}
                     <Badge variant="light" color="teal">{formatPrice(item.price)}</Badge>
                     {item.days ? (

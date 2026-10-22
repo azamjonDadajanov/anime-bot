@@ -12,12 +12,20 @@ from django.utils import timezone
 from users.referrals import parse_referral_payload, register_referral_sync
 
 from ... import callbacks as cb
+from ...keyboards.common import btn, keyboard
 from ...keyboards.user import main_menu, profile_keyboard
 from ...services.bot_settings import get_settings
 from ...services.media import get_part_by_pk, get_title_by_code, get_title_by_slug
-from ...services.users import link_account_by_username, plan_expiry_text, user_card
+from ...services.users import (
+	check_link_by_username,
+	link_account_by_username,
+	plan_expiry_text,
+	user_card,
+)
 from ...texts import (
 	ACCOUNT_ALREADY_LINKED,
+	ACCOUNT_LINK_CANCELLED,
+	ACCOUNT_LINK_CONFIRM,
 	ACCOUNT_LINK_CONFLICT,
 	ACCOUNT_LINKED,
 	ACCOUNT_USERNAME_INACTIVE,
@@ -128,19 +136,60 @@ LINK_MESSAGES = {
 }
 
 
-async def link_account(target, payload: str, profile) -> bool:
-	"""Bind the Telegram profile to the site account named in ``/start``.
+async def link_account(target, payload: str, profile, state: FSMContext | None = None) -> bool:
+	"""Offer to bind the Telegram profile to the site account in ``payload``.
 
-	Returns ``False`` when the payload is not a registered username so the
-	caller can fall back to the content deep link.
+	Nothing is written yet: the status is read first (``ready`` → a confirm
+	card with inline buttons), and the real link only happens in the
+	``alink:<username>`` callback. Negative outcomes (unknown name, taken,
+	conflict, already) still answer immediately. Returns ``False`` when the
+	payload is not a registered username so the caller can fall back to the
+	content deep link.
 	"""
 	username = (payload or "").strip().lstrip("@")
-	status = await link_account_by_username(profile, username)
+	status = await check_link_by_username(profile, username)
+	if status == "not_found":
+		return False
+	if status == "ready":
+		if state is not None:
+			await state.update_data(pending_link=username)
+		await render(
+			target,
+			ACCOUNT_LINK_CONFIRM.format(username=escape_html(username)),
+			markup=keyboard(
+				[btn("✅ Ha, ulash", cb.join(cb.LINK_CONFIRM, username))],
+				[btn("↩️ Bekor qilish", cb.LINK_CANCEL)],
+			),
+		)
+		return True
 	message = LINK_MESSAGES.get(status)
 	if message is None:
 		return False
 	await render(target, message.format(username=escape_html(username)))
 	return True
+
+
+@router.callback_query(F.data.startswith(f"{cb.LINK_CONFIRM}:"))
+async def confirm_link_account(
+	callback: CallbackQuery, state: FSMContext, profile
+) -> None:
+	"""«✅ Ha, ulash»: actually bind the profile to the named account."""
+	args = cb.split_data(callback.data)
+	username = args[1] if len(args) > 1 else ""
+	if not username:
+		await callback.answer(NOT_FOUND[:200], show_alert=True)
+		return
+	await state.update_data(pending_link=None)
+	status = await link_account_by_username(profile, username)
+	message = LINK_MESSAGES.get(status) or NOT_FOUND
+	await render(callback, message.format(username=escape_html(username)), edit=True)
+
+
+@router.callback_query(F.data == cb.LINK_CANCEL)
+async def cancel_link_account(callback: CallbackQuery, state: FSMContext, profile) -> None:
+	"""«↩️ Bekor qilish»: leave the profile exactly as it was."""
+	await state.update_data(pending_link=None)
+	await render(callback, ACCOUNT_LINK_CANCELLED, edit=True)
 
 
 @router.message(CommandStart(deep_link=True))
@@ -165,8 +214,11 @@ async def start_with_payload(
 		await message.answer(REFERRAL_JOINED, reply_markup=main_menu(is_admin, profile))
 		return
 	# A bare payload (the website profile link) names a site account first and
-	# only falls back to a title slug when no such account exists.
-	if parse_deep_link(payload)[0] == "slug" and await link_account(message, payload, profile):
+	# only falls back to a title slug when no such account exists. The link
+	# itself happens only after the inline confirm card is pressed.
+	if parse_deep_link(payload)[0] == "slug" and await link_account(
+		message, payload, profile, state
+	):
 		return
 	await open_payload(message, payload, bot=bot, profile=profile)
 

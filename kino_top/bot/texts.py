@@ -83,7 +83,31 @@ AI_ASSISTANT_UNAVAILABLE = (
 	"barcha provayderlar limitda.\n"
 	"Keyinroq qayta urinib ko'ring yoki oddiy qidiruvdan foydalaning."
 )
+# The administrator sees the reason (a withdrawn model, an empty key, a spent
+# quota); every other user gets the sentence above, unchanged.
+AI_ASSISTANT_UNAVAILABLE_ADMIN = (
+	"🛠 AI yordamchi hozircha javob bera olmaydi: model sozlanmagan yoki "
+	"barcha provayderlar limitda.\n"
+	"<b>Sabab:</b> <code>{reason}</code>"
+)
 AI_ASSISTANT_ERROR = "⚠️ AI yordamchida xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
+
+# --- AI amal kartasi (the confirmation card the model proposed) ---------------
+AI_ACTION_HEADER = "🧾 <b>{label}</b>"
+AI_ACTION_FIELD = "<b>{label}</b>: {value}"
+AI_ACTION_PENDING = (
+	"\n\nQiymatlarni o'zgartirishingiz mumkin. Amalni tasdiqlang yoki bekor qiling."
+)
+AI_ACTION_DONE = "✅ <b>{label}</b>\n{message}"
+AI_ACTION_CANCELLED = "❌ Amal bekor qilindi."
+AI_ACTION_EDIT_ASK = "✏️ <b>{label}</b> — yangi qiymatni yuboring:"
+AI_ACTION_INVALID = "⚠️ {detail}"
+AI_ACTION_LINKED = "✅ Akountingiz botga ulangan. Endi uni uzish mumkin."
+AI_ACTION_UNLINKED = "ℹ️ Telegram akkaunt hali ulanmagan."
+AI_ACTION_LINK_TIP = (
+	"Ulash uchun quyidagi tugmani bosing — bot tasdiqlashni so'raydi."
+)
+AI_ACTION_THINKING = "🧾 Amal kartasi tayyorlanmoqda…"
 
 CATALOG_TITLE = "📚 <b>Katalog</b>\n\nKategoriyani tanlang:"
 GENRE_LIST = "🎭 <b>Janrlar</b>\n\nJanrni tanlang:"
@@ -179,6 +203,13 @@ ACCOUNT_LINK_CONFLICT = (
 	"Uni uzish uchun administratorga murojaat qiling."
 )
 ACCOUNT_USERNAME_INACTIVE = "⚠️ <code>{username}</code> hisobi faol emas."
+ACCOUNT_LINK_CONFIRM = (
+	"🔗 <b>Akountni ulash</b>\n\n"
+	"<code>{username}</code> sayt hisobi bilan Telegram profilingizni "
+	"ulashni tasdiqlaysizmi?\n\n"
+	"Obuna, sevimlilar va hisobingiz botda ham shu hisobga bog'lanadi."
+)
+ACCOUNT_LINK_CANCELLED = "↩️ Ulash bekor qilindi. Ortga qaytish uchun /start bosing."
 
 ACCESS_DENIED_GENERIC = "🚫 Bu amalni bajarishga ruxsatingiz yo'q."
 ADMIN_ONLY = "🚫 Bu bo'lim faqat administratorlar uchun."
@@ -292,6 +323,23 @@ ADMIN_MEDIA_DELETE_CONFIRM = (
 )
 ADMIN_MEDIA_DELETED = "🗑 Kontent o'chirildi."
 ADMIN_MEDIA_SEARCH = "🔍 Nomi yoki kodini yuboring:"
+ADMIN_MEDIA_ANNOUNCE_SCOPE = (
+	"📢 <b>{title}</b>\n\n"
+	"Bu media hali tugamagan. Nimani e'lon qilamiz?\n"
+	"• <b>Faqat oxirgi qism</b> — eng yangi qism bilan\n"
+	"• <b>Barcha qismlar</b> — butun ro'yxat bilan"
+)
+ADMIN_MEDIA_ANNOUNCING = "⏳ E'lon yuborilmoqda…"
+ADMIN_MEDIA_ANNOUNCED = (
+	"📢 <b>E'lon kanalga joylandi!</b>\n\n"
+	"🎬 {title}\n"
+	"🎞 {parts}"
+)
+ADMIN_MEDIA_ANNOUNCE_NO_PARTS = (
+	"⚠️ <b>{title}</b> uchun hali qism qo'shilmagan — e'lon qilish uchun "
+	"avval qism va media fayl qo'shing."
+)
+ADMIN_MEDIA_NOT_ANNOUNCED = "⚠️ E'lon yuborilmadi: {reason}"
 ADMIN_INVALID_INPUT = "❌ Noto'g'ri qiymat. Qayta yuboring."
 
 ADMIN_EPISODES_MENU = "🎞 <b>Qismlar boshqaruvi</b>"
@@ -573,6 +621,43 @@ SUPPORT_TOO_SOON = (
 SUPPORT_EMPTY = (
 	"❌ Bo'sh xabar yuborilmadi.\n"
 	"Iltimos, savolingizni matn ko'rinishida yozing."
+)
+
+# --- izohlar va 1-10 baho (one table with the website) ------------------------
+COMMENT_PROMPT = (
+	"💬 <b>Izoh qoldirish</b>\n\n"
+	"Kontent: <b>{title}</b>{part}\n\n"
+	"Izohingizni matn ko'rinishida yuboring (1-1000 belgi).\n"
+	"Yozgandan so'ng 1 dan 10 gacha baho berish so'raladi — baho ixtiyoriy."
+)
+COMMENT_NO_ACCOUNT = (
+	"❌ Izoh uchun hisobingiz botga ulangan bo'lishi kerak.\n"
+	"Avval /start buyrug'ini yuboring."
+)
+COMMENT_EMPTY = (
+	"❌ Izoh bo'sh. Matn yuboring yoki «✖️ Bekor qilish» tugmasini bosing."
+)
+COMMENT_TOO_LONG = "❌ Izoh juda uzun — 1000 belgidan oshmasligi kerak."
+COMMENT_RATING_ASK = (
+	"⭐️ <b>Baho qoldiring</b>\n\n"
+	"Kontent: <b>{title}</b>\n"
+	"1 dan 10 gacha raqam tanlang (baho ixtiyoriy)."
+)
+COMMENT_SAVED = (
+	"✅ <b>Izohingiz qabul qilindi!</b>\n\n"
+	"Kontent: <b>{title}</b>\n{score_line}"
+)
+COMMENT_SAVED_SCORE = "⭐️ Bahoyingiz: <b>{score}</b>/10\n"
+COMMENT_SAVED_NO_SCORE = "⭐️ Baho kiritilmadi.\n"
+COMMENT_DUPLICATE = "ℹ️ Bir xil izoh allaqachon yuborilgan — qayta qo'shilmadi."
+COMMENT_LIST_EMPTY = "💬 Hozircha izoh yo'q. Birinchi bo'lib yozing!"
+COMMENT_LIST_TITLE = "💬 <b>Izohlar</b> — {title}\n\n{rows}"
+COMMENT_LIST_RATING = "\n{summary}"
+COMMENT_ROW = "👤 <b>{name}</b>{crown} · {when}\n{body}\n"
+COMMENT_RATING_SUMMARY = "⭐️ O'rtacha baho: <b>{average}</b> / 10 · {count} ta baho"
+COMMENT_STALE = (
+	"⏳ Izohlarni yozish vaqti tugadi.\n"
+	"Qaytadan «💬 Izoh» tugmasini bosing."
 )
 
 # --- referrals -----------------------------------------------------------------

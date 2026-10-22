@@ -51,6 +51,7 @@ class AIProviderAdmin(admin.ModelAdmin):
 		"model",
 		"priority",
 		"is_active",
+		"supports_tools",
 		"key_state",
 		"state",
 		"avg_latency_ms",
@@ -82,10 +83,14 @@ class AIProviderAdmin(admin.ModelAdmin):
 					"base_url",
 					"priority",
 					"is_active",
+					"supports_tools",
 				),
 				"description": (
 					"Kalit, model va manzil bo'sh qolsa provayderning standart "
-					"qiymati olinadi. Kalitsiz qator zanjirda ishlatilmaydi."
+					"qiymati olinadi. Kalit bo'sh qolsa .env'dagi "
+					"AI_LLM_API_KEY ishlatiladi — faqat turi mos bo'lsa "
+					"(Gemini qatori uchun Gemini kaliti, Groq uchun Groq "
+					"kaliti). Tur mos bo'lmasa qator ishlatilmaydi."
 				),
 			},
 		),
@@ -106,7 +111,14 @@ class AIProviderAdmin(admin.ModelAdmin):
 
 	@admin.display(description="Kalit")
 	def key_state(self, obj: AIProvider) -> str:
-		return obj.masked_key
+		if (obj.api_key or "").strip():
+			return obj.masked_key
+		# A row without its own key borrows the environment's one — but only
+		# when it speaks to the same provider.
+		env = llm.env_provider()
+		if env.api_key and env.kind == obj.kind:
+			return f"({env.kind} kaliti .env'da)"
+		return "—"
 
 	@admin.display(description="Holat")
 	def state(self, obj: AIProvider) -> str:
@@ -115,6 +127,9 @@ class AIProviderAdmin(admin.ModelAdmin):
 		if obj.cooling_down:
 			return "kutishda (limit)"
 		if not (obj.api_key or "").strip():
+			env = llm.env_provider()
+			if env.api_key and env.kind == obj.kind:
+				return "tayyor (.env kaliti)"
 			return "kalitsiz"
 		return "tayyor"
 
@@ -129,35 +144,39 @@ class AIProviderAdmin(admin.ModelAdmin):
 		"""Ask one provider a trivial question and report what came back."""
 		import time
 
+		env = llm.env_provider()
 		for row in queryset:
+			api_key = (row.api_key or "").strip()
+			if not api_key and env.api_key and env.kind == row.kind:
+				# The same rule the chain uses: a row without its own key
+				# borrows the environment's one - if it is the same provider.
+				api_key = env.api_key
+			preset = llm.PRESETS.get(row.kind, llm.PRESETS["custom"])
 			settings_row = llm.ProviderConfig(
 				name=row.name,
 				kind=row.kind,
-				api_key=(row.api_key or "").strip(),
-				model=(row.model or "").strip()
-				or llm.PRESETS.get(row.kind, llm.PRESETS["custom"])["model"],
-				base_url=(row.base_url or "").strip().rstrip("/")
-				or llm.PRESETS.get(row.kind, llm.PRESETS["custom"])["base_url"],
+				api_key=api_key,
+				model=(row.model or "").strip() or preset["model"],
+				base_url=(row.base_url or "").strip().rstrip("/") or preset["base_url"],
 				row_id=row.pk,
+				supports_tools=bool(getattr(row, "supports_tools", True)),
 			)
 			if not settings_row.api_key:
 				self.message_user(request, f"{row.name}: kalit yo'q, sinab bo'lmaydi.")
 				continue
 			started = time.monotonic()
-			try:
-				result = llm._attempt(
-					settings_row,
-					[{"role": "user", "content": "Ha yoki yo'q deb javob ber."}],
-					max_tokens=16,
-					temperature=0.0,
-					seconds=llm.timeout(),
-				)
-			except llm.LLMUnavailable as exc:
-				self.message_user(request, f"{row.name}: xato — {exc}")
-				continue
+			status, detail = llm.probe(settings_row)
 			elapsed = int((time.monotonic() - started) * 1000)
-			answer = result.content.strip()[:80] or "(bo'sh javob)"
-			self.message_user(request, f"{row.name}: {elapsed}ms — {answer}")
+			if status == "ok":
+				self.message_user(request, f"{row.name}: {elapsed}ms — {detail}")
+			elif status == "model_topilmadi":
+				self.message_user(
+					request, f"{row.name}: MODEL TOPILMADI (404) — {detail[:200]}"
+				)
+			elif status == "limit":
+				self.message_user(request, f"{row.name}: limitda — {detail[:200]}")
+			else:
+				self.message_user(request, f"{row.name}: xato — {detail[:200]}")
 
 	@admin.action(description="Kutishni (cooldown) tozalash")
 	def clear_cooldowns(self, request, queryset) -> None:

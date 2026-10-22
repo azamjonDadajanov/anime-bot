@@ -522,6 +522,8 @@ def leaderboard(user=None, limit: int = 50) -> dict:
 
 	from django.contrib.auth import get_user_model
 
+	from users.premium import is_premium_user
+
 	entries = []
 	for index, row in enumerate(rows, start=1):
 		profile = get_user_model().objects.filter(pk=row["user_id"]).first()
@@ -533,6 +535,8 @@ def leaderboard(user=None, limit: int = 50) -> dict:
 				"name": _display_name(profile, row["user_id"]),
 				"points": points,
 				"verified": int(row["verified"] or 0),
+				# The 👑 follows the live subscription, never a cached flag.
+				"is_premium": bool(profile and is_premium_user(profile)),
 				**_level_fields(points),
 			}
 		)
@@ -551,6 +555,7 @@ def leaderboard(user=None, limit: int = 50) -> dict:
 			"rank": higher + 1,
 			"points": own_points,
 			"name": _display_name(user, getattr(user, "pk", None)),
+			"is_premium": is_premium_user(user),
 			**_level_fields(own_points),
 		}
 

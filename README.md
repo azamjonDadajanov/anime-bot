@@ -70,6 +70,11 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
   olinadi: saytda `/rating` sahifasida, botda esa asosiy menyudagi **🏆 Reyting**
   tugmasida — top 10 o'yinchi, o'z o'rni, tasdiqlanganlar va urinishlar soni.
   Botda qiz tugagach natija ostida yangi o'rin ham ko'rsatiladi.
+- **Admin panel — «📢 E'lon qilish»** (`/admin/media/<slug>`): kontentni muqova,
+  nomi, qismlar, reyting, davomiyligi, qism/umumiy qism va sifat bilan e'lon qiladi;
+  manzil sifatida kanal, barcha bot foydalanuvchilari yoki ikkalasi birdaniga
+  tanlanadi. Xuddi shu tugma bot panelida ham bor: davom etayotgan media uchun
+  «oxirgi qism / barcha qismlar» so'raladi, tugallangan media hammasini yuboradi.
 - JWT asosidagi autentifikatsiya: parol, Telegram login widget va Telegram Mini App.
 
 ## Texnologiyalar
@@ -143,8 +148,9 @@ AI_LLM_API_KEY=gsk_...      # https://console.groq.com/keys
 Sozlamani tekshirish va bitta real so'rovni sinab ko'rish:
 
 ```bash
-python manage.py ai_status          # zanjir: provayderlar, model, kalit, kutish
-python manage.py ai_status --test   # bitta real savol va chaqirilgan funksiyalar
+python manage.py ai_setup             # ishlaydigan modellar zanjiri (baza qatorlari)
+python manage.py ai_status            # zanjir: provayderlar, model, kalit, kutish
+python manage.py ai_status --test     # har bir model alohida sinanadi + bitta real savol
 ```
 
 Bir nechta kalitni zanjir qilib qo'yish (`/django-admin/` → *AI provayderlar*)
@@ -188,6 +194,9 @@ JWT bilan himoyalangan REST API (`/api/`; production'da
   `history`, `taste`, `support`, `type`, `limit`) → modelning javobi, u chaqirgan
   funksiyalar ro'yxati va havola + bir gaplik mazmun bilan natijalar (faqat faol
   obuna; provayder bo'lmasa `503 ai_unavailable`, obuna bo'lmasa `403`)
+- `GET|POST /api/admin/media/<slug>/announce/` — e'lon: `GET` tayyor matn va
+  auditoriyani qaytaradi, `POST {"targets": ["channel", "users"], "scope": "last"|"all"}`
+  yuboradi (kanal — so'rov ichida, foydalanuvchilar — fonda)
 - `/api/catalog/`, `/api/parts/`, `/api/reading/`, `/api/telegram-media/`, `/api/channels/`
 - O'yin: `/api/game/status/`, `game/titles/`, `game/quiz/start/`, `game/quiz/submit/`,
   `game/leaderboard/`
@@ -196,7 +205,7 @@ JWT bilan himoyalangan REST API (`/api/`; production'da
 ## Testlar va tekshiruvlar
 
 ```bash
-cd kino_top && python manage.py test        # 479 ta test
+cd kino_top && python manage.py test        # 641 ta test
 python manage.py check --deploy             # production sozlamalari bo'yicha ogohlantirishlar
 
 cd frontend && npm run lint && npm run build
@@ -288,6 +297,18 @@ javob yozadi (`movies.ai_assistant`):
   `AI_LLM_DEADLINE`). Zanjir butunlay limitda bo'lsa yordamchi darhol
 
   «javob bera olmaydi» deb xabar qaytaradi — kutib qolmaydi.
+
+- **O'lik model bilan bog'liq holatlar**: `404` (model eskirgan) — qator yarim
+
+  soatga qo'yiladi, `429` (kvota) — 5 daqiqa, `5xx`/timeout — 1 daqiqa. Sabab
+
+  faqat **administratorga** ko'rinadi: botda va saytda xabar o'zgarmaydi, lekin
+
+  admin panelning *Loglar* sahifasida (`bot.ai`) va `ai_status --test`
+
+  chiqishida aniq yoziladi. `manage.py ai_setup` esa ishlaydigan modellarning
+
+  zanjirini bir buyruq bilan yozadi.
 
 - **Grounded javob**: javob ostidagi har bir havola funksiya qaytargan haqiqiy
 

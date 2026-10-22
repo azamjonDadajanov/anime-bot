@@ -14,6 +14,10 @@ Callback contract (kept short for Telegram's 64 byte limit):
 * ``favt:<title_pk>:<page>:<origin>``
 * ``favm:<title_pk>:<part_pk>`` — favourite toggle under a delivered file
 * ``ai`` — the AI yordamchi chat (subscribers only)
+* ``aiok`` / ``aino`` — the AI amal card's confirm/cancel; ``aiad:<f>:<±1>``,
+  ``aic:<f>``, ``ait:<f>``, ``aied:<f>`` edit one field, ``aiacheck`` re-checks
+  the Telegram link status
+* ``alink:<username>`` / ``alinkno`` — /start account-link confirm
 * ``qz:<title_pk>`` / ``qza:<attempt_pk>:<index>:<choice>`` — the in-bot quiz
 * ``rt`` — the rating table (top players, the caller's own rank)
 * ``subchk`` — re-check mandatory subscription
@@ -194,6 +198,71 @@ def assistant_results_keyboard(
 	return keyboard(*rows)
 
 
+def assistant_action_keyboard(
+	action: Dict[str, Any],
+	*,
+	link_url: str = "",
+) -> InlineKeyboardMarkup:
+	"""Confirm/cancel plus the per-field editors under a proposed amal card.
+
+	The card body (built server-side by ``movies.ai_actions``) lists every
+	value; these buttons only *edit* the values the action allows — an int
+	with +/-, a select by cycling its options, a bool by flipping it, text by
+	dropping into the ``action_edit`` FSM state. The signed token itself never
+	rides in callback data: it lives in the FSM.
+	"""
+	rows: List[List[InlineKeyboardButton]] = []
+	if action.get("kind") == "link":
+		linked = bool((action.get("link") or {}).get("linked"))
+		if linked:
+			rows.append([btn("✅ Ulangan", cb.NOOP)])
+		else:
+			if link_url:
+				rows.append([btn("🔗 Akountga ulash", url=link_url)])
+			rows.append([btn("🔄 Tekshirish", cb.AI_ACTION_CHECK)])
+		rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
+		return keyboard(*rows)
+
+	for field in action.get("fields") or []:
+		if not field.get("editable"):
+			continue
+		key = str(field.get("key") or "")
+		label = str(field.get("label") or key)
+		field_type = field.get("type")
+		if not key or field_type == "file":
+			continue
+		if field_type == "int":
+			value = field.get("value")
+			rows.append(
+				[
+					btn(f"➖ {label}", f"{cb.AI_ACTION_ADJ}:{key}:-1"),
+					btn("—" if value in (None, "") else str(value), cb.NOOP),
+					btn(f"➕ {label}", f"{cb.AI_ACTION_ADJ}:{key}:+1"),
+				]
+			)
+		elif field_type == "select":
+			value = field.get("value")
+			options = field.get("options") or []
+			current = next(
+				(option.get("label") for option in options if option.get("value") == value),
+				"",
+			)
+			rows.append([btn(f"🔄 {label}: {current or 'tanlang'}", f"{cb.AI_ACTION_CYCLE}:{key}")])
+		elif field_type == "bool":
+			mark = "✅" if field.get("value") else "❌"
+			rows.append([btn(f"{mark} {label}", f"{cb.AI_ACTION_TOGGLE}:{key}")])
+		elif field_type in ("text", "textarea"):
+			rows.append([btn(f"✏️ {label}", f"{cb.AI_ACTION_EDIT}:{key}")])
+	rows.append(
+		[
+			btn("✅ Tasdiqlash", cb.AI_ACTION_OK),
+			btn("❌ Bekor qilish", cb.AI_ACTION_NO),
+		]
+	)
+	rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
+	return keyboard(*rows)
+
+
 def catalog_menu() -> InlineKeyboardMarkup:
 	return keyboard(
 		[btn("🎌 Anime", f"{cb.TYPE}:anime:1"), btn("📺 Serial", f"{cb.TYPE}:series:1")],
@@ -255,6 +324,9 @@ def title_detail_keyboard(
 		rows.append([btn(watch_label, f"{cb.PART}:list:{title_pk}:1:{origin}")])
 	favorite_label = "💔 Sevimlilardan olib tashlash" if is_favorite else "⭐️ Sevimlilarga qo'shish"
 	rows.append([btn(favorite_label, f"{cb.FAV_TOGGLE}:{title_pk}:{page}:{origin[:16]}")])
+	# The comments live in one table shared with the website, so the bot shows
+	# what others wrote there and can add its own.
+	rows.append([btn("💬 Izohlar", f"{cb.COMMENT_LIST}:{title_pk}:1")])
 	rows.append([btn("⬅️ Orqaga", back)])
 	return keyboard(*rows)
 
@@ -398,6 +470,16 @@ def media_keyboard(
 	rows.append(
 		[btn(favorite_label, f"{cb.FAV_MEDIA}:{title_pk}:{getattr(current, 'pk', 0) or 0}")]
 	)
+	# Writing from here attaches the comment to the episode on screen, and the
+	# bot re-sends that episode with its navigator once the comment is saved.
+	rows.append(
+		[
+			btn(
+				"💬 Izoh qoldirish",
+				cb.join(cb.COMMENT, title_pk, getattr(current, "pk", None)),
+			)
+		]
+	)
 	if has_quiz:
 		rows.append([btn("🧪 Testlarni ishlash", f"{cb.QUIZ}:{title_pk}")])
 	rows.append([btn("⬅️ Asosiy menyu", cb.MENU)])
@@ -419,6 +501,39 @@ def rating_keyboard(site: str = "") -> InlineKeyboardMarkup:
 	if site:
 		rows.append([btn("🎮 O'yin o'ynash", url=site)])
 	rows.append([btn("🔄 Yangilash", cb.RATING), btn("⬅️ Asosiy menyu", cb.MENU)])
+	return keyboard(*rows)
+
+
+def comment_prompt_keyboard() -> InlineKeyboardMarkup:
+	"""While the bot waits for the comment text: only a way out."""
+	return keyboard([btn("✖️ Bekor qilish", cb.COMMENT_CANCEL)])
+
+
+def comment_rating_keyboard() -> InlineKeyboardMarkup:
+	"""The 1-10 score picker: two rows of five, then skip and cancel.
+
+	Each keycap posts its own score; picking one finishes the comment (the text
+	is already in the FSM), so there is no second confirmation step.
+	"""
+	rows: List[List[InlineKeyboardButton]] = [
+		[btn(NUMBER_EMOJI[index], f"{cb.COMMENT_RATE}:{index + 1}") for index in range(5)],
+		[
+			btn(NUMBER_EMOJI[index], f"{cb.COMMENT_RATE}:{index + 1}")
+			for index in range(5, 10)
+		],
+	]
+	rows.append([btn("⭐️ Bahosiz davom etish", cb.COMMENT_RATE_SKIP)])
+	rows.append([btn("✖️ Bekor qilish", cb.COMMENT_CANCEL)])
+	return keyboard(*rows)
+
+
+def comment_list_keyboard(title_pk: int, page: int, pages: int) -> InlineKeyboardMarkup:
+	"""Under a page of comments: write one, page through, or go back."""
+	rows: List[List[InlineKeyboardButton]] = [
+		[btn("💬 Izoh yozish", cb.join(cb.COMMENT, title_pk))]
+	]
+	rows.append(pagination_row(f"{cb.COMMENT_LIST}:{title_pk}:", page, pages))
+	rows.append([btn("⬅️ Orqaga", f"{cb.TITLE}:{title_pk}:1:cat")])
 	return keyboard(*rows)
 
 

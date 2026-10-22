@@ -201,8 +201,14 @@ async def deliver_media_for_part(
 	quality: Optional[str] = None,
 	state: Any = None,
 	edit: bool = False,
+	announce: bool = True,
 ) -> bool:
-	"""Verify access and deliver a part's media. Returns ``True`` when sent."""
+	"""Verify access and deliver a part's media. Returns ``True`` when sent.
+
+	``announce=False`` skips the \"media yuborilmoqda\" notice: used when the
+	delivery is a follow-up (for example right after a comment was saved) and
+	the user is already reading a confirmation of their own action.
+	"""
 	title = part.content
 	try:
 		await ensure_access(bot, profile, title)
@@ -264,7 +270,8 @@ async def deliver_media_for_part(
 			await record_media_view(profile.auth_user_id, part.content_id, part.pk)
 			return True
 
-	await render(target, MEDIA_SENDING)
+	if announce:
+		await render(target, MEDIA_SENDING)
 	try:
 		await deliver_part(
 			bot,

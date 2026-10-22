@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Alert, Group, Pagination, Select, Text, TextInput, Title } from '@mantine/core'
+import { Alert, Pagination, Select, TextInput } from '@mantine/core'
+import { Link } from 'react-router-dom'
 import { mediaApi } from '../apis/api'
 import MediaGrid from '../components/MediaGrid'
+import SectionHead from '../components/SectionHead'
 import { SpotlightCard, SpotlightSkeleton } from '../components/SpotlightCard'
+import { MEDIA_TYPE_LABELS } from '../mediaMeta'
 
 const PER_PAGE = 10
 
@@ -15,7 +18,7 @@ const mediaTypes = [
 
 function errorText(error) {
   const data = error.response?.data
-  if (!data) return 'Server bilan bog\'lanishda xatolik yuz berdi.'
+  if (!data) return "Server bilan bog'lanishda xatolik yuz berdi."
   if (typeof data.detail === 'string') return data.detail
   return Object.values(data).flat().map(String).join(' ')
 }
@@ -63,29 +66,33 @@ export function FavoritesPage() {
   function updatePage(nextPage) {
     setLoading(true)
     setPage(nextPage)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const filtering = Boolean(query.trim() || type)
   // The newest favourite headlines the page (first result, newest-first order).
   const featured = !filtering && page === 1 && items.length > 0 ? items[0] : null
   const rest = featured ? items.slice(1) : items
-  const showEmpty = !loading && !filtering && items.length === 0
-  const showGrid = loading || filtering || rest.length > 0 || showEmpty
+  const formats = new Set(items.map((item) => MEDIA_TYPE_LABELS[item.type] || item.type)).size
+  const totalPages = Math.ceil(count / PER_PAGE)
 
   return (
     <main className="dashboard-page">
-      <section className="home-hero favorites-hero">
-        <div className="home-hero-copy">
-          <Text className="eyebrow">SIZNING KUTUBXONANGIZ</Text>
-          <Title order={1} className="home-hero-title">Sevimlilar</Title>
-          <Text c="dimmed" className="home-hero-text">
-            Telegram botda saqlagan barcha turdagi media — kino, anime, serial va manga.
-          </Text>
-          <div className="favorites-toolbar">
+      <section className="library-hero">
+        <div className="library-copy">
+          <span className="eyebrow">Sizning kutubxonangiz</span>
+          <h1 className="library-title">
+            Sevimlilar, <em>bir joyda.</em>
+          </h1>
+          <p className="library-text">
+            Telegram botda saqlagan va saytda belgilagan barcha media — kino,
+            anime, serial va manga. Qaytganingizda davom etish uchun tayyor.
+          </p>
+
+          <div className="library-toolbar">
             <TextInput
-              className="catalog-search"
               aria-label="Sevimlilardan qidirish"
-              placeholder="Sevimlilardan qidirish"
+              placeholder="Kutubxonadan qidirish…"
               leftSection={<i className="bi bi-search" aria-hidden="true" />}
               value={query}
               onChange={updateQuery}
@@ -99,36 +106,52 @@ export function FavoritesPage() {
               onChange={updateType}
             />
           </div>
-          <ul className="home-hero-pills">
-            <li><i className="bi bi-collection" aria-hidden="true" /> {count} ta media</li>
-            <li><i className="bi bi-clock-history" aria-hidden="true" /> Saralangan sana bo'yicha</li>
-          </ul>
+
+          <div className="library-stats">
+            <span><b>{count}</b> media</span>
+            <span><b>{formats}</b> format</span>
+            <span><b>{PER_PAGE}</b> har sahifa</span>
+          </div>
         </div>
-        {loading ? <SpotlightSkeleton /> : <SpotlightCard item={featured} kicker="Oxirgi saralangan" icon="bi-star-fill" />}
+
+        <div className="library-visual">
+          {loading
+            ? <SpotlightSkeleton />
+            : <SpotlightCard item={featured} kicker="Oxirgi saralangan" icon="bi-star-fill" />}
+        </div>
       </section>
 
       {error && <Alert color="red" mb="lg">{error}</Alert>}
 
-      {(showGrid || rest.length > 0) && (
-        <section className="favorites-list">
-          <div className="rail-head">
-            <Text component="h2" className="rail-title">{filtering ? 'Natijalar' : 'Barcha sevimlilar'}</Text>
-            <Text size="sm" c="dimmed">{count} ta media</Text>
-          </div>
-          <MediaGrid
+      <section className="favorites-list">
+        <SectionHead
+          index="02"
+          title={filtering ? 'Natijalar' : 'Barcha sevimlilar'}
+          jp={filtering ? '検索' : '本棚'}
+          description={filtering ? undefined : "Saralangan sana bo'yicha, eng yangisi birinchi."}
+          linkLabel="Katalog"
+          href="/explore"
+        />
+        <MediaGrid
             items={rest}
             loading={loading}
-            emptyTitle="Sevimlilar hozircha bo'sh"
-            emptyDescription="Telegram botda yoqtirgan mediangizni sevimlilarga qo'shing."
-          />
-        </section>
-      )}
+            emptyTitle={filtering ? 'Hech narsa topilmadi' : "Sevimlilar hozircha bo'sh"}
+            emptyDescription={filtering
+              ? 'Boshqa nom yoki tur bilan urinib ko‘ring.'
+              : "Telegram botda yoki media sahifasida yoqtirgan filmingizni sevimlilarga qo'shing."}
+            emptyAction={!filtering ? (
+              <Link className="ac-btn ac-btn-ghost" to="/explore">
+                Katalogni kashf etish <i className="bi bi-compass" aria-hidden="true" />
+              </Link>
+            ) : null}
+        />
+      </section>
 
       {!loading && count > PER_PAGE && (
-        <Group justify="space-between" mt="xl" className="pagination-row">
-          <Text c="dimmed" size="sm">Jami {count} ta media · har sahifada {PER_PAGE} ta</Text>
-          <Pagination total={Math.ceil(count / PER_PAGE)} value={page} onChange={updatePage} />
-        </Group>
+        <div className="catalog-foot">
+          <span>Jami {count} ta media · har sahifada {PER_PAGE} ta</span>
+          <Pagination total={totalPages} value={page} onChange={updatePage} size="sm" withEdges />
+        </div>
       )}
     </main>
   )

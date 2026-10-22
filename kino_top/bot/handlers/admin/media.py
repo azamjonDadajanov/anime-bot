@@ -17,6 +17,7 @@ from ...keyboards.admin import (
 	confirm,
 	admin_panel,
 	media_actions,
+	media_announce_scopes,
 	media_list,
 	media_menu,
 	media_types,
@@ -34,7 +35,13 @@ from ...services.media import (
 	title_stats,
 	update_title,
 )
-from ...services.publishing import maybe_auto_publish_title
+from ...services.announcements import (
+	SCOPE_ALL,
+	SCOPE_LAST,
+	announcement_parts_sync,
+	send_announcement,
+)
+from ...services.publishing import maybe_auto_publish_title, parts_range_label
 from ...states import AdminMediaStates
 from ...texts import (
 	ADMIN_INVALID_INPUT,
@@ -46,6 +53,10 @@ from ...texts import (
 	ADMIN_MEDIA_ASK_RATING,
 	ADMIN_MEDIA_ASK_STATUS,
 	ADMIN_MEDIA_ASK_SYNOPSIS,
+	ADMIN_MEDIA_ANNOUNCED,
+	ADMIN_MEDIA_ANNOUNCE_NO_PARTS,
+	ADMIN_MEDIA_ANNOUNCE_SCOPE,
+	ADMIN_MEDIA_ANNOUNCING,
 	ADMIN_MEDIA_ASK_TITLE,
 	ADMIN_MEDIA_CREATE_TYPE,
 	ADMIN_MEDIA_DELETE_CONFIRM,
@@ -53,6 +64,7 @@ from ...texts import (
 	ADMIN_MEDIA_EMPTY,
 	ADMIN_MEDIA_LIST,
 	ADMIN_MEDIA_MENU,
+	ADMIN_MEDIA_NOT_ANNOUNCED,
 	ADMIN_MEDIA_PREVIEW,
 	ADMIN_MEDIA_SAVED,
 	ADMIN_MEDIA_SEARCH,
@@ -115,6 +127,7 @@ async def update_draft(state: FSMContext, **values) -> dict:
 async def admin_card_text(title) -> str:
 	genres = await _genres_text(title)
 	stats = await title_stats(title)
+	duration = f"{title.duration_minutes} daqiqa" if title.duration_minutes else "—"
 	return (
 		f"🎬 <b>{escape_html(title.title)}</b>\n"
 		f"🆔 Kod: <code>{title.code}</code>\n"
@@ -123,6 +136,7 @@ async def admin_card_text(title) -> str:
 		f"🎭 Janr: {escape_html(genres)}\n"
 		f"🌐 Til: {escape_html(title.language)}\n"
 		f"💎 Sifat: {escape_html(', '.join(title.quality_options or []) or title.default_quality)}\n"
+		f"⏱ Davomiyligi: {duration}\n"
 		f"🔒 Tarif: {title.get_required_plan_display()}\n"
 		f"📊 Holat: {title.get_status_display()}\n"
 		f"⭐ Reyting: {title.rating}/10\n"
@@ -592,6 +606,15 @@ async def apply_edit_value(message: Message, state: FSMContext) -> None:
 				await message.answer(ADMIN_INVALID_INPUT)
 				return
 			payload[field] = count
+	elif field == "duration_minutes":
+		if raw in {"", "-"}:
+			payload[field] = None
+		else:
+			duration = parse_int(raw, minimum=0, maximum=1440)
+			if duration is None:
+				await message.answer(ADMIN_INVALID_INPUT)
+				return
+			payload[field] = duration
 	elif field in {"title", "synopsis", "language", "default_quality"}:
 		if not raw:
 			await message.answer(ADMIN_INVALID_INPUT)
@@ -605,6 +628,85 @@ async def apply_edit_value(message: Message, state: FSMContext) -> None:
 	await state.update_data(edit_title_id=None, edit_field="")
 	await state.set_state(None)
 	await message.answer(await admin_card_text(title), reply_markup=media_actions(title))
+
+
+# ------------------------------------------------------------------ announcing
+async def _announce(callback: CallbackQuery, title, scope: str) -> None:
+	"""Post the announcement to the channel and report the outcome in place."""
+	parts, total = await to_async(announcement_parts_sync)(title, scope)
+	if not parts:
+		await render(
+			callback,
+			ADMIN_MEDIA_ANNOUNCE_NO_PARTS.format(title=escape_html(title.title)),
+			markup=media_actions(title),
+			edit=True,
+		)
+		return
+
+	await callback.answer(ADMIN_MEDIA_ANNOUNCING[:200])
+	result = await send_announcement(
+		callback.bot,
+		title,
+		scope=scope,
+		parts=parts,
+		total_parts=total,
+		to_channel=True,
+	)
+	if result.channel_sent:
+		text = ADMIN_MEDIA_ANNOUNCED.format(
+			title=escape_html(title.title),
+			parts=escape_html(parts_range_label(parts)),
+		)
+	else:
+		text = ADMIN_MEDIA_NOT_ANNOUNCED.format(reason=escape_html(result.channel_error))
+	await render(callback, text, markup=media_actions(title), edit=True)
+	await to_async(record_event)(
+		"INFO" if result.channel_sent else "WARNING",
+		f"Announcement for {title.title} ({title.code}) scope={scope}: "
+		+ ("posted to the channel" if result.channel_sent else result.channel_error),
+		telegram_id=callback.from_user.id,
+	)
+
+
+@router.callback_query(F.data.startswith(f"{cb.ADM_MEDIA}:ann:"))
+async def start_announcement(callback: CallbackQuery) -> None:
+	args = cb.section_args(callback.data)
+	title_pk = parse_int(args[0] if args else None, minimum=1)
+	title = await get_title_by_pk(title_pk) if title_pk else None
+	if title is None:
+		await render(callback, NOT_FOUND, markup=media_menu(), edit=True)
+		return
+
+	# A finished title (or a movie) is announced with its whole run at once;
+	# an ongoing one asks whether the newest episode or everything goes out.
+	finished = (
+		title.status == MediaTitle.Status.COMPLETED
+		or title.type == MediaTitle.MediaType.MOVIE
+	)
+	if finished:
+		await _announce(callback, title, SCOPE_ALL)
+		return
+
+	await render(
+		callback,
+		ADMIN_MEDIA_ANNOUNCE_SCOPE.format(title=escape_html(title.title)),
+		markup=media_announce_scopes(title),
+		edit=True,
+	)
+
+
+@router.callback_query(F.data.startswith(f"{cb.ADM_MEDIA}:annok:"))
+async def announce_with_scope(callback: CallbackQuery) -> None:
+	args = cb.section_args(callback.data)
+	title_pk = parse_int(args[0] if args else None, minimum=1)
+	scope = args[1] if len(args) > 1 else SCOPE_LAST
+	if scope not in {SCOPE_LAST, SCOPE_ALL}:
+		scope = SCOPE_LAST
+	title = await get_title_by_pk(title_pk) if title_pk else None
+	if title is None:
+		await render(callback, NOT_FOUND, markup=media_menu(), edit=True)
+		return
+	await _announce(callback, title, scope)
 
 
 # --------------------------------------------------------------------- deleting

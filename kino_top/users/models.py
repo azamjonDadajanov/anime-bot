@@ -72,6 +72,10 @@ class UserSettings(models.Model):
 	theme = models.CharField(max_length=6, choices=Theme.choices, default=Theme.SYSTEM)
 	language = models.CharField(max_length=5, choices=Language.choices, default=Language.UZ)
 	reduce_motion = models.BooleanField(default=False)
+	# Profile picture shown next to comments: a short emoji/text avatar, or a
+	# real uploaded image (the AI assistant's «Profil rasmi» action writes both).
+	avatar = models.CharField(max_length=500, blank=True)
+	avatar_file = models.ImageField(upload_to="avatars/", blank=True, null=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
 	class Meta:

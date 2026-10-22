@@ -1,12 +1,22 @@
-import { Text, Title } from '@mantine/core'
-
-function PageHeading({ eyebrow, title, description }) {
+function PageHeading({ eyebrow, title, description, stats }) {
   return (
-    <div className="page-heading">
-      <Text className="eyebrow">{eyebrow}</Text>
-      <Title order={1}>{title}</Title>
-      {description && <Text c="dimmed">{description}</Text>}
-    </div>
+    <header className="page-intro">
+      <div className="page-intro-main">
+        <span className="eyebrow">{eyebrow}</span>
+        <h1 className="page-intro-title">{title}</h1>
+        {description && <p className="page-intro-sub">{description}</p>}
+      </div>
+      {stats?.length > 0 && (
+        <div className="page-intro-side">
+          {stats.map((stat) => (
+            <div key={stat.label}>
+              <b>{stat.value}</b>
+              {stat.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </header>
   )
 }
 

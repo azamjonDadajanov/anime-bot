@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ActionIcon, Loader, ScrollArea, Text, Textarea } from '@mantine/core'
 import { aiApi, supportApi } from '../apis/api'
+import { useAuth } from '../apis/useAuth'
+import { TELEGRAM_BOT_URL } from '../pages/profile/profileUtils'
 import Markdown from './Markdown'
 
 const MAX_QUERY = 300
@@ -50,6 +52,19 @@ function parseAnswer(data) {
   // catalogue functions actually returned, never invented by the model.
   const answer = String(data?.answer || '')
   const tools = Array.isArray(data?.tools) ? data.tools : []
+  // An account action (izoh, yulduzcha, profil, obuna, ulash…): the server
+  // built the confirmation card for the client — the model never saw it. The
+  // card rides along with the assistant's sentence.
+  if (data?.action?.token) {
+    return {
+      role: 'ai',
+      kind: 'action',
+      query: data?.query || '',
+      answer,
+      tools,
+      action: data.action,
+    }
+  }
   if (!results.length) {
     // The assistant answered a conversational question ("who are you", "what
     // can you do") rather than looking content up: show only its words.
@@ -87,6 +102,333 @@ function ResultCard({ item }) {
   )
 }
 
+/**
+ * The confirmation card for an account action. The fields arrive from the
+ * server already filled («tayyor», never invented); the user edits what is
+ * editable and only then does «Tasdiqlash» sign the request. «Bekor qilish»
+ * just closes the card — nothing was ever sent.
+ *
+ * `kind: 'link'` has no confirm step at all: it opens the Telegram bot deep
+ * link and polls the account until the bot reports the profile connected, at
+ * which point the button flips to its disabled «Ulandi» state.
+ */
+function ActionCard({ action, user }) {
+  const [fields, setFields] = useState(() =>
+    (action.fields || []).map((field) => ({ ...field, file: null })),
+  )
+  const [link, setLink] = useState(() => action.link || null)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState('')
+  const [cancelled, setCancelled] = useState(false)
+  const [error, setError] = useState('')
+
+  const isLink = action.kind === 'link'
+  const linked = isLink ? Boolean(link?.linked) : false
+  const closed = Boolean(done || cancelled)
+
+  function applyLink(data) {
+    setLink(data)
+    if (data?.linked) {
+      // Keep the card's status row in step with the polled truth.
+      setFields((current) =>
+        current.map((field) =>
+          field.key === 'status'
+            ? { ...field, value: `Ulangan (@${data.username || ''})` }
+            : field,
+        ),
+      )
+    }
+  }
+
+  // The user taps «Telegramga ulash», confirms inside the bot — this card
+  // notices on its own, no page reload.
+  useEffect(() => {
+    if (!isLink || linked || cancelled) return undefined
+    let alive = true
+    async function check() {
+      try {
+        const data = await aiApi.telegramLink()
+        if (alive && data?.linked) applyLink(data)
+      } catch {
+        // A failed poll just waits for the next tick.
+      }
+    }
+    const timer = setInterval(check, 3000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLink, linked, cancelled])
+
+  function patch(key, value) {
+    setFields((current) => current.map((field) => (field.key === key ? { ...field, value } : field)))
+  }
+
+  function patchFile(key, file) {
+    setFields((current) => current.map((field) => (field.key === key ? { ...field, file } : field)))
+  }
+
+  function stepScore(field, delta) {
+    const has = field.value !== null && field.value !== undefined && field.value !== ''
+    const min = Number(field.min ?? 1)
+    const max = Number(field.max ?? 10)
+    const base = has ? Number(field.value) : delta > 0 ? min - delta : max - delta
+    patch(field.key, Math.min(max, Math.max(min, base + delta)))
+  }
+
+  async function checkLinkNow() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const data = await aiApi.telegramLink()
+      applyLink(data)
+      if (!data?.linked) setError('Hali ulanmagan — botda tasdiqlang.')
+    } catch {
+      setError('Ulash holatini tekshirib bo‘lmadi. Qayta urinib ko‘ring.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function confirm() {
+    if (busy || closed) return
+    const values = {}
+    let screenshot = null
+    let avatarFile = null
+    for (const field of fields) {
+      if (!field.editable) continue
+      if (field.type === 'file') {
+        if (field.file) {
+          if (field.key === 'screenshot') screenshot = field.file
+          if (field.key === 'avatar_file') avatarFile = field.file
+        }
+        continue
+      }
+      const empty =
+        field.value === null || field.value === undefined || String(field.value).trim() === ''
+      if (field.required && empty) {
+        setError(`${field.label}ni kiriting.`)
+        return
+      }
+      if (field.type === 'int' && empty) continue
+      values[field.key] = field.value
+    }
+    if (action.action === 'subscription_request' && !screenshot) {
+      setError('To‘lov skrinshotini yuklang.')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const data = await aiApi.confirmAction({ token: action.token, values, screenshot, avatarFile })
+      setDone(data?.message || 'Amal bajarildi.')
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Xatolik yuz berdi. Qayta urinib ko‘ring.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function renderField(field) {
+    const control = () => {
+      switch (field.type) {
+        case 'int': {
+          const has = field.value !== null && field.value !== undefined && field.value !== ''
+          return (
+            <span className="ai-action-stepper">
+              <button
+                type="button"
+                className="ai-action-step"
+                aria-label={`Kamaytirish: ${field.label}`}
+                disabled={closed}
+                onClick={() => stepScore(field, -1)}
+              >
+                <i className="bi bi-dash-lg" aria-hidden="true" />
+              </button>
+              <span className="ai-action-step-value">{has ? field.value : '—'}</span>
+              <button
+                type="button"
+                className="ai-action-step"
+                aria-label={`Ko‘paytirish: ${field.label}`}
+                disabled={closed}
+                onClick={() => stepScore(field, 1)}
+              >
+                <i className="bi bi-plus-lg" aria-hidden="true" />
+              </button>
+            </span>
+          )
+        }
+        case 'select':
+          return (
+            <select
+              className="ai-action-input"
+              value={String(field.value ?? '')}
+              disabled={closed}
+              onChange={(event) => patch(field.key, event.currentTarget.value)}
+            >
+              {!field.required && <option value="">—</option>}
+              {(field.options || []).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )
+        case 'bool':
+          return (
+            <button
+              type="button"
+              className={`ai-action-toggle${field.value ? ' is-on' : ''}`}
+              aria-pressed={Boolean(field.value)}
+              disabled={closed}
+              onClick={() => patch(field.key, !field.value)}
+            >
+              <i className="bi" aria-hidden="true" />
+              {field.value ? 'Yoqilgan' : 'O‘chirilgan'}
+            </button>
+          )
+        case 'file':
+          return (
+            <span className="ai-action-file">
+              <label className="ai-action-btn">
+                <i className="bi bi-paperclip" aria-hidden="true" />
+                {field.file ? field.file.name : 'Fayl tanlash'}
+                <input
+                  type="file"
+                  accept={field.accept || 'image/*'}
+                  disabled={closed}
+                  onChange={(event) => patchFile(field.key, event.target.files?.[0] || null)}
+                />
+              </label>
+              {field.value === true && !field.file && (
+                <span className="ai-action-file-hint">Mavjud rasm saqlanadi</span>
+              )}
+            </span>
+          )
+        case 'text':
+          return (
+            <input
+              className="ai-action-input"
+              type="text"
+              maxLength={field.max_length || undefined}
+              value={String(field.value ?? '')}
+              disabled={closed}
+              onChange={(event) => patch(field.key, event.currentTarget.value)}
+            />
+          )
+        case 'textarea':
+          return (
+            <textarea
+              className="ai-action-input"
+              rows={3}
+              maxLength={field.max_length || undefined}
+              value={String(field.value ?? '')}
+              disabled={closed}
+              onChange={(event) => patch(field.key, event.currentTarget.value)}
+            />
+          )
+        default:
+          return null
+      }
+    }
+
+    if (field.type === 'static') {
+      return (
+        <div className="ai-action-row" key={field.key}>
+          <span className="ai-action-label">{field.label}</span>
+          <span className="ai-action-value">
+            {field.href ? (
+              <Link className="ai-action-link" to={field.href}>
+                {field.value}
+              </Link>
+            ) : (
+              field.value
+            )}
+          </span>
+        </div>
+      )
+    }
+    return (
+      <label className="ai-action-row" key={field.key}>
+        <span className="ai-action-label">
+          {field.label}
+          {field.required && <em aria-hidden="true"> *</em>}
+        </span>
+        {control()}
+        {field.help && <span className="ai-action-help">{field.help}</span>}
+      </label>
+    )
+  }
+
+  const linkHref =
+    link?.url ||
+    (user?.username ? `${TELEGRAM_BOT_URL}?start=${encodeURIComponent(user.username)}` : TELEGRAM_BOT_URL)
+
+  return (
+    <div className={`ai-action${closed ? ' is-closed' : ''}`}>
+      <div className="ai-action-head">
+        <i className="bi bi-clipboard2-check" aria-hidden="true" />
+        <strong>{action.label}</strong>
+        {action.source === 'bot' && <span className="ai-action-tag">Telegram</span>}
+      </div>
+      <div className="ai-action-body">{fields.map(renderField)}</div>
+      {error && (
+        <p className="ai-action-status is-error" role="alert">
+          <i className="bi bi-exclamation-triangle" aria-hidden="true" /> {error}
+        </p>
+      )}
+      {done && (
+        <p className="ai-action-status is-done" role="status">
+          <i className="bi bi-check-circle-fill" aria-hidden="true" /> {done}
+        </p>
+      )}
+      {cancelled && (
+        <p className="ai-action-status" role="status">
+          <i className="bi bi-x-circle" aria-hidden="true" /> Amal bekor qilindi.
+        </p>
+      )}
+      {isLink ? (
+        <div className="ai-action-foot">
+          {linked ? (
+            <button type="button" className="ai-action-btn is-primary" disabled>
+              <i className="bi bi-check2-circle" aria-hidden="true" /> Ulandi
+            </button>
+          ) : (
+            <>
+              <a className="ai-action-btn is-primary" href={linkHref} target="_blank" rel="noreferrer">
+                <i className="bi bi-send" aria-hidden="true" /> Telegramga ulash
+              </a>
+              <button type="button" className="ai-action-btn" disabled={busy} onClick={checkLinkNow}>
+                <i className="bi bi-arrow-clockwise" aria-hidden="true" /> Tekshirish
+              </button>
+            </>
+          )}
+        </div>
+      ) : !closed ? (
+        <div className="ai-action-foot">
+          <button
+            type="button"
+            className="ai-action-btn"
+            disabled={busy}
+            onClick={() => setCancelled(true)}
+          >
+            Bekor qilish
+          </button>
+          <button
+            type="button"
+            className="ai-action-btn is-primary"
+            disabled={busy}
+            onClick={confirm}
+          >
+            {busy ? 'Yuborilmoqda…' : 'Tasdiqlash'}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /** The last turns of the chat, in the shape the ai-assistant API expects. */
 function historyFrom(list) {
   return list
@@ -100,6 +442,7 @@ function historyFrom(list) {
 }
 
 function AiAssistantChat() {
+  const { user } = useAuth()
   const [opened, setOpened] = useState(false)
   // 'search' — AI yordamchi, 'admin' — the same composer writes to the
   // administrators, 'taste' — "Sevimlilar": any query, answered against the
@@ -448,6 +791,14 @@ function AiAssistantChat() {
                     )}
                     {message.kind === 'answer' && (
                       <Markdown className="ai-answer" text={message.answer} />
+                    )}
+                    {message.kind === 'action' && (
+                      <>
+                        {message.answer && (
+                          <Markdown className="ai-answer" text={message.answer} />
+                        )}
+                        <ActionCard action={message.action} user={user} />
+                      </>
                     )}
                     {message.kind === 'empty' && (
                       <>

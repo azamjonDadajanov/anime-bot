@@ -5,6 +5,7 @@ import DashboardLayout from './components/DashboardLayout'
 import AuthPage from './pages/AuthPage'
 import TelegramAuthPage from './pages/TelegramAuthPage'
 import HomePage from './pages/HomePage'
+import ExplorePage from './pages/ExplorePage'
 import FavoritesPage from './pages/FavoritesPage'
 import AnimeGamePage from './pages/AnimeGamePage'
 import RatingPage from './pages/RatingPage'
@@ -20,7 +21,13 @@ import ProfileSubscriptionPage from './pages/profile/ProfileSubscriptionPage'
 import ProfileHistoryPage from './pages/profile/ProfileHistoryPage'
 import ProfileSettingsPage from './pages/profile/ProfileSettingsPage'
 import 'bootstrap-icons/font/bootstrap-icons.css'
-import './App.css'
+import './styles/shell.css'
+import './styles/home.css'
+import './styles/catalog.css'
+import './styles/account.css'
+import './styles/reader.css'
+import './styles/ai.css'
+import './styles/comments.css'
 
 // In production nginx answers /admin with 404 — the panel lives only on
 // admin.anichopar.uz — so this route exists purely for local development.
@@ -44,6 +51,7 @@ export default function App() {
         <Route path="/register" element={<><Header /><AuthPage mode="register" /></>} />
         <Route path="/telegram-auth" element={<><Header /><TelegramAuthPage /></>} />
         <Route path="/" element={<DashboardLayout><HomePage /></DashboardLayout>} />
+        <Route path="/explore" element={<DashboardLayout><ExplorePage /></DashboardLayout>} />
         {sectionRoutes.map((key) => (
           <Route
             key={key}

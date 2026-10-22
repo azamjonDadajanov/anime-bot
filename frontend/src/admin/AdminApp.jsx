@@ -6,6 +6,7 @@ import AdminLayout from './components/AdminLayout'
 import AdminLoginPage from './pages/AdminLoginPage'
 import BroadcastPage from './pages/BroadcastPage'
 import ChannelsPage from './pages/ChannelsPage'
+import CommentsPage from './pages/CommentsPage'
 import CouponsPage from './pages/CouponsPage'
 import DashboardPage from './pages/DashboardPage'
 import GameRatingsPage from './pages/GameRatingsPage'
@@ -45,6 +46,7 @@ export default function AdminApp() {
           <Route path="broadcast" element={<BroadcastPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="users/:userId" element={<UserDetailPage />} />
+          <Route path="comments" element={<CommentsPage />} />
           <Route path="subscriptions" element={<SubscriptionsPage />} />
           <Route path="income" element={<IncomePage />} />
           <Route path="genres" element={<GenresPage />} />

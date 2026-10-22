@@ -33,13 +33,18 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from django.conf import settings
 from django.db import DatabaseError
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+# The operator's view of the same events. Records under the "bot" namespace
+# are persisted into ``bot.BotLogEntry`` (see ``bot.bot_logging``) and are
+# readable from the admin panel, so a dead model or an exhausted key shows up
+# there — and not only in the server's console.
+operator_log = logging.getLogger("bot.ai")
 
 # Presets: base URL and the model to use when the row (or ``AI_LLM_MODEL``) does
 # not name one. Kept in one place so adding a provider stays a data change.
@@ -52,6 +57,9 @@ PRESETS: Dict[str, Dict[str, str]] = {
 	"gemini": {
 		"base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
 		# The cheap, high-volume Gemini tier (has a free tier as well).
+		# Keep this name alive: the whole 2.5 line now answers HTTP 404 ("no
+		# longer available to new users"), and a dead preset silently breaks
+		# every deployment that relies on it.
 		"model": "gemini-3.5-flash-lite",
 	},
 	"openai": {
@@ -81,6 +89,21 @@ LATENCY_ALPHA = 0.35
 MAX_COOLDOWN_SECONDS = 1800
 # Quota/limit answers that mean "try the next provider", not "the request is bad".
 QUOTA_STATUS_CODES = frozenset({402, 429})
+# A model the provider does not know (404) or refuses (400) is a *setup*
+# mistake, not a hiccup: retrying it every minute would keep failing the same
+# way, so such a provider is left alone for much longer.
+MODEL_GONE_STATUS_CODES = frozenset({400, 404})
+# How long a misconfigured model is skipped: long enough for the operator to
+# notice and fix it, short enough that the fix is picked up the same day.
+CONFIG_ERROR_COOLDOWN_SECONDS = 1800
+# Appended to the system prompt when the provider that answered cannot be
+# asked for functions. The model then talks without the catalogue — and says
+# so, instead of inventing titles it never looked up.
+TEXT_ONLY_NOTE = (
+	"\n\nDIQQAT: senga katalog funksiyalari berilmagan. Katalogdagi kontent "
+	"haqida (nomi, qismlari, reytingi, yili) hech narsa aytma — faqat umumiy "
+	"suhbat bilan javob ber."
+)
 # Sent as the User-Agent on every call. Cloudflare (in front of Groq and other
 # gateways) rejects urllib's default ``Python-urllib/3.x`` with HTTP 403 Error
 # 1010 before the request ever reaches the API, so a browser-like string is used.
@@ -100,13 +123,24 @@ class ProviderError(LLMUnavailable):
 
 	``quota`` separates "this provider is out of room right now" (skip it for
 	minutes) from "this call went wrong" (skip it for a moment), which is what
-	the cooldown lengths are based on. ``retry_after`` is the provider's own
-	suggestion in seconds when it sends one.
+	the cooldown lengths are based on. ``config`` marks the third case: the
+	provider does not know the model, or refuses the request itself — nothing
+	will fix that by retrying, so it is skipped for much longer.
+	``retry_after`` is the provider's own suggestion in seconds when it sends
+	one.
 	"""
 
-	def __init__(self, message: str, *, quota: bool = False, retry_after: Optional[int] = None):
+	def __init__(
+		self,
+		message: str,
+		*,
+		quota: bool = False,
+		config: bool = False,
+		retry_after: Optional[int] = None,
+	):
 		super().__init__(message)
 		self.quota = quota
+		self.config = config
 		self.retry_after = retry_after
 
 
@@ -155,6 +189,10 @@ class ProviderConfig:
 	base_url: str
 	priority: int = 100
 	row_id: Optional[int] = None
+	# False for a provider that cannot be asked for functions. It still
+	# answers — the question goes to it without the catalogue — but the
+	# assistant must not expect a tool call from it.
+	supports_tools: bool = True
 
 	@property
 	def label(self) -> str:
@@ -321,13 +359,16 @@ def provider_chain(*, include_cooling: bool = False) -> List[ProviderConfig]:
 	the limit does not ask that provider a second time).
 
 	Reading the rows here — rather than in the caller — means the whole feature
-	asks one function "who can answer?", and a deployment with no rows falls
-	back to the environment-configured provider.
+	asks one function "who can answer?". A row may leave its key empty and
+	borrow the environment's one (only when it speaks to the same provider),
+	and the environment provider itself is the last resort: the database is the
+	operator's list, and ``.env`` still answers when that list is empty.
 	"""
 	from .models import AIProvider
 
 	now = timezone.now()
 	configs: List[ProviderConfig] = []
+	env = env_provider()
 	try:
 		rows = list(
 			AIProvider.objects.filter(is_active=True).order_by(
@@ -348,25 +389,32 @@ def provider_chain(*, include_cooling: bool = False) -> List[ProviderConfig]:
 		elif cooldown_left(f"row:{row.pk}") > 0:
 			continue
 		preset = PRESETS.get(row.kind, PRESETS["custom"])
+		api_key = (row.api_key or "").strip()
+		if not api_key and row.kind == env.kind:
+			# A row without its own key borrows the environment's one — but
+			# only when it talks to the same provider: a Gemini key cannot
+			# open Groq's door.
+			api_key = env.api_key
 		config = ProviderConfig(
 			name=row.name,
 			kind=row.kind,
-			api_key=(row.api_key or "").strip(),
+			api_key=api_key,
 			model=(row.model or "").strip() or preset["model"],
 			base_url=(row.base_url or "").strip().rstrip("/") or preset["base_url"],
 			priority=int(row.priority or 100),
 			row_id=row.pk,
+			supports_tools=bool(getattr(row, "supports_tools", True)),
 		)
 		if _configured(config):
 			configs.append(config)
-	if configs:
-		return configs
-	fallback = env_provider()
-	if not _configured(fallback):
-		return []
-	if not include_cooling and cooldown_left(fallback.key) > 0:
-		return []
-	return [fallback]
+	# The environment provider is the reserve: it goes last, and only when the
+	# database chain does not already contain the same model.
+	if _configured(env) and not any(
+		config.kind == env.kind and config.model == env.model for config in configs
+	):
+		if include_cooling or cooldown_left(env.key) <= 0:
+			configs.append(env)
+	return configs
 
 
 def is_configured() -> bool:
@@ -416,6 +464,11 @@ def configuration() -> Dict[str, Any]:
 	chain = provider_chain(include_cooling=True)
 	usable = provider_chain()
 	usable_keys = {config.key for config in usable}
+	# The last error of every row: without it the operator sees "waiting" and
+	# not *why*.
+	errors: Dict[str, str] = {}
+	for row in health():
+		errors[row["name"]] = row["last_error"]
 	return {
 		"configured": bool(usable),
 		"usable": len(usable),
@@ -429,6 +482,8 @@ def configuration() -> Dict[str, Any]:
 				"priority": config.priority,
 				"key_set": bool(config.api_key),
 				"usable": config.key in usable_keys,
+				"supports_tools": config.supports_tools,
+				"last_error": errors.get(config.label, ""),
 			}
 			for config in chain
 		],
@@ -494,10 +549,20 @@ def _record_success(row_id: Optional[int], elapsed_ms: int) -> None:
 
 
 def _record_failure(
-	row_id: Optional[int], message: str, *, cooldown_seconds: Optional[int]
+	row_id: Optional[int],
+	message: str,
+	*,
+	cooldown_seconds: Optional[int],
+	label: str = "",
 ) -> None:
-	"""Count a failure and put the row on cooldown (best effort)."""
-	logger.warning("AI provider %s failed: %s", row_id, str(message)[:200])
+	"""Count a failure and put the row on cooldown (best effort).
+
+	``label`` is the provider's name: the row may not exist (the provider came
+	from ``.env``), and a log line that says "provider None" tells the operator
+	nothing about which model actually failed.
+	"""
+	logger.warning("AI provider %s failed: %s", label or row_id or "?", str(message)[:200])
+	operator_log.warning("AI provider %s failed: %s", label or row_id or "?", str(message)[:200])
 	from .models import AIProvider
 
 	if row_id is None:
@@ -530,6 +595,31 @@ def _retry_after_seconds(headers) -> Optional[int]:
 	return value if value > 0 else None
 
 
+def _text_only_messages(messages: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+	"""The conversation as a provider that cannot call functions must see it.
+
+	The tool rounds are removed (such a provider would not understand them) and
+	the system prompt says the catalogue is out of reach, so the model does not
+	invite titles it never looked up.
+	"""
+	prepared: List[Dict[str, Any]] = []
+	saw_system = False
+	for item in messages:
+		role = str(item.get("role") or "")
+		if role == "tool" or item.get("tool_calls"):
+			continue
+		content = str(item.get("content") or "")
+		if role == "system":
+			saw_system = True
+			content = f"{content}{TEXT_ONLY_NOTE}"
+		prepared.append({**item, "content": content})
+	if not saw_system:
+		# Without a system message the warning would be lost, and the model
+		# would talk about the catalogue as if it had looked it up.
+		prepared.insert(0, {"role": "system", "content": TEXT_ONLY_NOTE.strip()})
+	return prepared
+
+
 # --------------------------------------------------------------------------- #
 # One attempt
 # --------------------------------------------------------------------------- #
@@ -544,20 +634,25 @@ def _attempt(
 	tool_choice: str = "auto",
 ) -> ChatResult:
 	"""Send one request; failures raise :class:`ProviderError` with a reason."""
+	prepared: List[Dict[str, Any]] = list(messages)
+	if tools and not config.supports_tools:
+		# This provider cannot be asked for functions. The question still goes
+		# to it — without the catalogue, and with the prompt saying so.
+		prepared = _text_only_messages(messages)
 	payload: Dict[str, Any] = {
 		"model": config.model,
-		"messages": list(messages),
+		"messages": prepared,
 		# Deterministic enough that the same request does not produce a different
 		# answer every time.
 		"temperature": float(temperature),
 		"max_tokens": int(max_tokens),
 	}
-	if tools:
+	if tools and config.supports_tools:
 		# OpenAI-compatible tool calling: the model answers with ``tool_calls``
 		# instead of prose, the assistant runs them and asks again.
 		payload["tools"] = list(tools)
 		payload["tool_choice"] = tool_choice or "auto"
-	elif json_mode():
+	elif not tools and json_mode():
 		payload["response_format"] = {"type": "json_object"}
 	request = urllib.request.Request(
 		f"{config.base_url}/chat/completions",
@@ -585,6 +680,10 @@ def _attempt(
 		raise ProviderError(
 			f"{config.label} HTTP {exc.code}: {detail}",
 			quota=exc.code in QUOTA_STATUS_CODES,
+			# 404/400: the provider does not know this model (or this request).
+			# Retrying it every minute would fail the same way, so it is left
+			# alone for much longer and the chain moves on.
+			config=exc.code in MODEL_GONE_STATUS_CODES,
 			retry_after=_retry_after_seconds(exc.headers),
 		) from exc
 	except urllib.error.URLError as exc:
@@ -616,6 +715,34 @@ def _attempt(
 			)
 		)
 	return ChatResult(content=extract, tool_calls=tuple(calls), provider=config.label)
+
+
+def probe(config: ProviderConfig, *, seconds: Optional[int] = None) -> Tuple[str, str]:
+	"""Ask one provider a trivial question: ``(status, detail)``.
+
+	``status`` is one of ``ok``, ``model_topilmadi``, ``limit`` or ``xato``. The
+	point is to see *which* model is broken: a chain that looks ready on paper
+	can still answer HTTP 404 for every model in it (a withdrawn model), and
+	only a real call tells that apart from a missing key.
+	"""
+	try:
+		result = _attempt(
+			config,
+			[{"role": "user", "content": "Ha yoki yo'q deb javob ber."}],
+			max_tokens=16,
+			temperature=0.0,
+			seconds=int(timeout() if seconds is None else seconds),
+		)
+	except ProviderError as exc:
+		if getattr(exc, "config", False):
+			return "model_topilmadi", str(exc)
+		if getattr(exc, "quota", False):
+			return "limit", str(exc)
+		return "xato", str(exc)
+	except LLMUnavailable as exc:  # pragma: no cover - defensive
+		return "xato", str(exc)
+	answer = (result.content or "").strip()[:80] or "(bo'sh javob)"
+	return "ok", answer
 
 
 def chat(
@@ -691,22 +818,31 @@ def chat_completion(
 			)
 		except LLMUnavailable as exc:
 			is_quota = bool(getattr(exc, "quota", False))
+			is_config = bool(getattr(exc, "config", False))
 			retry_after = getattr(exc, "retry_after", None)
-			cooldown = (
-				(retry_after or QUOTA_COOLDOWN_SECONDS)
-				if is_quota
-				else TRANSIENT_COOLDOWN_SECONDS
-			)
+			if is_config:
+				# A model the provider does not know: waiting a minute and
+				# asking again would fail exactly the same way.
+				cooldown = CONFIG_ERROR_COOLDOWN_SECONDS
+			elif is_quota:
+				cooldown = retry_after or QUOTA_COOLDOWN_SECONDS
+			else:
+				cooldown = TRANSIENT_COOLDOWN_SECONDS
 			# Both cooldowns are set before the next provider is tried: this
 			# process skips the failed one from the next request on, and every
 			# other worker learns about it from the row.
 			set_cooldown(config.key, cooldown)
-			_record_failure(config.row_id, str(exc), cooldown_seconds=cooldown)
+			_record_failure(
+				config.row_id,
+				str(exc),
+				cooldown_seconds=cooldown,
+				label=config.label,
+			)
 			errors.append(str(exc))
 			logger.info(
 				"AI provider %s failed (%s), trying the next of %s",
 				config.label,
-				"limit" if is_quota else "error",
+				"model topilmadi" if is_config else ("limit" if is_quota else "xato"),
 				len(chain) - position - 1,
 			)
 			continue

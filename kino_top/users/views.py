@@ -79,6 +79,32 @@ class CurrentUserView(generics.RetrieveUpdateAPIView):
 		return response
 
 
+@extend_schema(responses=OpenApiTypes.OBJECT, tags=["Profile"])
+class TelegramLinkView(APIView):
+	"""Whether this account's Telegram profile is linked, plus the deep link.
+
+	The AI assistant's «Telegramga ulash» card polls this while the user
+	presses the deep link in Telegram (the bot confirms the link there). ``url``
+	is empty unless ``BOT_USERNAME`` is configured — the frontend then falls
+	back to its own bot handle.
+	"""
+
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		user = request.user
+		profile = getattr(user, "telegram_profile", None)
+		bot_username = str(getattr(settings, "BOT_USERNAME", "") or "").lstrip("@")
+		url = ""
+		if bot_username and user.username:
+			url = f"https://t.me/{bot_username}?start={user.username}"
+		return Response({
+			"linked": profile is not None,
+			"username": getattr(profile, "username", "") if profile else "",
+			"url": url,
+		})
+
+
 class FavoritePagination(PageNumberPagination):
 	page_size = 10
 
@@ -426,13 +452,18 @@ class ProfileOverviewView(APIView):
 	def get(self, request):
 		user = request.user
 		profile = getattr(user, "telegram_profile", None)
+		from .premium import is_premium_user
+
 		return Response(
 			{
 				"account": {
 					"id": user.pk,
 					"username": user.username,
 					"email": user.email,
+					"first_name": user.first_name,
+					"last_name": user.last_name,
 					"is_staff": user.is_staff,
+					"is_premium": is_premium_user(user),
 					"joined_at": user.date_joined,
 					"last_login": user.last_login,
 				},
@@ -492,13 +523,18 @@ class UserSettingsView(APIView):
 		return settings_object
 
 	def get(self, request):
-		return Response(UserSettingsSerializer(self.get_settings(request.user)).data)
+		return Response(
+			UserSettingsSerializer(
+				self.get_settings(request.user), context={"request": request}
+			).data
+		)
 
 	def patch(self, request):
 		serializer = UserSettingsSerializer(
 			self.get_settings(request.user),
 			data=request.data,
 			partial=True,
+			context={"request": request},
 		)
 		serializer.is_valid(raise_exception=True)
 		serializer.save()

@@ -268,14 +268,12 @@ def link_mini_app_user(user_data, *, email, password):
 	return profile
 
 
-@transaction.atomic
-def link_profile_by_username(profile, username) -> str:
-	"""Attach ``profile`` to the site account named ``username``.
+def link_profile_status(profile, username) -> str:
+	"""The status ``link_profile_by_username`` *would* report — without writing.
 
-	Used by the ``/start <username>`` deep link the profile page generates.
-	Returns ``linked``, ``already``, ``not_found``, ``inactive``, ``taken`` or
-	``conflict``; only a disposable ``telegram_<id>`` account is replaced, a
-	real site account on the profile is never stolen.
+	``ready`` means everything checks out and the real link call will bind the
+	profile; the bot uses this to show a confirm card *before* anything is
+	written (the website's «Telegramga ulash» flow asks for consent first).
 	"""
 	cleaned = str(username or "").strip().lstrip("@")
 	if not cleaned:
@@ -294,6 +292,26 @@ def link_profile_by_username(profile, username) -> str:
 	current = profile.auth_user
 	if current is not None and not _is_temporary_auth_user(current, profile.telegram_id):
 		return "conflict"
+	return "ready"
+
+
+@transaction.atomic
+def link_profile_by_username(profile, username) -> str:
+	"""Attach ``profile`` to the site account named ``username``.
+
+	Used by the ``/start <username>`` deep link the profile page generates.
+	Returns ``linked``, ``already``, ``not_found``, ``inactive``, ``taken`` or
+	``conflict``; only a disposable ``telegram_<id>`` account is replaced, a
+	real site account on the profile is never stolen.
+	"""
+	status = link_profile_status(profile, username)
+	if status != "ready":
+		return status
+
+	cleaned = str(username or "").strip().lstrip("@")
+	target = get_user_model().objects.filter(username__iexact=cleaned).first()
+	if target is None:  # pragma: no cover - raced with a deletion
+		return "not_found"
 
 	profile.auth_user = target
 	profile.save(update_fields=["auth_user", "updated_at"])

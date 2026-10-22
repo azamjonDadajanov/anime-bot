@@ -682,10 +682,12 @@ class PartsNavigatorTests(DispatcherTestCase):
 		self.assertEqual(self.session.delivered_file_ids(), ["only-file"])
 		rows = self._rows()
 		self.assertEqual(rows[0], ["⭐️ Sevimlilarga qo'shish"])
-		self.assertEqual(rows[1], ["⬅️ Asosiy menyu"])
+		self.assertEqual(rows[1], ["💬 Izoh qoldirish"])
+		self.assertEqual(rows[2], ["⬅️ Asosiy menyu"])
 		callbacks = self._callbacks()
 		self.assertEqual(callbacks[0][0], f"favm:{title.pk}:{part.pk}")
-		self.assertEqual(callbacks[1][0], cb.MENU)
+		self.assertEqual(callbacks[1][0], f"cm:{title.pk}:{part.pk}")
+		self.assertEqual(callbacks[2][0], cb.MENU)
 
 	def test_multi_page_part_posts_the_navigator_under_the_group(self) -> None:
 		title = make_title(code="7008", title="Scanned Anime")

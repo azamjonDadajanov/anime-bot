@@ -72,7 +72,7 @@ def announcement_text(
 	return "\n".join(lines)
 
 
-def _cover_file(title: MediaTitle) -> Optional[BufferedInputFile]:
+def cover_input_file(title: MediaTitle) -> Optional[BufferedInputFile]:
 	# The cover is a media file on disk (MEDIA_ROOT/covers/...), read as bytes
 	# only to hand it to Telegram.
 	data = cover_bytes(title)
@@ -161,7 +161,7 @@ async def _send_to_channel(
 ) -> Optional[int]:
 	username = await bot_username(bot)
 	keyboard = _deep_link_keyboard(username, title, text=button_text)
-	cover = _cover_file(title)
+	cover = cover_input_file(title)
 
 	try:
 		if cover is not None:

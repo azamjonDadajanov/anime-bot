@@ -49,7 +49,13 @@ class MediaTitleSerializer(serializers.ModelSerializer):
 		many=True,
 		required=False,
 	)
+	# Reading side of ``genres``: the admin panel edits with primary keys, the
+	# public site only needs the labels, so both shapes travel together.
+	genre_names = serializers.SerializerMethodField()
 	cover = CoverField(required=False, allow_null=True)
+
+	def get_genre_names(self, obj) -> list:
+		return [genre.name for genre in obj.genres.all()]
 
 	def create(self, validated_data):
 		# A URL means "already stored, nothing new": drop it, there is no file
@@ -73,14 +79,18 @@ class MediaTitleSerializer(serializers.ModelSerializer):
 			"title",
 			"slug",
 			"genres",
+			"genre_names",
 			"code",
 			"synopsis",
 			"episode_count",
+			"duration_minutes",
 			"quality_options",
 			"default_quality",
 			"language",
 			"required_plan",
 			"rating",
+			"rating_average",
+			"rating_count",
 			"cover",
 			"cover_content_type",
 			"release_year",
@@ -117,9 +127,20 @@ class MediaPartSerializer(serializers.ModelSerializer):
 class MediaTitleDetailSerializer(MediaTitleSerializer):
 	parts = MediaPartSerializer(many=True, read_only=True)
 	is_favorite = serializers.SerializerMethodField()
+	# Community numbers shown on the detail page: the live average plus how
+	# many accounts produced it, the caller's own 1-10 score (null when they
+	# have not rated yet) and the comment counter.
+	my_rating = serializers.SerializerMethodField()
+	comments_count = serializers.SerializerMethodField()
 
 	class Meta(MediaTitleSerializer.Meta):
-		fields = [*MediaTitleSerializer.Meta.fields, "parts", "is_favorite"]
+		fields = [
+			*MediaTitleSerializer.Meta.fields,
+			"parts",
+			"is_favorite",
+			"my_rating",
+			"comments_count",
+		]
 
 	def get_is_favorite(self, obj) -> bool:
 		"""True when the authenticated caller has this title in favourites."""
@@ -130,6 +151,121 @@ class MediaTitleDetailSerializer(MediaTitleSerializer):
 		if profile is None:
 			return False
 		return obj.user_favorites.filter(user=profile).exists()
+
+	def get_my_rating(self, obj) -> int | None:
+		request = self.context.get("request")
+		if request is None or not request.user or not request.user.is_authenticated:
+			return None
+		from .community import user_rating_sync
+
+		return user_rating_sync(request.user, obj)
+
+	def get_comments_count(self, obj) -> int:
+		from .community import comment_counts_sync
+
+		return comment_counts_sync(obj)
+
+
+class CommentAuthorSerializer(serializers.Serializer):
+	"""Who wrote a comment — plus whether they currently hold the 👑."""
+
+	id = serializers.IntegerField(allow_null=True)
+	username = serializers.CharField()
+	display_name = serializers.CharField()
+	is_premium = serializers.BooleanField()
+
+
+class CommentPartSerializer(serializers.Serializer):
+	"""The episode the comment belongs to (null = about the whole title)."""
+
+	id = serializers.IntegerField()
+	number = serializers.IntegerField()
+	season_number = serializers.IntegerField(allow_null=True)
+	title = serializers.CharField()
+
+
+class CommentTitleRefSerializer(serializers.Serializer):
+	id = serializers.IntegerField()
+	title = serializers.CharField()
+	slug = serializers.CharField()
+	type = serializers.CharField()
+
+
+class TitleCommentSerializer(serializers.Serializer):
+	"""Read shape of one comment (built from ``movies.community`` payloads)."""
+
+	id = serializers.IntegerField()
+	body = serializers.CharField()
+	source = serializers.CharField()
+	created_at = serializers.DateTimeField()
+	part = CommentPartSerializer(allow_null=True)
+	author = CommentAuthorSerializer()
+	author_initial = serializers.CharField()
+	author_rating = serializers.IntegerField(allow_null=True)
+	title = CommentTitleRefSerializer()
+
+
+class CommentListSerializer(serializers.Serializer):
+	"""Paginated comment page (same shape in the API and in the bot)."""
+
+	count = serializers.IntegerField()
+	page = serializers.IntegerField()
+	pages = serializers.IntegerField()
+	page_size = serializers.IntegerField()
+	results = TitleCommentSerializer(many=True)
+
+
+class CommentCreateSerializer(serializers.Serializer):
+	"""POST body: which title, what was written, optionally an episode and a 1-10 score."""
+
+	title = serializers.SlugField()
+	body = serializers.CharField(allow_blank=False, trim_whitespace=False)
+	part = serializers.IntegerField(required=False, allow_null=True, default=None)
+	# The score travels with the comment but is stored in its own table, so
+	# later edits (or deletion) of the text can never touch the rating.
+	rating = serializers.IntegerField(
+		required=False, allow_null=True, default=None, min_value=1, max_value=10
+	)
+
+	def validate_body(self, value):
+		from .community import CommunityError, validate_body
+
+		try:
+			return validate_body(value)
+		except CommunityError as exc:
+			raise serializers.ValidationError(exc.detail) from None
+
+	def validate(self, attrs):
+		from .models import MediaPart
+
+		title = MediaTitle.objects.filter(slug=attrs["title"]).first()
+		if title is None:
+			raise serializers.ValidationError({"title": "Media topilmadi."})
+		part = None
+		part_id = attrs.get("part")
+		if part_id:
+			part = MediaPart.objects.filter(pk=part_id, content=title).first()
+			if part is None:
+				raise serializers.ValidationError({"part": "Bu media bunday qismga ega emas."})
+		attrs["title_object"] = title
+		attrs["part_object"] = part
+		return attrs
+
+
+class RatingCreateSerializer(serializers.Serializer):
+	"""POST body of ``/catalog/{slug}/rating/``."""
+
+	score = serializers.IntegerField(
+		min_value=1, max_value=10, error_messages={"min_value": "Baho 1 dan 10 gacha.", "max_value": "Baha 1 dan 10 gacha."}
+	)
+
+
+class RatingSummarySerializer(serializers.Serializer):
+	average = serializers.FloatField()
+	count = serializers.IntegerField()
+	my_score = serializers.IntegerField(allow_null=True)
+	min = serializers.IntegerField()
+	max = serializers.IntegerField()
 
 
 class TelegramMediaSerializer(serializers.ModelSerializer):
@@ -198,7 +334,7 @@ class MediaLookupSerializer(serializers.ModelSerializer):
 
 	class Meta:
 		model = MediaTitle
-		fields = ["id", "type", "title", "slug", "genres", "code", "synopsis", "episode_count", "quality_options", "default_quality", "language", "required_plan", "rating", "cover_content_type", "parts"]
+		fields = ["id", "type", "title", "slug", "genres", "code", "synopsis", "episode_count", "duration_minutes", "quality_options", "default_quality", "language", "required_plan", "rating", "rating_average", "rating_count", "cover_content_type", "parts"]
 
 
 class AIHistoryMessageSerializer(serializers.Serializer):
@@ -281,6 +417,47 @@ class AIAssistantResultSerializer(serializers.Serializer):
 	url = serializers.CharField()
 
 
+class AIActionFieldSerializer(serializers.Serializer):
+	"""One row of the confirmation card the client renders.
+
+	Built server-side from the real account state (never by the model), so the
+	schema documents every kind a client must handle: ``static`` (read-only),
+	``text``/``textarea`` (edited inline), ``int`` (min/max), ``select``
+	(options), ``bool`` and ``file`` (a screenshot or avatar upload).
+	"""
+
+	key = serializers.CharField()
+	label = serializers.CharField()
+	type = serializers.CharField()
+	value = serializers.JSONField(allow_null=True, required=False)
+	editable = serializers.BooleanField(required=False, default=False)
+	required = serializers.BooleanField(required=False, default=False)
+	options = serializers.ListField(child=serializers.DictField(), required=False)
+	min = serializers.IntegerField(required=False)
+	max = serializers.IntegerField(required=False)
+	max_length = serializers.IntegerField(required=False)
+	accept = serializers.CharField(required=False)
+	help = serializers.CharField(required=False)
+	href = serializers.CharField(required=False)
+
+
+class AIActionSerializer(serializers.Serializer):
+	"""A proposed account action, waiting for the user's confirmation.
+
+	``token`` is the signed proposal (user, action, values) the confirm
+	endpoint receives back; ``link`` only rides along for ``link_telegram``,
+	where the card's own buttons do the work and polling just flips the state.
+	"""
+
+	token = serializers.CharField()
+	action = serializers.CharField()
+	label = serializers.CharField()
+	kind = serializers.CharField()
+	source = serializers.CharField()
+	fields = AIActionFieldSerializer(many=True)
+	link = serializers.DictField(required=False)
+
+
 class AIAssistantResponseSerializer(serializers.Serializer):
 	query = serializers.CharField()
 	count = serializers.IntegerField()
@@ -295,6 +472,25 @@ class AIAssistantResponseSerializer(serializers.Serializer):
 	# (``search_catalog``, ``list_parts``, ``personal_taste``, ...).
 	tools = serializers.ListField(child=serializers.CharField())
 	results = AIAssistantResultSerializer(many=True)
+	# The confirmation card when the model proposed an account action.
+	action = AIActionSerializer(allow_null=True, required=False)
+
+
+class AIActionConfirmSerializer(serializers.Serializer):
+	"""The confirm call: the signed token plus whatever the user edited.
+
+	Files (a payment screenshot, an avatar picture) ride as multipart parts
+	and are read from ``request.FILES`` by the view, so they stay out of this
+	JSON-ish body.
+	"""
+
+	token = serializers.CharField(
+		max_length=2048,
+		error_messages={"required": "Amal kartasi tokeni kerak."},
+	)
+	# Only the action's own editable keys survive the whitelist in
+	# ``movies.ai_actions.execute``; anything else is dropped silently.
+	values = serializers.JSONField(required=False, allow_null=True, default=dict)
 
 
 class ReadingProgressSerializer(serializers.ModelSerializer):

@@ -5,7 +5,7 @@ from django.db.models import Count, F, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
-from rest_framework import generics, status, viewsets
+from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -14,15 +14,19 @@ from rest_framework.views import APIView
 
 from bot.models import BotLogEntry, BotSettings, Broadcast
 from games.models import AnimeVerification, MonthlyPrize, QuizAttempt, QuizQuestion
-from movies.models import Genre, MediaPart, MediaTitle, TelegramChannel, TelegramMedia
+from movies import community
+from movies.models import Genre, MediaPart, MediaTitle, TelegramChannel, TelegramMedia, TitleComment, TitleRating
 from users.models import Coupon, Subscription, SubscriptionRequest, TelegramUser
 from users.plans import PLAN_ORDER, plan_price
 
+from . import announcements as announcement_service
 from .broadcast_runner import start_broadcast_async
 from .coupon_publisher import maybe_auto_publish_coupon, publish_coupon_to_channel
 from .models import Income
 from .permissions import IsStaffAdmin
 from .serializers import (
+	AdminCommentSerializer,
+	AdminRatingSerializer,
 	AdminUserDetailSerializer,
 	AdminUserSerializer,
 	AnimeVerificationAdminSerializer,
@@ -412,6 +416,37 @@ class AdminMediaStatsView(APIView):
 
 
 @extend_schema(tags=["Admin"])
+class AdminMediaAnnounceView(APIView):
+	"""«📢 E'lon qilish»: post one title to the channel and/or every bot user.
+
+	GET returns the exact message, the audience size and the channel the
+	publishing rules picked, so the panel can show a confirmation card before
+	sending. POST sends it: the channel post happens inside the request, the
+	fan-out to every bot user continues in the background.
+	"""
+
+	permission_classes = [IsStaffAdmin]
+
+	def get(self, request, slug):
+		title = get_object_or_404(MediaTitle, slug=slug)
+		return Response(
+			announcement_service.preview(title.pk, request.query_params.get("scope"))
+		)
+
+	def post(self, request, slug):
+		title = get_object_or_404(MediaTitle, slug=slug)
+		payload, error = announcement_service.announce(
+			title.pk,
+			targets=request.data.get("targets"),
+			scope=request.data.get("scope"),
+			admin_telegram_id=getattr(request.user, "id", None),
+		)
+		if payload is None:
+			return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
+		return Response(payload)
+
+
+@extend_schema(tags=["Admin"])
 class AdminBroadcastViewSet(viewsets.ModelViewSet):
 	queryset = Broadcast.objects.all()
 	permission_classes = [IsStaffAdmin]
@@ -688,3 +723,134 @@ class AdminMonthlyPrizeViewSet(viewsets.ModelViewSet):
 		if prize is None:
 			return Response({"detail": f"{year}-{month:02d} uchun mukofot allaqachon berilgan yoki nomzod yo'q."}, status=400)
 		return Response(MonthlyPrizeAdminSerializer(prize).data, status=status.HTTP_201_CREATED)
+
+
+# ---------------------------------------------------------------------------
+# Community: shared comments + 1-10 ratings (site and bot) moderation
+# ---------------------------------------------------------------------------
+
+
+def _page_payload(payload: dict, results) -> Response:
+	"""The panel's standard list shape plus the service's paging counters."""
+	return Response({
+		"count": payload["count"],
+		"page": payload["page"],
+		"pages": payload["pages"],
+		"next": None,
+		"previous": None,
+		"results": results,
+	})
+
+
+@extend_schema(tags=["Admin"])
+class AdminCommentViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewSet):
+	"""Moderate the one comment table: search, filter, delete one or many."""
+
+	queryset = TitleComment.objects.all()
+	serializer_class = AdminCommentSerializer
+	permission_classes = [IsStaffAdmin]
+	pagination_class = AdminPagination
+	http_method_names = ["get", "post", "delete", "head", "options"]
+
+	def get_queryset(self):
+		return TitleComment.objects.select_related(
+			"user", "part", "title", "user__telegram_profile"
+		)
+
+	def _int_param(self, name) -> int | None:
+		raw = (self.request.query_params.get(name) or "").strip()
+		return int(raw) if raw.isdigit() else None
+
+	def _title_id(self) -> int | None:
+		"""Accept ``?title=<id>`` or ``?title=<slug>`` from the panel."""
+		raw = (self.request.query_params.get("title") or "").strip()
+		if not raw:
+			return None
+		if raw.isdigit():
+			return int(raw)
+		return MediaTitle.objects.filter(slug=raw).values_list("id", flat=True).first()
+
+	def list(self, request, *args, **kwargs):
+		payload = community.search_comments_sync(
+			query=(request.query_params.get("search") or "").strip(),
+			title_id=self._title_id(),
+			source=(request.query_params.get("source") or "").strip(),
+			user_id=self._int_param("user"),
+			page=self._int_param("page") or 1,
+			page_size=AdminPagination().get_page_size(request),
+		)
+		serializer = self.get_serializer(payload["results"], many=True)
+		return _page_payload(payload, serializer.data)
+
+	@extend_schema(request=None, tags=["Admin"])
+	@action(detail=False, methods=["post"], url_path="bulk-delete")
+	def bulk_delete(self, request):
+		"""Moderation: remove several comments in one click."""
+		ids = request.data.get("ids") or []
+		if not isinstance(ids, list):
+			return Response({"detail": "ids ro'yxat bo'lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+		try:
+			clean_ids = [int(item) for item in ids]
+		except (TypeError, ValueError):
+			return Response({"detail": "id raqam bo'lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+		deleted = community.delete_comments_sync(clean_ids)
+		return Response({"status": "ok", "deleted": deleted})
+
+
+@extend_schema(tags=["Admin"])
+class AdminRatingViewSet(mixins.DestroyModelMixin, viewsets.ReadOnlyModelViewSet):
+	"""Moderate scores: removing one recomputes that title's average."""
+
+	queryset = TitleRating.objects.all()
+	serializer_class = AdminRatingSerializer
+	permission_classes = [IsStaffAdmin]
+	pagination_class = AdminPagination
+	http_method_names = ["get", "post", "delete", "head", "options"]
+
+	def get_queryset(self):
+		return TitleRating.objects.select_related("user", "title", "user__telegram_profile")
+
+	def perform_destroy(self, instance):
+		# One score leaving the table changes the title's average: go through
+		# the shared service so the site and the bot see the new number too.
+		community.delete_ratings_sync([instance.pk])
+
+	def _int_param(self, name) -> int | None:
+		raw = (self.request.query_params.get(name) or "").strip()
+		return int(raw) if raw.isdigit() else None
+
+	def _title_id(self) -> int | None:
+		raw = (self.request.query_params.get("title") or "").strip()
+		if not raw:
+			return None
+		if raw.isdigit():
+			return int(raw)
+		return MediaTitle.objects.filter(slug=raw).values_list("id", flat=True).first()
+
+	def list(self, request, *args, **kwargs):
+		min_score = self._int_param("min_score")
+		max_score = self._int_param("max_score")
+		payload = community.search_ratings_sync(
+			query=(request.query_params.get("search") or "").strip(),
+			title_id=self._title_id(),
+			min_score=min_score,
+			max_score=max_score,
+			page=self._int_param("page") or 1,
+			page_size=AdminPagination().get_page_size(request),
+		)
+		serializer = self.get_serializer(payload["results"], many=True)
+		return _page_payload(payload, serializer.data)
+
+	@extend_schema(request=None, tags=["Admin"])
+	@action(detail=False, methods=["post"], url_path="bulk-delete")
+	def bulk_delete(self, request):
+		"""Delete scores in bulk; every touched title's average is recomputed."""
+		ids = request.data.get("ids") or []
+		if not isinstance(ids, list):
+			return Response({"detail": "ids ro'yxat bo'lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+		try:
+			clean_ids = [int(item) for item in ids]
+		except (TypeError, ValueError):
+			return Response({"detail": "id raqam bo'lishi kerak."}, status=status.HTTP_400_BAD_REQUEST)
+		touched = community.delete_ratings_sync(clean_ids)
+		return Response({"status": "ok", "title_ids": touched})

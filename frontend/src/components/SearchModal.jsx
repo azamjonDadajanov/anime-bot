@@ -1,35 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
-import { Modal, Text, Loader, Badge, Group } from '@mantine/core'
+import { Modal, Loader } from '@mantine/core'
 import { Link } from 'react-router-dom'
 import { mediaApi } from '../apis/api'
 import { coverSrc } from '../apis/mediaUrl'
-
-const mediaTypeLabels = {
-  movie: 'Kino',
-  anime: 'Anime',
-  series: 'Serial',
-  manga: 'Manga',
-}
-
-const statusLabels = {
-  upcoming: 'Kutilmoqda',
-  ongoing: 'Davom etmoqda',
-  completed: 'Tugallangan',
-}
-
-// Fallback glyph per media type, shown while (or instead of) a cover image.
-const thumbIcons = {
-  movie: 'bi-film',
-  anime: 'bi-stars',
-  series: 'bi-collection-play',
-  manga: 'bi-journal-bookmark',
-}
+import { episodeLabel, normalizeList, statusLabel, typeIcon, typeLabel } from '../mediaMeta'
 
 const PAGE_SIZE = 10
 
 function SearchModal({ opened, onClose }) {
   const [query, setQuery] = useState('')
   const [items, setItems] = useState([])
+  const [suggestions, setSuggestions] = useState([])
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -41,24 +22,34 @@ function SearchModal({ opened, onClose }) {
   const search = query.trim()
 
   useEffect(() => {
-    if (!opened) return
+    if (!opened) return undefined
     const timer = window.setTimeout(() => inputRef.current?.focus(), 50)
     return () => window.clearTimeout(timer)
   }, [opened])
 
+  // Idle state: real trending titles instead of an empty box.
+  useEffect(() => {
+    if (!opened) return undefined
+    let active = true
+    mediaApi.popular()
+      .then((data) => active && setSuggestions(normalizeList(data).slice(0, 5)))
+      .catch(() => {})
+    return () => { active = false }
+  }, [opened])
+
   useEffect(() => {
     const term = query.trim()
-    if (!term) return
+    if (!term) return undefined
 
     let active = true
     const timer = window.setTimeout(() => {
       mediaApi.catalog({ search: term })
         .then((data) => {
           if (!active) return
-          setItems(Array.isArray(data) ? data : data.results || [])
+          setItems(normalizeList(data))
           setError('')
         })
-        .catch(() => active && setError('Server bilan bog\'lanishda xatolik yuz berdi.'))
+        .catch(() => active && setError("Server bilan bog'lanishda xatolik yuz berdi."))
         .finally(() => {
           if (!active) return
           setLoading(false)
@@ -73,10 +64,10 @@ function SearchModal({ opened, onClose }) {
   }, [query])
 
   useEffect(() => {
-    if (!opened) return
+    if (!opened) return undefined
     const root = resultsRef.current
     const target = sentinelRef.current
-    if (!root || !target) return
+    if (!root || !target) return undefined
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -115,6 +106,14 @@ function SearchModal({ opened, onClose }) {
     setLoading(false)
     setVisibleCount(PAGE_SIZE)
     onClose()
+  }
+
+  function pickSuggestion(title) {
+    setLoading(true)
+    setError('')
+    setVisibleCount(PAGE_SIZE)
+    setQuery(title)
+    inputRef.current?.focus()
   }
 
   const results = search ? items : []
@@ -164,42 +163,90 @@ function SearchModal({ opened, onClose }) {
 
       <div className="search-modal-results" ref={resultsRef} onScroll={handleScroll}>
         {loading && search && <div className="search-modal-state"><Loader size="sm" /></div>}
-        {!loading && error && <Text className="search-modal-state" c="red">{error}</Text>}
+        {!loading && error && <p className="search-modal-state is-error">{error}</p>}
+
         {!search && (
-          <Text className="search-modal-state" c="dimmed">Qidirish uchun nom kiriting.</Text>
+          <div className="search-idle">
+            <span className="search-idle-title">Trenddagi signallar</span>
+            <div className="search-suggestions">
+              {suggestions.map((item) => (
+                <button
+                  className="search-suggestion"
+                  type="button"
+                  key={item.id}
+                  onClick={() => pickSuggestion(item.title)}
+                >
+                  <i className={`bi ${typeIcon(item)}`} aria-hidden="true" />
+                  {item.title}
+                </button>
+              ))}
+              {!suggestions.length && (
+                <span className="search-modal-state">Qidirish uchun nom kiriting.</span>
+              )}
+            </div>
+            <div className="search-hint">
+              <span><kbd className="search-modal-kbd">Ctrl</kbd> <kbd className="search-modal-kbd">K</kbd> ochish</span>
+              <span>Enter — birinchi natija</span>
+              <span>Esc — yopish</span>
+            </div>
+          </div>
         )}
+
         {!loading && !error && search && searched && !results.length && (
-          <Text className="search-modal-state" c="dimmed">Hech narsa topilmadi.</Text>
+          <div className="search-idle">
+            <p className="search-modal-state">Hech narsa topilmadi.</p>
+            <div className="search-suggestions">
+              {suggestions.slice(0, 3).map((item) => (
+                <button
+                  className="search-suggestion"
+                  type="button"
+                  key={item.id}
+                  onClick={() => pickSuggestion(item.title)}
+                >
+                  <i className={`bi ${typeIcon(item)}`} aria-hidden="true" />
+                  {item.title}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
+
         {!loading && !error && visibleResults.map((item) => (
           <Link className="search-result" to={`/media/${item.slug}`} key={item.id} onClick={handleClose}>
-            <Group gap="xs" wrap="nowrap">
-              <span className="search-result-thumb" aria-hidden="true">
-                {coverSrc(item)
-                  ? <img src={coverSrc(item)} alt="" loading="lazy" />
-                  : <i className={`bi ${thumbIcons[item.type] || 'bi-film'}`} />}
+            <span className="search-result-thumb">
+              {coverSrc(item)
+                ? <img src={coverSrc(item)} alt="" loading="lazy" />
+                : <i className={`bi ${typeIcon(item)}`} aria-hidden="true" />}
+            </span>
+            <span className="search-result-body">
+              <span className="search-result-title">{item.title}</span>
+              <span className="search-result-meta">
+                <span>{typeLabel(item)}</span>
+                <span className="dot" aria-hidden="true" />
+                <span>{statusLabel(item)}</span>
+                <span className="dot" aria-hidden="true" />
+                <span>{episodeLabel(item)}</span>
+                {item.rating ? (
+                  <>
+                    <span className="dot" aria-hidden="true" />
+                    <span>{item.rating}/10</span>
+                  </>
+                ) : null}
               </span>
-              <div>
-                <Text className="search-result-title">{item.title}</Text>
-                <Group gap="xs" className="search-result-meta">
-                  <Badge variant="light">{statusLabels[item.status] || item.status || 'Noma\'lum'}</Badge>
-                  <Text size="xs" c="dimmed">
-                    {item.episode_count ? `${item.episode_count} qism` : 'Qismlar yo\'q'}
-                  </Text>
-                  <Text size="xs" c="dimmed">{mediaTypeLabels[item.type] || item.type}</Text>
-                </Group>
-              </div>
-            </Group>
+            </span>
+            <i className="bi bi-arrow-up-right search-result-arrow" aria-hidden="true" />
           </Link>
         ))}
+
         {!loading && !error && results.length > visibleCount && (
           <div className="search-modal-sentinel" ref={sentinelRef} />
         )}
       </div>
+
       {!loading && !error && visibleCount < results.length && (
-        <Text className="search-modal-more" size="xs" c="dimmed">
+        <p className="search-modal-more">
           Pastga aylantiring · yana {results.length - visibleCount} ta natija
-        </Text>
+        </p>
       )}
     </Modal>
   )

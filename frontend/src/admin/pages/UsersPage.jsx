@@ -13,6 +13,7 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { adminUsersApi } from '../api/adminApi'
+import { formatDate, formatDateTime } from '../../utils/dates'
 import { adminPath } from '../adminBase'
 import {
   ConfirmDialog,
@@ -194,7 +195,7 @@ export default function UsersPage() {
                     {user.plan !== 'free' && (
                       <Text size="xs" c="dimmed" mt={2}>
                         {user.plan_active
-                          ? `amal qiladi${user.plan_expires ? ` · ${new Date(user.plan_expires).toLocaleDateString()}` : ''}`
+                          ? `amal qiladi${user.plan_expires ? ` · ${formatDate(user.plan_expires)}` : ''}`
                           : 'muddati o\'tgan'}
                       </Text>
                     )}
@@ -207,9 +208,9 @@ export default function UsersPage() {
                   <td>
                     <Text size="xs" c="dimmed">
                       {user.last_seen_at
-                        ? new Date(user.last_seen_at).toLocaleString()
+                        ? formatDateTime(user.last_seen_at)
                         : user.created_at
-                          ? new Date(user.created_at).toLocaleString()
+                          ? formatDateTime(user.created_at)
                           : '—'}
                     </Text>
                   </td>
@@ -347,7 +348,7 @@ export function UserDetailPage() {
               label="Obuna muddati"
               value={
                 user.plan_active
-                  ? `faol${user.plan_expires ? ` · ${new Date(user.plan_expires).toLocaleDateString()}` : ''}`
+                  ? `faol${user.plan_expires ? ` · ${formatDate(user.plan_expires)}` : ''}`
                   : "muddati o'tgan"
               }
             />
@@ -355,11 +356,11 @@ export function UserDetailPage() {
           <DetailRow label="Holat" value={user.is_blocked ? 'Bloklangan' : 'Faol'} />
           <DetailRow
             label="Ro'yxatdan o'tgan"
-            value={user.created_at ? new Date(user.created_at).toLocaleString() : '—'}
+            value={formatDateTime(user.created_at)}
           />
           <DetailRow
             label="Oxirgi faollik"
-            value={user.last_seen_at ? new Date(user.last_seen_at).toLocaleString() : '—'}
+            value={formatDateTime(user.last_seen_at)}
           />
           <DetailRow label="Sevimlilar" value={user.favorites_count} />
         </Stack>

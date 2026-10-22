@@ -58,7 +58,7 @@ function SupportModal({ opened, onClose }) {
       centered
       radius="lg"
       title="Adminga xabar"
-      classNames={{ body: 'support-modal-body' }}
+      classNames={{ content: 'support-modal', body: 'support-modal-body' }}
     >
       <form onSubmit={handleSubmit}>
         <Stack gap="sm">

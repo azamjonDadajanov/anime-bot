@@ -39,6 +39,14 @@ Administrator hisobini yaratish:
 docker compose exec web python manage.py createsuperuser
 ```
 
+AI yordamchining provayder zanjirini yozish va tekshirish (bir marta, keyin
+kerak bo'lganda):
+
+```bash
+docker compose exec web python manage.py ai_setup      # zanjirdagi modellarni yozadi
+docker compose exec web python manage.py ai_status --test  # har bir modelni sinaydi
+```
+
 ## 3. Domen, sertifikat va HTTPS
 
 TLS **nginx konteynerida** tugatiladi: `certbot` host'da bitta sertifikat oladi
@@ -235,62 +243,146 @@ curl -s  https://api.anichopar.uz/api/schema/ | head -c 200
   ```
 
   Qo'lda boshqa oy uchun: `python manage.py award_game_monthly_prize --year 2026 --month 9`.
-- **AI yordamchi (AniVoy, obunachilar uchun)**: offline model ham, indeks ham
-  yo'q — yordamchi faqat online chat modeli bilan ishlaydi va kerakli
-  ma'lumotni katalog funksiyalarini chaqirib oladi (`movies.ai_assistant`).
-  Shuning uchun deploy'da yuklab olinadigan ~470MB model, `aimodels` volume va
-  indekslash cron'i yo'q.
-
-  Bitta provayder — bitta nosozlik nuqtasi (bepul limit tugaydi, kalit
-  bloklanadi, endpoint javob bermaydi). Shuning uchun model bitta kalitga emas,
-  **provayderlar zanjiriga** bog'langan; zanjir `.env`dan emas, **bazadan**
-  o'qiladi (`/django-admin/` → *AI provayderlar*), ya'ni kalit qo'shish yoki
-  tartibini o'zgartirish uchun qayta deploy kerak emas:
-
-  ```text
-  /django-admin/ → AI provayderlar
-    1) Groq (asosiy)     priority=1   api_key=gsk_...   is_active=✓
-    2) Gemini (zaxira)   priority=2   api_key=AIza...   is_active=✓
-    3) OpenAI (oxirgi)   priority=3   api_key=sk-...    is_active=✓
-  ```
-
-  Xatti-harakat: so'rov **bittalab**, ustuvorlik tartibida yuboriladi (hech
-  qachon ikkitasiga birdaniga emas); biri "limit" (402/429) yoki timeout
-  qaytarsa, avtomatik keyingisiga o'tiladi va o'sha provayder kutishga
-  qo'yiladi — buni butun zanjir ko'radi, keyingi so'rovlar uni qayta urinmaydi
-  ham, kutmaydi ham. Zanjir to'liq kutishda bo'lsa, yordamchi tarmoqqa umuman
-  murojaat qilmasdan darhol "hozircha javob bera olmaydi" deb xabar qaytaradi —
-  offline zaxira yo'l yo'q (ataylab).
-
-  Jadval bo'sh bo'lsa, oddiy `.env` usuli ishlayveradi (zaxira variant):
-
-  ```bash
-  AI_LLM_PROVIDER=groq      # bepul developer tarifi, eng tez javob (~1-3 s)
-  AI_LLM_API_KEY=gsk_...    # https://console.groq.com/keys
-  # AI_LLM_PROVIDER=gemini | openai | custom (+ AI_LLM_BASE_URL)
-  ```
-
-  Standart modellar: `groq` → `qwen/qwen3.8-27b`, `gemini` →
-  `gemini-3.5-flash-lite`, `openai` → `gpt-6-luna` (kerak bo'lsa `AI_LLM_MODEL`
-  bilan almashtiriladi). Kalit `.env`da saqlanadi — repoga tushmaydi.
-  Tekshirish:
-
-  ```bash
-  python manage.py ai_status          # zanjir, kalit, kutish holati
-  python manage.py ai_status --test   # bitta real so'rov va chaqirilgan funksiyalar
-  ```
-
-  `--test` haqiqiy so'rov yuboradi va qaysi provayder javob berganini, qancha
-  vaqt ketganini va qaysi biri o'tkazib yuborilganini ko'rsatadi.
-
-  Vaqt byudjeti qat'iy: `AI_LLM_TIMEOUT` (standart 8 s) — bitta provayder uchun,
-  `AI_LLM_DEADLINE` (standart 12 s) — butun zanjir uchun, shuning uchun o'lik
-  provayderlar ketma-ket javob kutishni cho'zib yubormaydi. Bitta so'rov uchun
-  sarf kichik: funksiya natijalari (eng ko'pi 8-10 sarlavha) yuboriladi, bir xil
-  savol 2 daqiqa keshlanadi, javob uzunligi ~900 tokenga cheklangan. Model
-  katalogda yo'q nom yoki qism sonini o'ylab topmasligi uchun javob ostidagi
-  havolalar faqat funksiyalar qaytargan qatorlardan olinadi.
-
+- **AI yordamchi (AniVoy, obunachilar uchun)**: offline model ham, indeks ham
+
+  yo'q — yordamchi faqat online chat modeli bilan ishlaydi va kerakli
+
+  ma'lumotni katalog funksiyalarini chaqirib oladi (`movies.ai_assistant`).
+
+  Shuning uchun deploy'da yuklab olinadigan ~470MB model, `aimodels` volume va
+
+  indekslash cron'i yo'q.
+
+
+
+  Bitta provayder — bitta nosozlik nuqtasi (bepul limit tugaydi, kalit
+
+  bloklanadi, endpoint javob bermaydi). Shuning uchun model bitta kalitga emas,
+
+  **provayderlar zanjiriga** bog'langan; zanjir `.env`dan emas, **bazadan**
+
+  o'qiladi (`/django-admin/` → *AI provayderlar*), ya'ni kalit qo'shish yoki
+
+  tartibini o'zgartirish uchun qayta deploy kerak emas:
+
+
+
+  ```text
+
+  /django-admin/ → AI provayderlar
+
+    1) Groq (asosiy)     priority=1   api_key=gsk_...   is_active=✓
+
+    2) Gemini (zaxira)   priority=2   api_key=AIza...   is_active=✓
+
+    3) OpenAI (oxirgi)   priority=3   api_key=sk-...    is_active=✓
+
+  ```
+
+
+
+  Xatti-harakat: so'rov **bittalab**, ustuvorlik tartibida yuboriladi (hech
+
+  qachon ikkitasiga birdaniga emas); biri "limit" (402/429) yoki timeout
+
+  qaytarsa, avtomatik keyingisiga o'tiladi va o'sha provayder kutishga
+
+  qo'yiladi — buni butun zanjir ko'radi, keyingi so'rovlar uni qayta urinmaydi
+
+  ham, kutmaydi ham. Zanjir to'liq kutishda bo'lsa, yordamchi tarmoqqa umuman
+
+  murojaat qilmasdan darhol "hozircha javob bera olmaydi" deb xabar qaytaradi —
+
+  offline zaxira yo'l yo'q (ataylab).
+
+  Kutish muddati xatoga qarab: `402/429` (kvota) — 5 daqiqa, `5xx`/timeout —
+
+  1 daqiqa, `404/400` (model eskirgan yoki noto'g'ri so'rov) — 30 daqiqa, chunki
+
+  o'lik modelni har daqiqada so'rash ham foyda bermaydi. Sabab faqat
+
+  administratorga ko'rinadi: bot va sayt xabari o'zgarmaydi, lekin admin panelning
+
+  *Loglar* sahifasida (`bot.ai`) yozib boriladi.
+
+  Tez zanjirni bir buyruq bilan yozish:
+
+  ```bash
+
+  python manage.py ai_setup             # 5 ta ishlaydigan Gemini modeli, kalitsiz (kalit .env'da)
+
+  python manage.py ai_setup --reset      # faqat shu komanda yaratgan qatorlarni qayta yozadi
+
+  ```
+
+  Qatorlarning o'z kaliti yo'q: ular `.env` dagi `AI_LLM_API_KEY` ni oladi
+
+  (faqat turi mos bo'lsa — Gemini qatori Gemini kalitini oladi, Groq qatori
+
+  Groq kalitini). Ikkinchi provayder kerak bo'lsa, qatorga o'z kalitini
+
+  `/django-admin/` orqali qo'yish yetarli.
+
+
+
+  Jadval bo'sh bo'lsa, oddiy `.env` usuli ishlayveradi (zaxira variant):
+
+
+
+  ```bash
+
+  AI_LLM_PROVIDER=groq      # bepul developer tarifi, eng tez javob (~1-3 s)
+
+  AI_LLM_API_KEY=gsk_...    # https://console.groq.com/keys
+
+  # AI_LLM_PROVIDER=gemini | openai | custom (+ AI_LLM_BASE_URL)
+
+  ```
+
+
+
+  Standart modellar: `groq` → `qwen/qwen3.8-27b`, `gemini` →
+
+  `gemini-3.5-flash-lite`, `openai` → `gpt-6-luna` (kerak bo'lsa `AI_LLM_MODEL`
+
+  bilan almashtiriladi). Kalit `.env`da saqlanadi — repoga tushmaydi.
+
+  Tekshirish:
+
+
+
+  ```bash
+
+  python manage.py ai_status          # zanjir, kalit, kutish holati
+
+  python manage.py ai_status --test   # bitta real so'rov va chaqirilgan funksiyalar
+
+  ```
+
+  `--test` haqiqiy so'rov yuboradi va qaysi provayder javob berganini, qancha
+
+  vaqt ketganini va qaysi biri o'tkazib yuborilganini ko'rsatadi. Bundan tashqari
+
+  har bir model zanjirda **alohida** sinanadi: qaysi biri `404` (model topilmadi),
+
+  qaysi biri `429` (kvota) va qaysi biri ishlatilishi mumkin — aniq sabab bilan.
+
+  Vaqt byudjeti qat'iy: `AI_LLM_TIMEOUT` (standart 12 s) — bitta provayder uchun,
+
+  `AI_LLM_DEADLINE` (standart 25 s) — butun zanjir uchun, shuning uchun o'lik
+
+  provayderlar ketma-ket javob kutishni cho'zib yubormaydi. Bitta so'rov uchun
+
+  sarf kichik: funksiya natijalari (eng ko'pi 8-10 sarlavha) yuboriladi, bir xil
+
+  savol 2 daqiqa keshlanadi, javob uzunligi ~900 tokenga cheklangan. Model
+
+  katalogda yo'q nom yoki qism sonini o'ylab topmasligi uchun javob ostidagi
+
+  havolalar faqat funksiyalar qaytargan qatorlardan olinadi.
+
+
+
 - **Obuna eslatmalari** uchun kuniga bir marta cron qo'ying (obuna tugashiga 3 kun
   qolganda va muddati o'tgandan keyin 7 kun ichida foydalanuvchiga Telegramdan
   eslatma yuboradi; har bir bosqich faqat bir marta yuboriladi, shuning uchun bu

@@ -7,24 +7,31 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
-from . import ai_assistant, pdf_pages
-from .models import MediaPart, MediaTitle, MediaView, ReadingProgress, TelegramChannel, TelegramMedia
+from . import ai_actions, ai_assistant, community, llm, pdf_pages, similar
+from .models import MediaPart, MediaTitle, MediaView, ReadingProgress, TelegramChannel, TelegramMedia, TitleComment
 from .permissions import IsAdminOrReadOnly
 from .serializers import (
+	AIActionConfirmSerializer,
 	AIAssistantQuerySerializer,
 	AIAssistantResponseSerializer,
+	CommentCreateSerializer,
+	CommentListSerializer,
 	MediaLookupSerializer,
 	MediaPartSerializer,
 	MediaTitleSerializer,
 	MediaTitleDetailSerializer,
+	RatingCreateSerializer,
+	RatingSummarySerializer,
 	ReadingProgressSerializer,
+	TitleCommentSerializer,
 	TelegramChannelSerializer,
 	TelegramMediaSerializer,
 )
@@ -120,15 +127,21 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		media_type = self.request.query_params.get("type")
 		status = self.request.query_params.get("status")
 		search = self.request.query_params.get("search")
+		genre = self.request.query_params.get("genre")
 		if media_type:
 			queryset = queryset.filter(type=media_type)
 		if status:
 			queryset = queryset.filter(status=status)
 		if search:
 			queryset = queryset.filter(title__icontains=search)
+		if genre:
+			# Genre names, because the public catalogue only ever sees labels.
+			queryset = queryset.filter(genres__name__iexact=genre)
 		if self.action == "retrieve":
 			queryset = queryset.prefetch_related("genres", "parts", "parts__telegram_media")
-		return queryset
+		else:
+			queryset = queryset.prefetch_related("genres")
+		return queryset.distinct()
 
 	def perform_create(self, serializer):
 		title = serializer.save()
@@ -178,6 +191,57 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 			part = MediaPart.objects.filter(pk=part_id, content=title).first()
 		view = MediaView.record(request.user, title, part=part, source=MediaView.Source.SITE)
 		return Response({"status": "ok", "view_id": view.pk if view else None})
+
+	@extend_schema(
+		responses=RatingSummarySerializer,
+		tags=["Community"],
+		description="O'rtacha baholash: umumiy ball, nechta baholagan va sizning bahoyingiz.",
+	)
+	@action(detail=True, methods=["get", "post"], url_path="rating", permission_classes=[AllowAny])
+	def rating(self, request, slug=None):
+		"""Read (public) or set (authenticated) the caller's 1-10 score.
+
+		One row per user per title: posting again rewrites the existing rating
+		instead of adding a second one, and every write recomputes the title's
+		average so the site, the bot and the panel always agree.
+		"""
+		title = self.get_object()
+		if request.method == "POST":
+			if not request.user or not request.user.is_authenticated:
+				return Response(
+					{"detail": "Baholash uchun tizimga kiring.", "code": "authentication_required"},
+					status=status.HTTP_401_UNAUTHORIZED,
+				)
+			serializer = RatingCreateSerializer(data=request.data)
+			serializer.is_valid(raise_exception=True)
+			try:
+				community.set_rating_sync(
+					request.user, title, serializer.validated_data["score"]
+				)
+			except community.CommunityError as exc:
+				return Response(
+					{"detail": exc.detail, "code": exc.code},
+					status=status.HTTP_400_BAD_REQUEST,
+				)
+		viewer = request.user if request.user and request.user.is_authenticated else None
+		return Response(community.rating_summary_sync(title, viewer))
+
+	@extend_schema(responses=MediaTitleSerializer(many=True), tags=["Community"])
+	@action(detail=True, methods=["get"], url_path="similar", permission_classes=[AllowAny])
+	def similar_titles(self, request, slug=None):
+		"""``O'xshash animelar``: ranked by shared genres and metadata.
+
+		The current title is never in the list, and no row appears twice.
+		"""
+		title = self.get_object()
+		try:
+			limit = int(request.query_params.get("limit") or similar.SIMILAR_LIMIT)
+		except (TypeError, ValueError):
+			limit = similar.SIMILAR_LIMIT
+		items = similar.similar_titles_sync(title, limit=limit)
+		return Response(
+			{"count": len(items), "results": MediaTitleSerializer(items, many=True).data}
+		)
 
 	@extend_schema(
 		request=AIAssistantQuerySerializer,
@@ -232,16 +296,26 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 				if serializer.validated_data.get("taste")
 				else ""
 			),
+			# The account behind the chat: it enables ``submit_action``, so the
+			# model may *propose* an izoh/baha/obuna/… — the card is built from
+			# this user's real state and waits for their confirmation.
+			user=request.user,
+			source="site",
 		)
 		if not result.used_llm:
 			# Only online models can answer: a deployment without a key, or a
 			# chain that is fully on cooldown, has no offline fallback any more.
 			if result.error:
-				logger.warning("AI assistant is unavailable: %s", result.error)
-			return Response(
-				{"code": "ai_unavailable", "detail": ai_assistant.UNAVAILABLE_TEXT},
-				status=status.HTTP_503_SERVICE_UNAVAILABLE,
-			)
+				# The reason belongs to the operator: it goes to the admin
+				# log (the panel's "Loglar" page), not to the user's screen.
+				llm.operator_log.warning("AI assistant is unavailable: %s", result.error)
+			payload = {"code": "ai_unavailable", "detail": ai_assistant.UNAVAILABLE_TEXT}
+			if result.error and getattr(request.user, "is_staff", False):
+				# The administrator gets the reason (a dead model, an empty
+				# key, an exhausted quota); everybody else gets the same
+				# sentence.
+				payload["reason"] = result.error
+			return Response(payload, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 		site_url = getattr(settings, "BOT_SITE_URL", "") or ""
 		results = [ai_assistant.title_payload(title, site_url=site_url) for title in result.titles]
 		return Response(
@@ -256,10 +330,65 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 				# The functions that ran, so a client can show what it looked up.
 				"tools": list(result.tools),
 				"results": results,
+				# The confirmation card when the model proposed an account
+				# action (izoh, baha, obuna, ulash, ism, mavzu, ...).
+				"action": result.action,
 			}
 		)
 
+	@extend_schema(
+		request=AIActionConfirmSerializer,
+		responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT},
+		tags=["Catalog"],
+	)
+	@action(
+		detail=False,
+		methods=["post"],
+		url_path="ai-assistant/action",
+		permission_classes=[IsAuthenticated],
+		parser_classes=[MultiPartParser, FormParser],
+	)
+	def ai_assistant_action(self, request):
+		"""Confirm one proposed AI action (the card's «Tasdiqlash»).
+
+		The token carries the user, the action key and the values the model
+		picked; anything the client edited rides in ``values`` and is filtered
+		through the action's own whitelist. Files (a payment screenshot, an
+		avatar picture) arrive as multipart parts. Nothing runs without a
+		valid, user-bound, unexpired token.
+		"""
+		serializer = AIActionConfirmSerializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		raw_values = serializer.validated_data.get("values")
+		if isinstance(raw_values, str):
+			try:
+				raw_values = json.loads(raw_values or "{}")
+			except (TypeError, ValueError):
+				raw_values = {}
+		if not isinstance(raw_values, dict):
+			raw_values = {}
+		try:
+			result = ai_actions.execute(
+				request.user,
+				serializer.validated_data["token"],
+				values=raw_values,
+				# Only the upload fields an action actually accepts survive.
+				files={
+					key: request.FILES.get(key)
+					for key in ("screenshot", "avatar_file")
+					if request.FILES.get(key) is not None
+				},
+				source="site",
+			)
+		except ai_actions.ActionError as exc:
+			return Response(
+				{"code": exc.code, "detail": exc.detail},
+				status=status.HTTP_400_BAD_REQUEST,
+			)
+		return Response({"status": "done", **result})
+
 	def _serialize(self, request, queryset):
+		queryset = queryset.prefetch_related("genres")
 		paginator = CatalogPagination()
 		page = paginator.paginate_queryset(queryset, request, view=self)
 		serializer = MediaTitleSerializer(page, many=True)
@@ -270,6 +399,7 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 			limit = int(request.query_params.get("limit", limit))
 		except (TypeError, ValueError):
 			limit = 20
+		queryset = queryset.prefetch_related("genres")
 		return Response(MediaTitleSerializer(queryset[: max(1, min(limit, 50))], many=True).data)
 
 	@extend_schema(responses=MediaTitleSerializer(many=True), tags=["Catalog"])
@@ -280,7 +410,15 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 	@extend_schema(responses=MediaTitleSerializer(many=True), tags=["Catalog"])
 	@action(detail=False, methods=["get"])
 	def popular(self, request):
-		return self._serialize(request, MediaTitle.objects.order_by("-rating", "-created_at"))
+		"""``Mashhurlar``: the same ranking as «Top reyting», without a limit.
+
+		The live 1-10 average first and the vote count on a tie, so a title
+		hundreds of viewers agreed on outranks a single 10.
+		"""
+		return self._serialize(
+			request,
+			MediaTitle.objects.order_by("-rating_average", "-rating_count", "-id"),
+		)
 
 	@extend_schema(responses=MediaTitleSerializer(many=True), tags=["Catalog"])
 	@action(detail=False, methods=["get"])
@@ -316,6 +454,139 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 	@action(detail=False, methods=["get"], url_path="random")
 	def random_titles(self, request):
 		return self._flat(request, MediaTitle.objects.order_by("?"))
+
+	@extend_schema(responses=MediaTitleSerializer(many=True), tags=["Community"])
+	@action(detail=False, methods=["get"], url_path="top-rated")
+	def top_rated(self, request):
+		"""«Top reyting»: the highest scored titles, most voted first on a tie.
+
+		Only titles somebody actually scored are ranked, so a single 10 does
+		not outrank the same title once hundreds of viewers agreed on it —
+		``rating_average`` then ``rating_count`` is the ranking, exactly what
+		``movies.community.top_rated_titles_sync`` (and the bot) uses. Until
+		the first score exists the catalogue's own rating orders the list, so
+		the section is never empty.
+		"""
+		try:
+			limit = int(request.query_params.get("limit") or 5)
+		except (TypeError, ValueError):
+			limit = 5
+		limit = max(1, min(limit, 50))
+
+		items = community.top_rated_titles_sync(limit=limit)
+		if not items:
+			items = list(MediaTitle.objects.order_by("-rating", "-created_at")[:limit])
+		return Response(MediaTitleSerializer(items, many=True).data)
+
+
+@extend_schema(tags=["Community"])
+class TitleCommentViewSet(viewsets.GenericViewSet):
+	"""``/api/comments/``: the one comment table every platform reads and writes.
+
+	* ``GET  /api/comments/?title=<slug>&part=<id>&page=`` — a page of comments
+	  (public), newest first, each with its author, the premium crown flag and
+	  the episode it answers.
+	* ``POST /api/comments/`` — write one (authenticated). The body may carry a
+	  ``rating`` (1-10); it is stored in its own table, never inside the text.
+	* ``DELETE /api/comments/{id}/`` — the author, or any staff member.
+	"""
+
+	queryset = TitleComment.objects.all()
+	serializer_class = TitleCommentSerializer
+	permission_classes = [IsAuthenticatedOrReadOnly]
+	pagination_class = None
+
+	def get_queryset(self):
+		return TitleComment.objects.select_related("user", "part", "title", "user__telegram_profile")
+
+	def _title_and_part(self, params):
+		title_slug = str(params.get("title") or "").strip()
+		if not title_slug:
+			return None, None, Response(
+				{"detail": "title parametri majburiy.", "code": "title_required"},
+				status=status.HTTP_400_BAD_REQUEST,
+			)
+		title = MediaTitle.objects.filter(slug=title_slug).first()
+		if title is None:
+			return None, None, Response(
+				{"detail": "Media topilmadi.", "code": "not_found"},
+				status=status.HTTP_404_NOT_FOUND,
+			)
+		try:
+			part_id = int(params.get("part") or 0)
+		except (TypeError, ValueError):
+			part_id = 0
+		part = None
+		if part_id:
+			part = MediaPart.objects.filter(pk=part_id, content=title).first()
+			if part is None:
+				return None, None, Response(
+					{"detail": "Bu media bunday qismga ega emas.", "code": "part_not_found"},
+					status=status.HTTP_404_NOT_FOUND,
+				)
+		return title, part, None
+
+	@extend_schema(responses=CommentListSerializer)
+	def list(self, request, *args, **kwargs):
+		title, part, error = self._title_and_part(request.query_params)
+		if error is not None:
+			return error
+		try:
+			page = int(request.query_params.get("page") or 1)
+		except (TypeError, ValueError):
+			page = 1
+		payload = community.list_comments_sync(title, part=part, page=page)
+		return Response(CommentListSerializer(payload).data)
+
+	@extend_schema(
+		request=CommentCreateSerializer,
+		responses={200: TitleCommentSerializer, 201: TitleCommentSerializer},
+	)
+	def create(self, request, *args, **kwargs):
+		serializer = CommentCreateSerializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		data = serializer.validated_data
+		title = data["title_object"]
+		try:
+			comment, created = community.create_comment_sync(
+				user=request.user,
+				title=title,
+				body=data["body"],
+				part=data.get("part_object"),
+				source=TitleComment.Source.SITE,
+			)
+		except community.CommunityError as exc:
+			code = status.HTTP_409_CONFLICT if exc.code in {"duplicate", "empty", "too_long"} else status.HTTP_400_BAD_REQUEST
+			return Response({"detail": exc.detail, "code": exc.code}, status=code)
+
+		rating_summary = None
+		if data.get("rating"):
+			# The score lives apart from the text: re-submitting a comment can
+			# change the rating, but editing text never creates a second one.
+			try:
+				community.set_rating_sync(request.user, title, data["rating"])
+			except community.CommunityError as exc:
+				return Response({"detail": exc.detail, "code": exc.code}, status=status.HTTP_400_BAD_REQUEST)
+			rating_summary = community.rating_summary_sync(title, request.user)
+		return Response(
+			{
+				"comment": TitleCommentSerializer(community.comment_payload(comment)).data,
+				"rating": rating_summary,
+				"created": created,
+			},
+			status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+		)
+
+	@extend_schema(responses=None)
+	def destroy(self, request, *args, **kwargs):
+		comment = self.get_object()
+		if comment.user_id != getattr(request.user, "pk", None) and not request.user.is_staff:
+			return Response(
+				{"detail": community.FORBIDDEN, "code": "forbidden"},
+				status=status.HTTP_403_FORBIDDEN,
+			)
+		community.delete_comment_sync(comment)
+		return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @extend_schema(tags=["Catalog"])

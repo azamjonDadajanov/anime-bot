@@ -1,21 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Group,
-  Loader,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core'
+import { Alert, Button, Loader } from '@mantine/core'
 import { Link } from 'react-router-dom'
 import { gameApi } from '../apis/api'
+import PremiumBadge from '../components/PremiumBadge'
 
 function errorText(error) {
   const data = error.response?.data
-  if (!data) return 'Server bilan bog\'lanishda xatolik yuz berdi.'
+  if (!data) return "Server bilan bog'lanishda xatolik yuz berdi."
   if (typeof data.detail === 'string') return data.detail
   return Object.values(data).flat().map(String).join(' ')
 }
@@ -46,7 +37,7 @@ export function RatingPage() {
   if (loading) {
     return (
       <main className="dashboard-page">
-        <div className="page-loader"><Loader /></div>
+        <div className="page-loader"><Loader size="sm" /></div>
       </main>
     )
   }
@@ -56,91 +47,99 @@ export function RatingPage() {
 
   return (
     <main className="dashboard-page">
-      <section className="home-hero">
-        <div className="home-hero-copy">
-          <Text className="eyebrow">ANIME REYTING</Text>
-          <Title order={1} className="home-hero-title">Reyting jadvali</Title>
-          <Text c="dimmed" className="home-hero-text">
-            O'yinda ball to'plang, reytingda yuqoriga chiqing. Oyning eng faol
-            o'yinchisi 1 oylik obuna yutadi.
-          </Text>
-          <ul className="home-hero-pills">
-            <li><i className="bi bi-trophy" aria-hidden="true" /> Sizning balingiz: {own?.points ?? 0}</li>
-            <li><i className="bi bi-star" aria-hidden="true" /> Lv.{own?.level ?? 1} · {own?.name || '—'}</li>
-            <li><i className="bi bi-bar-chart" aria-hidden="true" /> {own ? `${own.rank}-o'rin` : '—'}</li>
-          </ul>
-          <Group mt="md">
+      <section className="rating-hero">
+        <div className="rating-copy">
+          <span className="eyebrow">Anime reyting o&apos;yini</span>
+          <h1 className="rating-title">
+            Reyting <em>jadvali</em>
+          </h1>
+          <p className="rating-text">
+            O&apos;yinda ball to&apos;plang, reytingda yuqoriga chiqing. Oyning
+            eng faol o&apos;yinchisi 1 oylik obunani yutadi.
+          </p>
+          <div className="rating-actions">
             <Button
               component={Link}
               to="/game"
               size="md"
               leftSection={<i className="bi bi-controller" aria-hidden="true" />}
             >
-              O'yin o'ynash
+              O&apos;yin o&apos;ynash
             </Button>
             <Button
-              variant="light"
+              variant="default"
               size="md"
               leftSection={<i className="bi bi-person-badge" aria-hidden="true" />}
               onClick={scrollToOwn}
               disabled={!own}
             >
-              O'z reytingimni ko'rish
+              O&apos;z reytingim
             </Button>
-          </Group>
+          </div>
+        </div>
+
+        <div className="rating-stats">
+          <div className="rating-stat">
+            <b>{own?.points ?? 0}</b>
+            <span>Ball</span>
+          </div>
+          <div className="rating-stat">
+            <b>{own?.rank ? `#${own.rank}` : '—'}</b>
+            <span>O&apos;rin</span>
+          </div>
+          <div className="rating-stat">
+            <b>Lv.{own?.level ?? 1}</b>
+            <span>{own?.name || "O'yinchi"}</span>
+          </div>
         </div>
       </section>
 
       {error && <Alert color="red" mb="lg">{error}</Alert>}
 
       {own && (
-        <Card withBorder padding="lg" radius="md" mb="lg">
-          <Group justify="space-between">
-            <Group gap="sm">
-              <Badge size="lg" color="yellow" variant="filled">#{own.rank}</Badge>
-              <div>
-                <Text fw={700}>Sizning reytingingiz</Text>
-                <Text size="sm" c="dimmed">Lv.{own.level} · {own.name || 'o\'yinchi'}</Text>
-              </div>
-            </Group>
-            <Text fw={700} size="xl">{own.points} ball</Text>
-          </Group>
-        </Card>
+        <div className="rating-own">
+          <span>
+            <b>#{own.rank}</b> · {own.points} ball {own.is_premium && <PremiumBadge compact />}
+          </span>
+          <span>Lv.{own.level} · {own.name || "o'yinchi"}</span>
+          <span>Sizning natijangiz</span>
+        </div>
       )}
 
       {results.length === 0 ? (
         <div className="empty-state">
           <i className="bi bi-trophy" aria-hidden="true" />
-          <Text fw={600}>Hali reyting yo'q</Text>
-          <Text size="sm" c="dimmed">Birinchi bo'lib o'yinda ball to'plang.</Text>
+          <h2>Hali reyting yo&apos;q</h2>
+          <p>Birinchi bo&apos;lib o&apos;yinda ball to&apos;plang va jadvalni boshlang.</p>
+          <Link className="ac-btn ac-btn-ghost" to="/game">O&apos;yinni boshlash</Link>
         </div>
       ) : (
-        <Card withBorder padding="md" radius="md">
-          <Stack gap="xs">
-            {results.map((row) => (
-              <div
-                key={row.user_id}
-                ref={own && row.rank === own.rank ? ownRef : undefined}
-              >
-                <Group justify="space-between">
-                  <Group gap="xs">
-                    <Badge size="sm" variant="light" color={row.rank <= 3 ? 'yellow' : 'gray'}>
-                      #{row.rank}
-                    </Badge>
-                    <Text size="sm">{row.name}</Text>
-                    {own && row.rank === own.rank && (
-                      <Badge size="xs" variant="outline" color="blue">siz</Badge>
-                    )}
-                  </Group>
-                  <Group gap="xs">
-                    <Text size="sm" c="dimmed">{row.verified} tasdiq</Text>
-                    <Text size="sm" fw={600}>{row.points} ball</Text>
-                  </Group>
-                </Group>
-              </div>
-            ))}
-          </Stack>
-        </Card>
+        <section className="leaderboard" aria-label="Reyting jadvali">
+          <div className="leaderboard-head" aria-hidden="true">
+            <span>#</span>
+            <span>O&apos;yinchi</span>
+            <span style={{ textAlign: 'right' }}>Tasdiq</span>
+            <span style={{ textAlign: 'right' }}>Ball</span>
+          </div>
+          {results.map((row) => (
+            <div
+              className={`leaderboard-row${own && row.rank === own.rank ? ' is-own' : ''}`}
+              key={row.user_id}
+              ref={own && row.rank === own.rank ? ownRef : undefined}
+            >
+              <span className={`lb-rank${row.rank === 1 ? ' is-top' : ''}${row.rank > 1 && row.rank <= 3 ? ' is-second' : ''}`}>
+                {row.rank}
+              </span>
+              <span className="lb-name">
+                {row.name}
+                {row.is_premium && <PremiumBadge compact />}
+                {own && row.rank === own.rank && <span className="you">siz</span>}
+              </span>
+              <span className="lb-cell">{row.verified} tasdiq</span>
+              <span className="lb-cell lb-points">{row.points} ball</span>
+            </div>
+          ))}
+        </section>
       )}
     </main>
   )

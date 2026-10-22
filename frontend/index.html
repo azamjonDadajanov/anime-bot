@@ -1,13 +1,37 @@
 <!doctype html>
-<html lang="uz">
+<html lang="uz" data-mantine-color-scheme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#8050f8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#04050b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f2f8" media="(prefers-color-scheme: light)" />
+    <meta
+      name="description"
+      content="AniChopar — o'zbek tilidagi anime, kino, serial va manga katalogi. Yangi qismlar, sevimlilar, obuna va AI yordamchi bir joyda."
+    />
+    <meta property="og:title" content="AniChopar — anime olami, qayta yuklandi" />
+    <meta property="og:description" content="Anime, kino, serial va manga: yangi qismlar, shaxsiy kutubxona va AniVoy AI yordamchisi." />
+    <meta property="og:type" content="website" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>AniChopar | Shaxsiy kabinet</title>
+    <title>AniChopar — anime, kino va manga olami</title>
+    <script>
+      // Paint the right theme before React mounts (no light flash in dark mode).
+      (function () {
+        try {
+          var stored = localStorage.getItem('mantine-color-scheme-value');
+          var scheme = stored === 'light' || stored === 'dark'
+            ? stored
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+          document.documentElement.style.colorScheme = scheme;
+        } catch (error) {}
+      })();
+    </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>

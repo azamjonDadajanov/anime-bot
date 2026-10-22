@@ -163,6 +163,7 @@ class AdminPanelButtonTests(DispatcherTestCase):
 		collect(kb.media_types())
 		collect(kb.media_list([self.title], 1, 1))
 		collect(kb.media_actions(self.title))
+		collect(kb.media_announce_scopes(self.title))
 		collect(kb.media_edit_fields(self.title))
 		collect(
 			kb.value_choice_keyboard(

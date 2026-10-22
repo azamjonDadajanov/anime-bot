@@ -3,7 +3,16 @@ from rest_framework import serializers
 
 from bot.models import BotLogEntry, BotSettings, Broadcast
 from games.models import AnimeVerification, MonthlyPrize, QuizAttempt, QuizQuestion
-from movies.models import Genre, MediaPart, MediaTitle, TelegramChannel, TelegramMedia
+from movies import community
+from movies.models import (
+	Genre,
+	MediaPart,
+	MediaTitle,
+	TelegramChannel,
+	TelegramMedia,
+	TitleComment,
+	TitleRating,
+)
 from users.coupons import generate_code, is_valid_code, normalize_code
 from users.models import Coupon, CouponRedemption, Subscription, SubscriptionRequest, TelegramUser
 
@@ -19,6 +28,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
 	plan_label = serializers.SerializerMethodField()
 	plan_active = serializers.SerializerMethodField()
 	plan_expires = serializers.SerializerMethodField()
+	# 👑 the same rule as everywhere else, exposed for the panel's user rows.
+	is_premium = serializers.SerializerMethodField()
 	is_blocked = serializers.SerializerMethodField()
 	full_name = serializers.SerializerMethodField()
 	last_seen_at = serializers.SerializerMethodField()
@@ -41,6 +52,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
 			"plan_label",
 			"plan_active",
 			"plan_expires",
+			"is_premium",
 			"is_blocked",
 			"last_seen_at",
 			"created_at",
@@ -76,6 +88,11 @@ class AdminUserSerializer(serializers.ModelSerializer):
 	def get_plan_active(self, obj) -> bool:
 		sub = self._subscription(obj)
 		return bool(sub and sub.is_active)
+
+	def get_is_premium(self, obj) -> bool:
+		from users.premium import is_premium_user
+
+		return bool(obj.auth_user and is_premium_user(obj.auth_user))
 
 	def get_plan_expires(self, obj):
 		sub = self._subscription(obj)
@@ -610,3 +627,64 @@ class MonthlyPrizeAdminSerializer(serializers.ModelSerializer):
 	def get_telegram_id(self, obj) -> int | None:
 		profile = getattr(obj.user, "telegram_profile", None)
 		return getattr(profile, "telegram_id", None)
+
+
+class AdminCommentSerializer(serializers.ModelSerializer):
+	"""Moderation row for comments: who wrote what, where, and from which app.
+
+	Site and bot comments live in one table, so this single screen shows both
+	sources; ``author`` carries the crown flag the panel renders next to the
+	name (``community.author_payload`` computes it from the live subscription).
+	"""
+
+	author = serializers.SerializerMethodField()
+	part_number = serializers.SerializerMethodField()
+	title_name = serializers.CharField(source="title.title", read_only=True)
+	title_slug = serializers.CharField(source="title.slug", read_only=True)
+
+	class Meta:
+		model = TitleComment
+		fields = [
+			"id",
+			"title",
+			"title_name",
+			"title_slug",
+			"part",
+			"part_number",
+			"source",
+			"body",
+			"author",
+			"created_at",
+		]
+		read_only_fields = fields
+
+	def get_author(self, obj) -> dict:
+		return community.author_payload(obj.user)
+
+	def get_part_number(self, obj) -> int | None:
+		return obj.part.number if obj.part_id else None
+
+
+class AdminRatingSerializer(serializers.ModelSerializer):
+	"""Moderation row for a single 1-10 score on a title."""
+
+	author = serializers.SerializerMethodField()
+	title_name = serializers.CharField(source="title.title", read_only=True)
+	title_slug = serializers.CharField(source="title.slug", read_only=True)
+
+	class Meta:
+		model = TitleRating
+		fields = [
+			"id",
+			"title",
+			"title_name",
+			"title_slug",
+			"score",
+			"author",
+			"created_at",
+			"updated_at",
+		]
+		read_only_fields = fields
+
+	def get_author(self, obj) -> dict:
+		return community.author_payload(obj.user)

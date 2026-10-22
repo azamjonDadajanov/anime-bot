@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Checkbox,
   FileButton,
   Group,
   Image,
@@ -69,6 +70,7 @@ const EMPTY_MEDIA_FORM = {
   release_year: DEFAULT_YEAR,
   status: 'upcoming',
   episode_count: '',
+  duration_minutes: '',
   language: "O'zbekcha",
   default_quality: '1080',
 }
@@ -329,6 +331,7 @@ export function MediaFormPage() {
           release_year: item.release_year || DEFAULT_YEAR,
           status: item.status || 'upcoming',
           episode_count: item.episode_count ?? '',
+          duration_minutes: item.duration_minutes ?? '',
           language: item.language || "O'zbekcha",
           default_quality: item.default_quality || '1080',
         })
@@ -392,6 +395,10 @@ export function MediaFormPage() {
         release_year: form.release_year ? Number(form.release_year) : null,
         status: form.status,
         episode_count: form.episode_count === '' || form.episode_count === null ? null : Number(form.episode_count),
+        duration_minutes:
+          form.duration_minutes === '' || form.duration_minutes === null
+            ? null
+            : Number(form.duration_minutes),
         language: form.language || "O'zbekcha",
         default_quality: form.default_quality || '1080',
         genres: genreIds.map(Number),
@@ -489,6 +496,13 @@ export function MediaFormPage() {
               value={form.episode_count}
               onChange={numberHandler(setForm, 'episode_count')}
             />
+            <NumberInput
+              label="Davomiylik (daqiqa)"
+              min={0}
+              max={1440}
+              value={form.duration_minutes}
+              onChange={numberHandler(setForm, 'duration_minutes')}
+            />
           </Group>
           <MultiSelect
             label="Janrlar"
@@ -559,6 +573,9 @@ export function MediaPartsPage() {
   const [addingMedia, setAddingMedia] = useState(false)
   const [deleteMediaItem, setDeleteMediaItem] = useState(null)
   const [busy, setBusy] = useState(false)
+  // The slug the announcement card was opened for (null = closed). Keying it to
+  // the slug means navigating to another media can never leave a stale card.
+  const [announceFor, setAnnounceFor] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -736,6 +753,13 @@ export function MediaPartsPage() {
             <Link className="admin-btn admin-btn-secondary" to={adminPath(`/media/${slug}/quiz`)}>
               <i className="bi bi-question-circle" aria-hidden="true" /> Test savollari
             </Link>
+            <button
+              type="button"
+              className="admin-btn admin-btn-secondary"
+              onClick={() => setAnnounceFor(slug)}
+            >
+              <i className="bi bi-megaphone" aria-hidden="true" /> E'lon qilish
+            </button>
             <button type="button" className="admin-btn admin-btn-primary" onClick={openCreatePart}>
               <i className="bi bi-plus-lg" aria-hidden="true" /> Qism qo'shish
             </button>
@@ -928,7 +952,172 @@ export function MediaPartsPage() {
         onCancel={() => setDeleteMediaItem(null)}
         onConfirm={handleDeleteMediaItem}
       />
+
+      {announceFor === slug ? (
+        <AnnounceModal
+          open
+          media={media}
+          onClose={() => setAnnounceFor(null)}
+          onSent={setSuccess}
+        />
+      ) : null}
     </Stack>
+  )
+}
+
+// «📢 E'lon qilish»: the exact message is previewed before anything is sent and
+// the operator chooses where it goes — the public channel, every bot user, or
+// both at once. An ongoing title only asks which episode(s) to announce; a
+// finished one always announces the whole run.
+function AnnounceModal({ open, media, onClose, onSent }) {
+  const isOngoing = media?.status === 'ongoing'
+  const [scope, setScope] = useState('last')
+  const [targets, setTargets] = useState(['channel'])
+  const [preview, setPreview] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const effectiveScope = isOngoing ? scope : 'all'
+
+  useEffect(() => {
+    if (!open || !media?.slug) return undefined
+    let active = true
+    setLoading(true)
+    setError(null)
+    adminMediaApi
+      .announcePreview(media.slug, effectiveScope)
+      .then((data) => {
+        if (active) setPreview(data)
+      })
+      .catch((err) => {
+        if (active) setError(formatError(err, "E'lon ma'lumotini yuklashda xatolik."))
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [open, media?.slug, effectiveScope])
+
+  function toggleTarget(value) {
+    setTargets((prev) =>
+      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
+    )
+  }
+
+  async function handleSend() {
+    if (!targets.length) {
+      setError('Kamida bitta manzilni tanlang: kanal yoki foydalanuvchilar.')
+      return
+    }
+    setSending(true)
+    setError(null)
+    try {
+      const result = await adminMediaApi.announce(media.slug, {
+        targets,
+        scope: effectiveScope,
+      })
+      const parts = []
+      if (result.channel_message_id) parts.push('Kanalga joylandi')
+      if (result.channel_error) parts.push(`Kanal: ${result.channel_error}`)
+      if (result.users_started) {
+        parts.push(`${result.users_total} ta foydalanuvchiga yuborilmoqda`)
+      }
+      if (result.users_error) parts.push(result.users_error)
+      onSent?.(parts.join(' · ') || "E'lon yuborildi.")
+      onClose()
+    } catch (err) {
+      setError(formatError(err, "E'lon yuborishda xatolik."))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const previewText = (preview?.caption || '').replace(/<\/?b>/g, '')
+
+  return (
+    <Modal
+      opened={open}
+      onClose={onClose}
+      title="E'lon qilish"
+      centered
+      size="lg"
+    >
+      <Stack gap="md">
+        <Text size="sm" c="dimmed">
+          E'lon quyidagi ko'rinishda yuboriladi: muqova, nomi, qismlar, reyting,
+          davomiyligi, qism/umumiy qism, sifat va «{preview?.button_label || '▶️ Tomosha qilish'}»
+          tugmasi (botga start havolasi bilan).
+        </Text>
+
+        {isOngoing ? (
+          <Select
+            label="Qaysi qismlar e'lon qilinsin?"
+            data={[
+              { value: 'last', label: 'Faqat oxirgi qism' },
+              { value: 'all', label: 'Barcha qismlar' },
+            ]}
+            value={scope}
+            onChange={(value) => setScope(value || 'last')}
+            allowDeselect={false}
+          />
+        ) : (
+          <Text size="sm">
+            Bu media tugallangan — e'lon barcha qismlar bilan yuboriladi.
+          </Text>
+        )}
+
+        <Stack gap="xs">
+          <Text fw={600} size="sm">Kimga yuborilsin?</Text>
+          <Checkbox
+            checked={targets.includes('channel')}
+            onChange={() => toggleTarget('channel')}
+            label="Kanalga"
+            description={
+              preview?.channel_title || "E'lon kanali sozlamalarda tanlanmagan"
+            }
+          />
+          <Checkbox
+            checked={targets.includes('users')}
+            onChange={() => toggleTarget('users')}
+            label="Barcha foydalanuvchilarga"
+            description={`${preview?.recipients ?? 0} ta bot foydalanuvchisi`}
+          />
+        </Stack>
+
+        <div>
+          <Text fw={600} size="sm" mb={6}>Xabar ko'rinishi</Text>
+          {loading ? (
+            <Loader size="sm" />
+          ) : (
+            <pre className="admin-announce-preview">{previewText || '—'}</pre>
+          )}
+        </div>
+
+        <ErrorAlert>{error}</ErrorAlert>
+
+        <Group justify="flex-end">
+          <button
+            type="button"
+            className="admin-btn admin-btn-secondary"
+            onClick={onClose}
+            disabled={sending}
+          >
+            Bekor
+          </button>
+          <button
+            type="button"
+            className="admin-btn admin-btn-primary"
+            onClick={handleSend}
+            disabled={sending || loading || !targets.length}
+          >
+            {sending ? 'Yuborilmoqda…' : "E'lon qilish"}
+          </button>
+        </Group>
+      </Stack>
+    </Modal>
   )
 }
 

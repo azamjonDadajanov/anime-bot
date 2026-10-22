@@ -8,19 +8,36 @@ import '@mantine/core/styles.css'
 import './index.css'
 import App from './App.jsx'
 
+// The SPA owns its scroll position; the browser must not restore an old one.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
+
 const AdminApp = lazy(() => import('./admin/AdminApp'))
 
 const theme = {
-  primaryColor: 'blue',
-  colors: {
-    blue: ['#e8f2ff', '#cfe3ff', '#a6ccff', '#77b2ff', '#4d98f5', '#287de0', '#1768c4', '#10549f', '#0d427d', '#0a315e'],
-    dark: ['#dce8f8', '#b8cae0', '#8da7c8', '#6481a5', '#405f86', '#27466c', '#102945', '#050d1a', '#030916', '#01040b'],
+  primaryColor: 'brand',
+  primaryShade: { light: 6, dark: 4 },
+  defaultRadius: 'md',
+  fontFamily: "'Inter Tight', system-ui, -apple-system, sans-serif",
+  fontFamilyMonospace: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  headings: {
+    fontFamily: "'Bricolage Grotesque', 'Inter Tight', system-ui, sans-serif",
+    fontWeight: '600',
   },
+  colors: {
+    // Electric cobalt — the platform's primary signal colour.
+    brand: ['#edf0ff', '#dbe0ff', '#b6c1ff', '#8da0ff', '#6b83ff', '#526cff', '#3046e8', '#2233b8', '#18268f', '#101b66'],
+    // Ultraviolet — secondary highlights and chrome gradients.
+    violet: ['#f3edff', '#e5d9ff', '#c9b2ff', '#ab8aff', '#956cff', '#8657ff', '#7042f0', '#5a2ed0', '#4622a6', '#351880'],
+    // Acid lime — live markers, ratings, success details.
+    acid: ['#f7ffe0', '#ecffb3', '#e0ff85', '#d3fb58', '#c9f23a', '#b9de22', '#9dbf16', '#7f9c0d', '#637a08', '#4a5c04'],
+  },
+  defaultColorScheme: 'dark',
+  respectReducedMotion: true,
 }
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <MantineProvider defaultColorScheme="light" theme={theme}>
+    <MantineProvider defaultColorScheme="dark" theme={theme}>
       <BrowserRouter>
         {isAdminHost() ? (
           <Suspense fallback={<div className="loading-state">Yuklanmoqda…</div>}>

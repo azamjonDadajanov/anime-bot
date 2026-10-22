@@ -11,6 +11,7 @@ import {
 } from '@mantine/core'
 import { useCallback, useEffect, useState } from 'react'
 import { adminSubscriptionApi } from '../api/adminApi'
+import { formatDateTime } from '../../utils/dates'
 import {
   ConfirmDialog,
   EmptyState,
@@ -130,7 +131,7 @@ export default function SubscriptionsPage() {
                     Telegram: {request.telegram_id || '—'} · {Number(request.amount).toLocaleString()} so'm
                   </Text>
                   <Text size="xs" c="dimmed">
-                    {request.created_at ? new Date(request.created_at).toLocaleString() : ''}
+                    {formatDateTime(request.created_at)}
                   </Text>
                   <Badge
                     variant="light"

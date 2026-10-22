@@ -11,7 +11,13 @@ per request, which of them it needs:
 * ``popular_titles`` — the highest rated / newest / upcoming titles;
 * ``catalog_stats`` — how much content the platform holds;
 * ``personal_taste`` — the user's favourites and last watched titles, and only
-  registered when the user opted in.
+  when the user opted in;
+* ``submit_action`` — *propose* an account action (izoh, yulduzcha, obuna,
+  akkaunt ulash, ism, mavzu, ...). The model never performs it: the server
+  builds a confirmation card from the real account state, the user confirms
+  it (site or bot), and only then does ``movies.ai_actions.execute`` run.
+  The tool's text result is a fixed sentence, so no user data ever flows
+  back into the model.
 
 That is what makes "Naruto nechta qismdan iborat?", "menga qo'rqinchli anime
 ayt" and "sevimlilarimga o'xshash nima bor?" all answerable by the same
@@ -195,8 +201,20 @@ class _ToolRunner:
     the clients whether a question was a catalogue lookup or small talk.
     """
 
-    def __init__(self, *, personal_context: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        personal_context: str = "",
+        user=None,
+        source: str = "site",
+    ) -> None:
         self.personal_context = (personal_context or "").strip()
+        self.user = user
+        self.source = source or "site"
+        # The card the client renders once the model proposed an action. It is
+        # built server-side from the real account state and never travels back
+        # through the model (see ``movies.ai_actions``).
+        self.action: Optional[Dict[str, Any]] = None
         self.found: Dict[int, MediaTitle] = {}
         self.used: List[str] = []
         self._tools: Dict[str, Callable[..., str]] = {
@@ -209,6 +227,8 @@ class _ToolRunner:
         }
         if self.personal_context:
             self._tools["personal_taste"] = self.personal_taste
+        if self.user is not None:
+            self._tools["submit_action"] = self.submit_action
 
     # ------------------------------------------------------------- plumbing
     def schemas(self) -> List[Dict[str, Any]]:
@@ -388,6 +408,38 @@ class _ToolRunner:
         """The opted-in favourites/recent block, as the model should read it."""
         return self.personal_context or "Foydalanuvchi shaxsiy ma'lumotlarini ulashmagan."
 
+    def submit_action(self, amal: str = "", qiymatlar: Any = None) -> str:
+        """Propose one account action; the card waits for the user's confirm.
+
+        The result is a *fixed* sentence on purpose: whatever the model sent in
+        comes back only as "tayyor" / a short error, so a name, a plan or a
+        photo can never be echoed into the conversation history. The values are
+        whitelisted and validated here; the editable card (and the token that
+        carries it) is built server-side by ``movies.ai_actions``.
+        """
+        from . import ai_actions
+
+        values = qiymatlar
+        if isinstance(values, str):
+            try:
+                values = json.loads(values or "{}")
+            except (TypeError, ValueError):
+                values = {}
+        if not isinstance(values, dict):
+            values = {}
+        try:
+            self.action = ai_actions.build_action(
+                self.user, amal, values, source=self.source
+            )
+        except ai_actions.ActionError as exc:
+            self.action = None
+            return f"Xatolik: {exc.detail}"
+        return (
+            "Amal tayyorlandi — foydalanuvchiga tasdiq kartasi ko'rsatiladi. "
+            "Qisqa javob yoz: amal tayyor ekanini, foydalanuvchi tasdiqlashi "
+            "kerakligini ayt. Qiymatlarni takrorlama va yangi amal so'rama."
+        )
+
     # -------------------------------------------------------------- helpers
     def _find_title(self, *, id: Any = None, name: str = "") -> Optional[MediaTitle]:
         queryset = MediaTitle.objects.prefetch_related("genres")
@@ -518,6 +570,58 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "submit_action",
+            "description": (
+                "Foydalanuvchi hisob amalini taklif qiladi (izoh yozish, "
+                "yulduzcha qo'yish, profil rasmini almashtirish, obunani "
+                "uzaytirish, Telegramga ulash/uzish, ism-familiya, mavzu, "
+                "harakatlarni kamaytirish). Amal avtomatik bajarilmaydi: "
+                "foydalanuvchiga tasdiq kartasi chiqadi va u tasdiqlagach "
+                "gina bajariladi. Foydalanuvchi shaxsiy ma'lumotlarini "
+                "(ism, obuna, rasm) o'zingdan so'rama — ular kartaga serverda "
+                "to'ldiriladi; faqat xabardan tushungan qiymatlarni yubor. "
+                "Bitta xabarda bitta amal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "amal": {
+                        "type": "string",
+                        "enum": [
+                            "write_comment",
+                            "set_rating",
+                            "set_avatar",
+                            "subscription_request",
+                            "link_telegram",
+                            "unlink_telegram",
+                            "change_name",
+                            "set_theme",
+                            "set_reduce_motion",
+                        ],
+                        "description": "Amal turi.",
+                    },
+                    "qiymatlar": {
+                        "type": "object",
+                        "description": (
+                            "Amal qiymatlari. write_comment: title_id (majburiy), "
+                            "body (matn), score (1-10, ixtiyoriy). set_rating: "
+                            "title_id, score. set_avatar: avatar (emoji yoki rasm "
+                            "havolasi). subscription_request: plan (daily, d15, "
+                            "monthly, quarterly, yearly — foydalanuvchi aytsa). "
+                            "change_name: first_name, last_name. set_theme: theme "
+                            "(system, light, dark). set_reduce_motion: enabled "
+                            "(true/false). link/unlink_telegram, avatar_file, "
+                            "screenshot uchun qiymat kerak emas."
+                        ),
+                    },
+                },
+                "required": ["amal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "personal_taste",
             "description": (
                 "Foydalanuvchining sevimlilari va oxirgi ko'rganlari. Faqat "
@@ -636,7 +740,22 @@ SYSTEM_PROMPT = (
     "- Javobni yengil markdown bilan tartibla: muhim so'zlar uchun "
     "**qalin**, ro'yxat uchun «- » bilan boshlanadigan qatorlar, "
     "sarlavhalar uchun «### ». Jadval, HTML teglari va ortiqcha "
-    "bezaklardan foydalanma."
+    "bezaklardan foydalanma.\n\n"
+
+    "8. HISOB AMALLARI (submit_action):\n"
+    "Foydalanuvchi o'z hisobi bilan amal so'rasa («Narutoga izoh yoz», "
+    "«10 yulduz qo'y», «profil rasmini 🦊 qil», «obunamni uzaytir», "
+    "«Telegramga ulang», «ismimni Ali qil», «tungi mavzuni yoq», "
+    "«harakatlarni kamaytir») submit_action funksiyasini chaqir.\n"
+    "- Bitta xabarda bitta amal. Avval kontent kerak bo'lsa, katalogdan "
+    "topib, title_id ni qiymatlarga qo'sh.\n"
+    "- Foydalanuvchi haqida ma'lumotni o'zingdan so'rama: ism, obuna holati, "
+    "rasmlar, karta raqami kartaga serverda to'ldiriladi. Faqat xabardan "
+    "aniq tushungan qiymatlarni yubor (matn, baho, yangi ism, mavzu, tarif).\n"
+    "- Qiymat aniq bo'lmasa, o'ylab topma: kartada foydalanuvchi o'zi "
+    "to'ldiradi/yuzaga chiqaradi.\n"
+    "- Amal taklif qilingandan so'ng qisqa javob ber («Tasdiq kartasi "
+    "tayyor» va shunga o'xshash) va boshqa amal taklif qilma."
 )
 
 
@@ -683,6 +802,10 @@ class AssistantAnswer:
     conversational: bool = False
     tools: Tuple[str, ...] = ()
     error: str = ""
+    # The confirmation card when the model proposed an account action; None
+    # for a plain catalogue/conversational answer. Built server-side, never
+    # cached across users.
+    action: Optional[Dict[str, Any]] = None
 
 
 _CACHE: Dict[Tuple[Any, ...], Tuple[float, AssistantAnswer]] = {}
@@ -769,6 +892,8 @@ def answer(
     history: Sequence[Mapping[str, Any]] = (),
     support: bool = False,
     personal_context: str = "",
+    user=None,
+    source: str = "site",
 ) -> AssistantAnswer:
     """Ask the assistant: it calls the tools it needs, then writes the answer.
 
@@ -777,6 +902,11 @@ def answer(
     "oldingisiga o'xshashini top" still means something. ``personal_context``
     (favourites + last watched) is only passed by callers when the user opted
     in, and it is also what enables the ``personal_taste`` tool.
+
+    ``user`` (the site account) enables ``submit_action``: the model may then
+    *propose* an account action, which comes back as ``AssistantAnswer.action``
+    — a signed confirmation card, never executed here. The support persona
+    ("adminga xabar") never gets the tool: it only advises.
     """
     text = clean_text(query)
     if not text:
@@ -797,7 +927,12 @@ def answer(
     if not llm.is_configured():
         return AssistantAnswer(query=query, error=llm.no_provider_message())
 
-    runner = _ToolRunner(personal_context=personal_context)
+    runner = _ToolRunner(
+        personal_context=personal_context,
+        # Support only advises: the action tool is never offered there.
+        user=None if support else user,
+        source=source,
+    )
     media_note = ""
     if media_type:
         media_note = f"\n\nFaol filtr: faqat {media_type} turidagi kontent kerak."
@@ -863,7 +998,10 @@ def answer(
         # request as a conversation, so clients show the words alone.
         conversational=bool(answer_text) and not runner.used and not titles,
         tools=tuple(dict.fromkeys(runner.used)),
+        action=runner.action,
     )
-    if result.used_llm:
+    # A confirmation card carries a user-bound signed token: caching it would
+    # hand the next caller (of the same query) somebody else's card.
+    if result.used_llm and runner.action is None:
         _cache_put(cache_key, result)
     return result

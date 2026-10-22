@@ -22,7 +22,8 @@ from django.utils.functional import empty
 from PIL import Image
 from rest_framework.test import APIClient
 
-from . import llm
+from . import ai_assistant, llm
+from .management.commands import ai_setup
 from .management.commands.fix_covers import Command as FixCoversCommand
 from .models import (
 	AIProvider,
@@ -362,6 +363,14 @@ def provider_limit(*, retry_after=None) -> dict:
 	return {"status": 429, "body": {"error": "rate limit"}, "headers": headers}
 
 
+def provider_gone() -> dict:
+	"""A withdrawn model (404): the provider does not know it any more."""
+	return {
+		"status": 404,
+		"body": {"error": {"code": 404, "message": "This model is no longer available"}},
+	}
+
+
 class _FakeResponse:
 	"""The little bit of an HTTP response ``_attempt`` reads."""
 
@@ -392,6 +401,7 @@ class ProviderStub:
 	def __init__(self, answers: dict):
 		self.answers = dict(answers)
 		self.calls = []
+		self.payloads = []
 		self.max_concurrent = 0
 		self._running = 0
 
@@ -399,6 +409,10 @@ class ProviderStub:
 		url = request.full_url
 		base = url.rsplit("/chat/completions", 1)[0]
 		self.calls.append(base)
+		try:
+			self.payloads.append(json.loads(request.data.decode("utf-8")))
+		except Exception:  # noqa: BLE001 - the body is optional for the tests
+			pass
 		self._running += 1
 		self.max_concurrent = max(self.max_concurrent, self._running)
 		try:
@@ -485,12 +499,44 @@ class AIProviderFailoverTests(TestCase):
 		# Every entry carries its own row, so the runtime state goes back to it.
 		self.assertTrue(all(config.row_id for config in chain))
 
-	def test_a_keyless_row_and_an_empty_table_fall_back_to_the_environment(self):
-		"""A row without a key is skipped; with no rows at all .env still works."""
-		self.make_provider("Kalitsiz", ONE_URL, api_key="")
-		active = self.make_provider("Kalitli", TWO_URL)
+	def test_a_keyless_row_borrows_the_environment_key_of_its_kind(self):
+		"""A row without a key of its own uses the environment's one - if it fits.
 
-		self.assertEqual([c.label for c in llm.provider_chain()], ["Kalitli"])
+		The secret stays in one place: the Gemini rows share the Gemini key
+		from ``.env``, and a Groq row cannot open Gemini's door.
+		"""
+		self.make_provider("Kalitsiz", ONE_URL, api_key="")
+		with override_settings(
+			AI_LLM_API_KEY="env-key",
+			AI_LLM_PROVIDER="custom",
+			AI_LLM_MODEL="env-model",
+			AI_LLM_BASE_URL=ONE_URL,
+		):
+			chain = llm.provider_chain()
+
+		# The row goes first (lower priority) and it carries the env key.
+		self.assertEqual([c.label for c in chain], ["Kalitsiz", "custom"])
+		self.assertEqual(chain[0].api_key, "env-key")
+		# The environment's own provider is the reserve at the end.
+		self.assertEqual(chain[1].row_id, None)
+		self.assertEqual(chain[1].model, "env-model")
+
+	def test_a_keyless_row_of_another_kind_is_skipped(self):
+		"""A Gemini key cannot open Groq's door: the row waits for its own key."""
+		self.make_provider("Kalitsiz", ONE_URL, api_key="", kind=AIProvider.Kind.GEMINI)
+		with override_settings(
+			AI_LLM_API_KEY="env-key",
+			AI_LLM_PROVIDER="custom",
+			AI_LLM_MODEL="env-model",
+			AI_LLM_BASE_URL=ONE_URL,
+		):
+			chain = llm.provider_chain()
+
+		self.assertEqual([c.label for c in chain], ["custom"])
+
+	def test_an_empty_table_falls_back_to_the_environment(self):
+		"""With no rows at all .env still works - it is the reserve."""
+		active = self.make_provider("Kalitli", TWO_URL)
 
 		active.is_active = False
 		active.save(update_fields=["is_active", "updated_at"])
@@ -506,6 +552,20 @@ class AIProviderFailoverTests(TestCase):
 		self.assertIsNone(chain[0].row_id)
 		self.assertEqual(chain[0].base_url, ONE_URL)
 		self.assertEqual(chain[0].model, "env-model")
+
+	def test_the_environment_is_not_asked_twice(self):
+		"""The same model twice is the same call twice: the chain says it once."""
+		self.make_provider("Qator", ONE_URL, api_key="")
+		with override_settings(
+			AI_LLM_API_KEY="env-key",
+			AI_LLM_PROVIDER="custom",
+			AI_LLM_MODEL="test-model",
+			AI_LLM_BASE_URL=ONE_URL,
+		):
+			chain = llm.provider_chain()
+
+		self.assertEqual([c.label for c in chain], ["Qator"])
+		self.assertEqual(chain[0].api_key, "env-key")
 
 	def test_a_limited_provider_hands_the_question_to_the_next_one(self):
 		"""The whole point: 429 on the first provider is not a failed search."""
@@ -568,6 +628,99 @@ class AIProviderFailoverTests(TestCase):
 		self.ask(stub, prompt="ikkinchi savol")
 
 		self.assertEqual(stub.calls, [TWO_URL])
+
+	def test_a_withdrawn_model_is_skipped_for_a_long_time(self):
+		"""HTTP 404 means "this model does not exist" - not "try again in a minute".
+
+		Retrying a withdrawn model every minute would keep the chain from ever
+		reaching a working provider, so the row is left alone for half an hour
+		and the chain moves on at once.
+		"""
+		first = self.make_provider("Eski", ONE_URL, priority=1)
+		self.make_provider("Yangi", TWO_URL, priority=2)
+		stub = ProviderStub(
+			{ONE_URL: provider_gone(), TWO_URL: provider_answer("Mana javob.")}
+		)
+
+		answer = self.ask(stub)
+
+		self.assertEqual(answer, "Mana javob.")
+		self.assertEqual(stub.calls, [ONE_URL, TWO_URL])
+		first.refresh_from_db()
+		self.assertEqual(first.failure_count, 1)
+		self.assertIn("404", first.last_error)
+		left = (first.cooldown_until - timezone.now()).total_seconds()
+		self.assertGreater(left, 1500)
+
+	def test_the_next_request_does_not_ask_the_withdrawn_model_again(self):
+		"""A dead model costs one call, not one call per question."""
+		self.make_provider("Eski", ONE_URL, priority=1)
+		self.make_provider("Yangi", TWO_URL, priority=2)
+		stub = ProviderStub(
+			{ONE_URL: provider_gone(), TWO_URL: provider_answer("Mana javob.")}
+		)
+
+		self.ask(stub, prompt="birinchi savol")
+		stub.calls.clear()
+		second = self.ask(stub, prompt="ikkinchi savol")
+
+		self.assertEqual(second, "Mana javob.")
+		self.assertEqual(stub.calls, [TWO_URL])
+
+	def test_a_provider_without_functions_gets_the_question_without_them(self):
+		"""A model that cannot call the catalogue still answers the question.
+
+		It must not be sent the function list (it would answer with a broken
+		call), and it must be told that the catalogue is out of reach - so it
+		does not invent titles it never looked up.
+		"""
+		self.make_provider("Matnli", ONE_URL, priority=1, supports_tools=False)
+		stub = ProviderStub({ONE_URL: provider_answer("Javob.")})
+		tools = [
+			{
+				"type": "function",
+				"function": {"name": "search_catalog", "parameters": {}},
+			}
+		]
+
+		with mock.patch("movies.llm.urllib.request.urlopen", stub):
+			llm.chat_completion(
+				[
+					{"role": "system", "content": "Siz yordamchisiz."},
+					{"role": "user", "content": "Anime tavsiya qil."},
+				],
+				tools=tools,
+			)
+
+		payload = stub.payloads[0]
+		self.assertNotIn("tools", payload)
+		system = payload["messages"][0]["content"]
+		self.assertIn("Siz yordamchisiz.", system)
+		self.assertIn(llm.TEXT_ONLY_NOTE.strip(), system)
+
+	def test_a_provider_with_functions_gets_them(self):
+		"""The normal case: the catalogue functions are part of the request."""
+		self.make_provider("Funksiyali", ONE_URL, priority=1)
+		stub = ProviderStub({ONE_URL: provider_answer("Javob.")})
+		tools = [
+			{
+				"type": "function",
+				"function": {"name": "search_catalog", "parameters": {}},
+			}
+		]
+
+		with mock.patch("movies.llm.urllib.request.urlopen", stub):
+			llm.chat_completion(
+				[
+					{"role": "system", "content": "Siz yordamchisiz."},
+					{"role": "user", "content": "Anime tavsiya qil."},
+				],
+				tools=tools,
+			)
+
+		payload = stub.payloads[0]
+		self.assertEqual(payload["tools"][0]["function"]["name"], "search_catalog")
+		self.assertNotIn(llm.TEXT_ONLY_NOTE.strip(), payload["messages"][0]["content"])
 
 	def test_the_providers_own_retry_after_decides_the_wait(self):
 		self.make_provider("Birinchi", ONE_URL, priority=1)
@@ -652,6 +805,127 @@ class AIProviderFailoverTests(TestCase):
 				self.ask(None)
 
 		self.assertEqual(asked, [("Birinchi", 8), ("Ikkinchi", 7)])
+
+
+class AIChainCommandsTests(TestCase):
+	"""``ai_setup`` writes the chain, ``ai_status`` shows what is broken.
+
+	Both commands are the operator's first stop when the assistant stops
+	answering: one prepares a working chain, the other says which model in it
+	is dead and why.
+	"""
+
+	def setUp(self):
+		super().setUp()
+		# The commands must not read the developer's real key from .env.
+		override = override_settings(AI_LLM_API_KEY="", AI_LLM_BASE_URL="", AI_LLM_MODEL="")
+		override.enable()
+		self.addCleanup(override.disable)
+		llm.reset_cooldowns()
+		self.addCleanup(llm.reset_cooldowns)
+
+	def run_setup(self, **kwargs) -> str:
+		out = io.StringIO()
+		call_command("ai_setup", stdout=out, **kwargs)
+		return out.getvalue()
+
+	def run_status(self, **kwargs) -> str:
+		out = io.StringIO()
+		call_command("ai_status", stdout=out, **kwargs)
+		return out.getvalue()
+
+	def test_ai_setup_writes_a_chain_without_keys(self):
+		"""The rows share the key from .env: the secret stays in one place."""
+		self.run_setup()
+
+		rows = list(AIProvider.objects.order_by("priority"))
+		self.assertTrue(rows)
+		self.assertTrue(all(not (row.api_key or "").strip() for row in rows))
+		self.assertTrue(all(row.kind == AIProvider.Kind.GEMINI for row in rows))
+		self.assertTrue(all(row.is_active for row in rows))
+		# The models must be different: a chain of one model is no chain.
+		self.assertEqual(len({row.model for row in rows}), len(rows))
+
+	def test_ai_setup_can_be_run_twice(self):
+		"""Running it again must not double the chain."""
+		self.run_setup()
+		first = AIProvider.objects.count()
+		report = self.run_setup()
+
+		self.assertEqual(AIProvider.objects.count(), first)
+		self.assertIn("0 ta qator yozildi", report)
+
+	def test_ai_setup_leaves_a_foreign_row_alone(self):
+		"""A row the operator made by hand is not the command's business."""
+		mine = AIProvider.objects.create(
+			name="Mening provayderim",
+			kind=AIProvider.Kind.GEMINI,
+			api_key="my-key",
+			model="my-model",
+			priority=5,
+		)
+		self.run_setup()
+
+		mine.refresh_from_db()
+		self.assertEqual(mine.api_key, "my-key")
+		self.assertEqual(mine.model, "my-model")
+
+	def test_ai_setup_reset_removes_only_its_own_rows(self):
+		"""``--reset`` rewrites the chain, and leaves the operator's row alone."""
+		mine = AIProvider.objects.create(
+			name="Mening provayderim",
+			kind=AIProvider.Kind.GEMINI,
+			api_key="my-key",
+			model="my-model",
+		)
+		self.run_setup()
+		self.run_setup(reset=True)
+
+		self.assertTrue(AIProvider.objects.filter(name="Mening provayderim").exists())
+		# The chain is there again - reset means "write it again", not "leave
+		# the assistant without a provider".
+		names = [item["name"] for item in ai_setup.DEFAULT_CHAIN]
+		self.assertEqual(AIProvider.objects.filter(name__in=names).count(), len(names))
+		self.assertEqual(AIProvider.objects.count(), len(names) + 1)
+
+	def test_ai_status_says_a_chain_is_ready(self):
+		"""The command answers the question the operator came with."""
+		with override_settings(
+			AI_LLM_API_KEY="env-key", AI_LLM_PROVIDER="gemini", AI_LLM_MODEL=""
+		):
+			self.run_setup()
+			report = self.run_status()
+
+		self.assertIn("AI zanjiri", report)
+		self.assertIn("tayyor", report)
+
+	def test_ai_status_without_any_provider_says_so(self):
+		report = self.run_status()
+
+		self.assertIn("AI provayder yo'q", report)
+
+	def test_ai_status_test_names_the_dead_model(self):
+		"""One broken model must be visible, not hidden behind the others."""
+		AIProvider.objects.create(
+			name="O'lik model",
+			kind=AIProvider.Kind.CUSTOM,
+			api_key="test-key",
+			model="dead-model",
+			base_url=ONE_URL,
+			priority=1,
+		)
+		stub = ProviderStub({ONE_URL: provider_gone()})
+
+		with mock.patch("movies.llm.urllib.request.urlopen", stub), mock.patch(
+			"movies.ai_assistant.answer",
+			return_value=ai_assistant.AssistantAnswer(
+				query="salom", answer="Javob", used_llm=True
+			),
+		):
+			report = self.run_status(test=True)
+
+		self.assertIn("O'lik model", report)
+		self.assertIn("404", report)
 
 
 class AIProviderAdminTests(TestCase):

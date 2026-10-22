@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/podcast', icon: 'bi-mic', label: 'Podcast' },
   { to: '/broadcast', icon: 'bi-broadcast', label: 'Broadcast' },
   { to: '/users', icon: 'bi-people', label: 'Foydalanuvchilar' },
+  { to: '/comments', icon: 'bi-chat-left-text', label: 'Izohlar' },
   { to: '/subscriptions', icon: 'bi-ticket-perforated', label: 'Arizalar' },
   { to: '/income', icon: 'bi-cash-coin', label: 'Tushumlar' },
   { to: '/genres', icon: 'bi-tags', label: 'Janrlar' },

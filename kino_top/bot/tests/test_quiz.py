@@ -69,10 +69,12 @@ class MediaActionButtonsTests(DispatcherTestCase):
 		self.assertEqual(rows[0], ["🟢 1", "2", "3"])
 		self.assertEqual(rows[1], ["⬅️ Oldingi qism", "1-mavsum", "Keyingi qism ➡️"])
 		self.assertEqual(rows[2], ["⭐️ Sevimlilarga qo'shish"])
-		self.assertEqual(rows[3], ["⬅️ Asosiy menyu"])
+		self.assertEqual(rows[3], ["💬 Izoh qoldirish"])
+		self.assertEqual(rows[4], ["⬅️ Asosiy menyu"])
 		callbacks = self._callbacks()
 		self.assertEqual(callbacks[2][0], f"favm:{title.pk}:{parts[0].pk}")
-		self.assertEqual(callbacks[3][0], cb.MENU)
+		self.assertEqual(callbacks[3][0], f"cm:{title.pk}:{parts[0].pk}")
+		self.assertEqual(callbacks[4][0], cb.MENU)
 
 	def test_the_star_under_media_toggles_the_favourite(self) -> None:
 		title = make_title(code="8102", title="Starred Anime")
@@ -112,7 +114,8 @@ class MediaActionButtonsTests(DispatcherTestCase):
 
 		self.feed(build_callback(f"watch:{part_a.pk}"))
 		self.assertIn("Testlarni ishlash", self.button_texts())
-		self.assertIn(f"qz:{with_bank.pk}", self._callbacks()[1][0])
+		# Navigator (none here), favourite, comment, then the quiz button.
+		self.assertIn(f"qz:{with_bank.pk}", self._callbacks()[2][0])
 
 		self.session.reset()
 		self.feed(build_callback(f"watch:{part_b.pk}", update_id=9))
@@ -131,10 +134,11 @@ class MediaActionButtonsTests(DispatcherTestCase):
 			self.feed(build_callback(f"watch:{part.pk}"))
 
 		rows = self._rows()
-		self.assertEqual(len(rows), 3)
+		self.assertEqual(len(rows), 4)
 		self.assertEqual(rows[0], ["📖 Saytda o'qish"])
 		self.assertEqual(rows[1], ["⭐️ Sevimlilarga qo'shish"])
-		self.assertEqual(rows[2], ["⬅️ Asosiy menyu"])
+		self.assertEqual(rows[2], ["💬 Izoh qoldirish"])
+		self.assertEqual(rows[3], ["⬅️ Asosiy menyu"])
 		self.assertEqual(
 			self._markup().inline_keyboard[0][0].url,
 			f"https://kino.test/read/{title.slug}",
@@ -159,7 +163,14 @@ class MediaActionButtonsTests(DispatcherTestCase):
 		rows = [
 			[button.text for button in row] for row in hint[0].reply_markup.inline_keyboard
 		]
-		self.assertEqual(rows, [["⭐️ Sevimlilarga qo'shish"], ["⬅️ Asosiy menyu"]])
+		self.assertEqual(
+			rows,
+			[
+				["⭐️ Sevimlilarga qo'shish"],
+				["💬 Izoh qoldirish"],
+				["⬅️ Asosiy menyu"],
+			],
+		)
 
 
 class QuizFlowTests(DispatcherTestCase):

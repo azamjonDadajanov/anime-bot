@@ -18,6 +18,8 @@ export const api = axios.create({
 const CACHE_RULES = [
   { match: /^\/catalog\/random\/?$/, ttl: 0 },
   { match: /^\/catalog\/(latest|popular|upcoming|movies|anime|manga|series)\/?$/, ttl: 45_000 },
+  // «Top reyting» is the live average + vote count; new votes change it.
+  { match: /^\/catalog\/top-rated\/?$/, ttl: 45_000 },
   { match: /^\/catalog\/[^/]+\/$/, ttl: 5 * 60_000 },
   { match: /^\/catalog\/?$/, ttl: 45_000 },
   { match: /^\/auth\/favorites\/?$/, ttl: 45_000 },
@@ -162,6 +164,16 @@ export const mediaApi = {
   async detail(slug) {
     return cachedGet(`/catalog/${encodeURIComponent(slug)}/`)
   },
+  /**
+   * "O'xshash animelar": ranked on the server from shared genres, format and
+   * release window — the same rail the Telegram bot shows.
+   */
+  async similar(slug, limit = 12) {
+    const { data } = await api.get(`/catalog/${encodeURIComponent(slug)}/similar/`, {
+      params: limit ? { limit } : {},
+    })
+    return Array.isArray(data) ? data : data.results || []
+  },
   async recordView(slug, part) {
     const { data } = await api.post(
       `/catalog/${encodeURIComponent(slug)}/view/`,
@@ -176,6 +188,13 @@ export const mediaApi = {
   },
   async popular(params = {}) {
     return cachedGet('/catalog/popular/', params)
+  },
+  /**
+   * «Top reyting»: ranked on the server by the live 1-10 average, the most
+   * votes deciding a tie (`/api/catalog/top-rated/`).
+   */
+  async topRated(params = {}) {
+    return cachedGet('/catalog/top-rated/', params)
   },
   async upcoming(params = {}) {
     return cachedGet('/catalog/upcoming/', params)
@@ -296,6 +315,28 @@ export const aiApi = {
     const { data } = await api.post('/catalog/ai-assistant/', payload)
     return data
   },
+  // The confirmation card's «Tasdiqlash»: the signed token plus whatever the
+  // user edited on the card, and a file when the action needs one (the
+  // payment screenshot, an avatar picture). A refusal comes back as 400 with
+  // `{code, detail}`.
+  async confirmAction({ token, values = {}, screenshot = null, avatarFile = null }) {
+    const form = new FormData()
+    form.append('token', token)
+    const editable = Object.keys(values)
+    if (editable.length) form.append('values', JSON.stringify(values))
+    if (screenshot) form.append('screenshot', screenshot)
+    if (avatarFile) form.append('avatar_file', avatarFile)
+    const { data } = await api.post('/catalog/ai-assistant/action/', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data
+  },
+  // The «Telegramga ulash» card polls this while the user confirms the link
+  // in the Telegram bot; `linked` flips the button to its disabled state.
+  async telegramLink() {
+    const { data } = await api.get('/auth/telegram/link/')
+    return data
+  },
 }
 
 export const supportApi = {
@@ -326,6 +367,35 @@ export const subscriptionApi = {
   },
   async status(requestId) {
     const { data } = await api.get(`/auth/subscription/requests/${requestId}/`)
+    return data
+  },
+}
+
+// Izohlar va 1-10 baholar: the one table the site, the bot and the panel all
+// write to. Nothing here is ever cached — a new comment has to show up at once.
+export const communityApi = {
+  async comments({ title, part = null, page = 1 } = {}) {
+    const params = { title, page }
+    if (part) params.part = part
+    const { data } = await api.get('/comments/', { params })
+    return data
+  },
+  async createComment({ title, body, part = null, rating = null }) {
+    const payload = { title, body }
+    if (part) payload.part = part
+    if (rating) payload.rating = rating
+    const { data } = await api.post('/comments/', payload)
+    return data
+  },
+  async deleteComment(id) {
+    await api.delete(`/comments/${id}/`)
+  },
+  async rating(slug) {
+    const { data } = await api.get(`/catalog/${encodeURIComponent(slug)}/rating/`)
+    return data
+  },
+  async setRating(slug, score) {
+    const { data } = await api.post(`/catalog/${encodeURIComponent(slug)}/rating/`, { score })
     return data
   },
 }

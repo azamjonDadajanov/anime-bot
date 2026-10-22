@@ -60,7 +60,14 @@ class TelegramWidgetSerializer(serializers.Serializer):
 class UserSettingsSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = UserSettings
-		fields = ["theme", "language", "reduce_motion", "updated_at"]
+		fields = [
+			"theme",
+			"language",
+			"reduce_motion",
+			"avatar",
+			"avatar_file",
+			"updated_at",
+		]
 		read_only_fields = ["updated_at"]
 
 
@@ -68,6 +75,9 @@ class CurrentUserSerializer(serializers.ModelSerializer):
 	telegram_id = serializers.SerializerMethodField()
 	subscription = serializers.SerializerMethodField()
 	settings = serializers.SerializerMethodField()
+	# The 👑 rule in one field: every surface that shows a name asks this
+	# (see ``users.premium``), so an expired plan can never keep its crown.
+	is_premium = serializers.SerializerMethodField()
 
 	class Meta:
 		model = get_user_model()
@@ -75,8 +85,11 @@ class CurrentUserSerializer(serializers.ModelSerializer):
 			"id",
 			"username",
 			"email",
+			"first_name",
+			"last_name",
 			"is_staff",
 			"telegram_id",
+			"is_premium",
 			"subscription",
 			"settings",
 			"date_joined",
@@ -87,6 +100,11 @@ class CurrentUserSerializer(serializers.ModelSerializer):
 	def get_telegram_id(self, user) -> int | None:
 		profile = getattr(user, "telegram_profile", None)
 		return profile.telegram_id if profile else None
+
+	def get_is_premium(self, user) -> bool:
+		from .premium import is_premium_user
+
+		return is_premium_user(user)
 
 	def get_subscription(self, user) -> dict[str, str | bool | None]:
 		subscription = getattr(user, "subscription", None)
@@ -106,7 +124,11 @@ class CurrentUserSerializer(serializers.ModelSerializer):
 class ProfileUpdateSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = get_user_model()
-		fields = ["username", "email"]
+		fields = ["username", "email", "first_name", "last_name"]
+		extra_kwargs = {
+			"first_name": {"required": False, "allow_blank": True, "max_length": 150},
+			"last_name": {"required": False, "allow_blank": True, "max_length": 150},
+		}
 
 
 class FavoriteTitleSerializer(MediaTitleSerializer):

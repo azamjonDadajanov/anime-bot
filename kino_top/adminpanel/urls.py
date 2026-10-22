@@ -5,17 +5,20 @@ from .views import (
 	AdminAnimeVerificationViewSet,
 	AdminBotSettingsView,
 	AdminBroadcastViewSet,
+	AdminCommentViewSet,
 	AdminCouponViewSet,
 	AdminDashboardView,
 	AdminGameLeaderboardView,
 	AdminGenreViewSet,
 	AdminIncomeViewSet,
 	AdminLogListView,
+	AdminMediaAnnounceView,
 	AdminMediaStatsView,
 	AdminMonthlyPrizeViewSet,
 	AdminPodcastSendView,
 	AdminQuizAttemptViewSet,
 	AdminQuizQuestionViewSet,
+	AdminRatingViewSet,
 	AdminSubscriptionRequestViewSet,
 	AdminUserViewSet,
 )
@@ -35,9 +38,16 @@ router.register("quiz-questions", AdminQuizQuestionViewSet, basename="admin-quiz
 router.register("quiz-attempts", AdminQuizAttemptViewSet, basename="admin-quiz-attempts")
 router.register("verifications", AdminAnimeVerificationViewSet, basename="admin-verifications")
 router.register("monthly-prizes", AdminMonthlyPrizeViewSet, basename="admin-monthly-prizes")
+router.register("comments", AdminCommentViewSet, basename="admin-comments")
+router.register("ratings", AdminRatingViewSet, basename="admin-ratings")
 
 urlpatterns = [
 	path("dashboard/", AdminDashboardView.as_view(), name="admin-dashboard"),
+	path(
+		"media/<slug:slug>/announce/",
+		AdminMediaAnnounceView.as_view(),
+		name="admin-media-announce",
+	),
 	path("media-stats/", AdminMediaStatsView.as_view(), name="admin-media-stats"),
 	path("podcast/send/", AdminPodcastSendView.as_view(), name="admin-podcast-send"),
 	path("settings/", AdminBotSettingsView.as_view(), name="admin-settings"),

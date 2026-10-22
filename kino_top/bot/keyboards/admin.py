@@ -32,6 +32,7 @@ FIELD_LABELS = {
 	"rating": "⭐ Reyting",
 	"release_year": "📅 Yil",
 	"episode_count": "🎞 Qismlar soni",
+	"duration_minutes": "⏱ Davomiylik (daqiqa)",
 	"type": "📺 Turi",
 }
 
@@ -93,15 +94,28 @@ def media_list(items: Sequence, page: int, pages: int) -> InlineKeyboardMarkup:
 def media_actions(title, *, page: int = 1) -> InlineKeyboardMarkup:
 	return keyboard(
 		[btn("🎞 Qismlar", f"{cb.ADM_EPISODES}:list:{title.pk}:1")],
+		[btn("📢 E'lon qilish", f"{cb.ADM_MEDIA}:ann:{title.pk}")],
 		[btn("✏️ Tahrirlash", f"{cb.ADM_MEDIA}:edit:{title.pk}:title")],
 		[btn("🗑 O'chirish", f"{cb.ADM_MEDIA}:del:{title.pk}:{page}")],
 		[btn("⬅️ Ro'yxat", f"{cb.ADM_MEDIA}:list:{page}")],
 	)
 
 
+def media_announce_scopes(title, *, page: int = 1) -> InlineKeyboardMarkup:
+	"""Ask an ongoing title's operator how much to announce.
+
+	A finished title never sees this keyboard: its whole run is announced.
+	"""
+	return keyboard(
+		[btn("🆕 Faqat oxirgi qism", f"{cb.ADM_MEDIA}:annok:{title.pk}:last")],
+		[btn("📚 Barcha qismlar", f"{cb.ADM_MEDIA}:annok:{title.pk}:all")],
+		[btn("⬅️ Orqaga", f"{cb.ADM_MEDIA}:view:{title.pk}")],
+	)
+
+
 def media_edit_fields(title, *, page: int = 1) -> InlineKeyboardMarkup:
 	rows: List[List[InlineKeyboardButton]] = []
-	fields = ["title", "synopsis", "cover", "language", "quality_options", "required_plan", "status", "rating", "release_year", "type"]
+	fields = ["title", "synopsis", "cover", "language", "quality_options", "required_plan", "status", "rating", "release_year", "episode_count", "duration_minutes", "type"]
 	for index in range(0, len(fields), 2):
 		rows.append(
 			[

@@ -1,4 +1,4 @@
-import {
+﻿import {
   ActionIcon,
   Badge,
   Group,
@@ -12,6 +12,7 @@ import {
 } from '@mantine/core'
 import { useCallback, useEffect, useState } from 'react'
 import { adminChannelApi, adminCouponApi } from '../api/adminApi'
+import { formatDate, formatDateTime } from '../../utils/dates'
 import {
   COUPON_STATUS_COLORS,
   COUPON_STATUS_LABELS,
@@ -79,7 +80,7 @@ export default function CouponsPage() {
 
   const channelOptions = channels.map((channel) => ({
     value: String(channel.id),
-    label: `${channel.title} · ${CHANNEL_PURPOSE_LABELS[channel.purpose] || channel.purpose}`,
+    label: `${channel.title} Â· ${CHANNEL_PURPOSE_LABELS[channel.purpose] || channel.purpose}`,
   }))
 
   function cancelEdit() {
@@ -197,7 +198,7 @@ export default function CouponsPage() {
     <Stack gap="lg">
       <SectionHeading
         title="Kuponlar"
-        description="Promo kodlar: kimga, necha kun va necha kishiga — hamda kanalga joylash."
+        description="Promo kodlar: kimga, necha kun va necha kishiga â€” hamda kanalga joylash."
       />
       <ErrorAlert>{error}</ErrorAlert>
       <SuccessAlert>{success}</SuccessAlert>
@@ -246,7 +247,7 @@ export default function CouponsPage() {
               </button>
             ) : null}
             <button type="submit" className="admin-btn admin-btn-primary" disabled={saving}>
-              {saving ? 'Saqlanmoqda…' : editing ? 'Saqlash' : "Qo'shish"}
+              {saving ? 'Saqlanmoqdaâ€¦' : editing ? 'Saqlash' : "Qo'shish"}
             </button>
           </Group>
         </form>
@@ -360,10 +361,10 @@ export default function CouponsPage() {
                         ) : null}
                       </>
                     ) : (
-                      <Text size="sm" c="dimmed">—</Text>
+                      <Text size="sm" c="dimmed">â€”</Text>
                     )}
                   </td>
-                  <td>{coupon.created_at ? new Date(coupon.created_at).toLocaleDateString() : '—'}</td>
+                  <td>{formatDate(coupon.created_at)}</td>
                   <td>
                     <Group gap={4} wrap="nowrap">
                       <ActionIcon
@@ -449,7 +450,7 @@ export default function CouponsPage() {
             aria-label="Kuponni ishlatganlar"
             onClick={(event) => event.stopPropagation()}
           >
-            <Title order={4} mb="xs">{redemptions.coupon.code} — ishlatganlar</Title>
+            <Title order={4} mb="xs">{redemptions.coupon.code} â€” ishlatganlar</Title>
             {redemptions.loading ? (
               <div className="admin-loading"><Loader /></div>
             ) : redemptions.rows.length === 0 ? (
@@ -469,9 +470,9 @@ export default function CouponsPage() {
                     {redemptions.rows.map((row) => (
                       <tr key={row.id}>
                         <td>{row.username || `#${row.user}`}</td>
-                        <td>{row.telegram_id ?? '—'}</td>
+                        <td>{row.telegram_id ?? 'â€”'}</td>
                         <td>{row.days}</td>
-                        <td>{row.created_at ? new Date(row.created_at).toLocaleString() : '—'}</td>
+                        <td>{formatDateTime(row.created_at)}</td>
                       </tr>
                     ))}
                   </tbody>

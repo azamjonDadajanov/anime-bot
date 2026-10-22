@@ -14,6 +14,7 @@ import {
 } from '@mantine/core'
 import { useCallback, useEffect, useState } from 'react'
 import { adminGameApi } from '../api/adminApi'
+import { formatDateTime } from '../../utils/dates'
 import {
   ConfirmDialog,
   EmptyState,
@@ -27,11 +28,6 @@ import { formatError } from '../utils/formUtils'
 const PAGE_SIZE = 20
 const CURRENT_YEAR = new Date().getFullYear()
 const CURRENT_MONTH = new Date().getMonth() + 1
-
-function formatDateTime(value) {
-  if (!value) return '—'
-  return String(value).replace('T', ' ').slice(0, 16)
-}
 
 export default function GameRatingsPage() {
   const [error, setError] = useState(null)

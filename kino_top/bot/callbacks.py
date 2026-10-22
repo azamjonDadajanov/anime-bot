@@ -42,6 +42,22 @@ SUPPORT = "support"
 AI_ASSISTANT = "ai"
 # AI yordamchi: opt in/out of giving the assistant the user's favourites/history.
 AI_PERSONAL = "aifav"
+# AI amal kartasi (confirmation card): confirm/cancel, adjust an int field
+# (``aiad:<field>:+1``), cycle a select (``aic:<field>``), flip a bool
+# (``ait:<field>``), start a text edit (``aied:<field>`` → FSM) and re-check
+# the Telegram link status (``aiacheck``). The signed token itself lives in
+# the FSM data, never in callback bytes.
+AI_ACTION_OK = "aiok"
+AI_ACTION_NO = "aino"
+AI_ACTION_ADJ = "aiad"
+AI_ACTION_CYCLE = "aic"
+AI_ACTION_TOGGLE = "ait"
+AI_ACTION_EDIT = "aied"
+AI_ACTION_BACK = "aiback"
+AI_ACTION_CHECK = "aiacheck"
+# /start <username> account linking: confirm (``alink:<username>``) or decline.
+LINK_CONFIRM = "alink"
+LINK_CANCEL = "alinkno"
 # Referrals: invite menu and manual milestone claims (``refc:<milestone>``).
 REF = "ref"
 REF_CLAIM = "refc"
@@ -62,6 +78,14 @@ QUIZ = "qz"
 QUIZ_ANSWER = "qza"
 # Reyting: the site's rating table (top players, own rank) inside the bot.
 RATING = "rt"
+# Izohlar (shared with the website): write ``cm:<title_pk>[:<part_pk>]``,
+# read ``cml:<title_pk>:<page>``, cancel ``cmc``; once the text is in, the
+# 1-10 score picker answers ``cmr:<score>`` or ``cmrs`` (skip rating).
+COMMENT = "cm"
+COMMENT_LIST = "cml"
+COMMENT_CANCEL = "cmc"
+COMMENT_RATE = "cmr"
+COMMENT_RATE_SKIP = "cmrs"
 QUALITY = "q"
 
 # --- admin ------------------------------------------------------------------

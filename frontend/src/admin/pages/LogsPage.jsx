@@ -1,6 +1,7 @@
 import { Badge, Group, Loader, Select, Stack, Text } from '@mantine/core'
 import { useCallback, useEffect, useState } from 'react'
 import { adminLogApi } from '../api/adminApi'
+import { formatDateTime } from '../../utils/dates'
 import { EmptyState, ErrorAlert, PaginationBar, SectionHeading } from '../components/adminShared'
 import { formatError } from '../utils/formUtils'
 
@@ -90,7 +91,7 @@ export default function LogsPage() {
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  {entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}
+                  {formatDateTime(entry.created_at)}
                 </Text>
               </Group>
               <Text size="sm" mt={4}>{entry.message}</Text>

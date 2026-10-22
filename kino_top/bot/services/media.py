@@ -183,20 +183,35 @@ assistant_user_context = to_async(assistant_user_context_sync)
 
 
 def assistant_answer_sync(
-	query: str, *, limit: int = ASSISTANT_RESULT_LIMIT, context: str = ""
+	query: str,
+	*,
+	limit: int = ASSISTANT_RESULT_LIMIT,
+	context: str = "",
+	profile: Any = None,
 ) -> Dict[str, Any]:
 	"""Ask AniVoy: the online model plus its catalogue tools.
 
 	Returns everything the handler renders: the titles the tools actually
-	returned, how many, the model's words, and whether it could answer at all
-	(``available``). ``context`` is the optional user-taste block, which also
-	enables the assistant's ``personal_taste`` tool.
+	returned, how many, the model's words, whether it could answer at all
+	(``available``), and — when the model proposed an account action — the
+	confirmation card (``action``) built server-side from this profile's real
+	state. ``context`` is the optional user-taste block, which also enables
+	the assistant's ``personal_taste`` tool.
 	"""
 	from movies import ai_assistant
 
 	from ..config import site_url
 
-	result = ai_assistant.answer(query, limit=limit, personal_context=context)
+	# The linked site account enables ``submit_action``: the bot never gets it
+	# without one (the subscriber check already required the link).
+	auth_user = getattr(profile, "auth_user", None) if profile is not None else None
+	result = ai_assistant.answer(
+		query,
+		limit=limit,
+		personal_context=context,
+		user=auth_user,
+		source="bot",
+	)
 	return {
 		"query": result.query,
 		"items": [
@@ -206,6 +221,7 @@ def assistant_answer_sync(
 		"text": result.answer,
 		"conversational": result.conversational,
 		"tools": list(result.tools),
+		"action": result.action,
 		"available": result.used_llm,
 		"error": result.error,
 	}

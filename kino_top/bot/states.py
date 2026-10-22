@@ -32,9 +32,27 @@ class UserSupportStates(StatesGroup):
 
 
 class UserAssistantStates(StatesGroup):
-	"""Waiting for the message the AI yordamchi has to answer."""
+	"""Waiting for the message the AI yordamchi has to answer.
+
+	``action_edit`` — a text field of a proposed amal card is being rewritten
+	(``ai_action`` / ``ai_edit_field`` ride in the FSM data, including the
+	signed token, which is far too big for callback bytes).
+	"""
 
 	query = State()
+	action_edit = State()
+
+
+class UserCommentStates(StatesGroup):
+	"""Writing one comment on a title (the same table the website reads).
+
+	``body`` — waiting for the text, ``rating`` — waiting for the 1-10 score;
+	the FSM data carries ``comment_title_id`` (the media), ``comment_part_id``
+	(the episode the comment was written from, if any) and ``comment_body``.
+	"""
+
+	body = State()
+	rating = State()
 
 
 class UserQuizStates(StatesGroup):
