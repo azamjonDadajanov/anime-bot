@@ -8,6 +8,7 @@ from django.test import TransactionTestCase
 from movies.models import TelegramChannel
 
 from ..models import BotSettings
+from ..services.bot_settings import update_settings_sync
 from ..services.channels import (
 	add_channel_sync,
 	all_channels_sync,
@@ -206,3 +207,31 @@ class SettingsChannelBindingTests(TransactionTestCase):
 		make_channel(chat_id=-801, purpose=TelegramChannel.Purpose.PUBLIC, title="A")
 		make_channel(chat_id=-802, purpose=TelegramChannel.Purpose.PUBLIC, title="B")
 		self.assertEqual(len(public_channels_sync()), 2)
+
+	def test_type_channels_can_be_saved_via_update_settings(self) -> None:
+		publish = make_channel(chat_id=-803, purpose=TelegramChannel.Purpose.PUBLIC, title="Publish")
+		completed = make_channel(chat_id=-804, purpose=TelegramChannel.Purpose.PUBLIC, title="Completed")
+		ongoing = make_channel(chat_id=-805, purpose=TelegramChannel.Purpose.PUBLIC, title="Ongoing")
+		manga = make_channel(chat_id=-806, purpose=TelegramChannel.Purpose.PUBLIC, title="Manga")
+		manga_completed = make_channel(chat_id=-807, purpose=TelegramChannel.Purpose.PUBLIC, title="Manga done")
+
+		settings = update_settings_sync(
+			publish_channel=publish,
+			completed_channel=completed,
+			ongoing_channel=ongoing,
+			manga_channel=manga,
+			manga_completed_channel=manga_completed,
+		)
+
+		self.assertEqual(settings.publish_channel_id, publish.pk)
+		self.assertEqual(settings.completed_channel_id, completed.pk)
+		self.assertEqual(settings.ongoing_channel_id, ongoing.pk)
+		self.assertEqual(settings.manga_channel_id, manga.pk)
+		self.assertEqual(settings.manga_completed_channel_id, manga_completed.pk)
+
+		settings = BotSettings.get_solo()
+		self.assertEqual(settings.publish_channel_id, publish.pk)
+		self.assertEqual(settings.completed_channel_id, completed.pk)
+		self.assertEqual(settings.ongoing_channel_id, ongoing.pk)
+		self.assertEqual(settings.manga_channel_id, manga.pk)
+		self.assertEqual(settings.manga_completed_channel_id, manga_completed.pk)

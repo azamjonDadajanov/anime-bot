@@ -20,6 +20,10 @@ INTEGER_FIELDS = ("broadcast_rate_per_second", "broadcast_concurrency")
 TEXT_FIELDS = ("welcome_text", "access_denied_text")
 EDITABLE_FIELDS = BOOLEAN_FIELDS + INTEGER_FIELDS + TEXT_FIELDS + (
 	"publish_channel",
+	"completed_channel",
+	"ongoing_channel",
+	"manga_channel",
+	"manga_completed_channel",
 	"log_channel_id",
 )
 

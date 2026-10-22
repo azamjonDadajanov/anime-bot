@@ -97,13 +97,25 @@ async def resolve_publish_channel(channel: Optional[TelegramChannel] = None) -> 
 	if channel is not None:
 		return channel
 	settings = await get_settings()
-	if not settings.publish_channel_id:
-		return None
-	# Resolve the FK through the async ORM bridge: touching ``settings.publish_channel``
-	# here would run a query on the event loop and raise SynchronousOnlyOperation.
-	from .channels import get_channel
+	if settings.publish_channel_id:
+		# Resolve the FK through the async ORM bridge: touching ``settings.publish_channel``
+		# here would run a query on the event loop and raise SynchronousOnlyOperation.
+		from .channels import get_channel
 
-	return await get_channel(settings.publish_channel_id)
+		target = await get_channel(settings.publish_channel_id)
+		if target is not None:
+			return target
+	# Sozlamalarda kanal tanlanmagan bo'lsa: DB'da purpose=public sifatida
+	# saqlangan birinchi faol kanalni e'lon uchun ishlatamiz.
+	return await _default_public_channel()
+
+
+async def _default_public_channel() -> Optional[TelegramChannel]:
+	"""The first active ``public`` channel stored in the database."""
+	from .channels import public_channels_sync
+
+	channels = await to_async(public_channels_sync)(active_only=True)
+	return channels[0] if channels else None
 
 
 async def resolve_target_channel(
@@ -147,7 +159,9 @@ async def resolve_target_channel(
 			)
 
 	if not target_id:
-		return None
+		# Sozlamalarda tur bo'yicha kanal tanlanmagan bo'lsa: DB'da purpose=public
+		# sifatida saqlangan birinchi faol kanalga e'lon yuboriladi.
+		return await _default_public_channel()
 	return await get_channel(target_id)
 
 

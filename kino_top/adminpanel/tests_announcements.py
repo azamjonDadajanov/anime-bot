@@ -204,7 +204,11 @@ class AnnounceSendTests(AnnounceApiTestCase):
 		settings = BotSettings.get_solo()
 		settings.publish_channel = None
 		settings.ongoing_channel = None
+		settings.completed_channel = None
 		settings.save()
+		# Fallback: settings bo'sh bo'lsa DB'dagi public kanal ishlatiladi,
+		# shuning uchun "kanal yo'q" holatini sinashda ularni ham o'chiramiz.
+		TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.PUBLIC).delete()
 
 		with self.bot_patch():
 			response = self.client.post(

@@ -196,6 +196,9 @@ class AnnouncementDeliveryTests(TransactionTestCase):
 		settings.publish_channel = None
 		settings.ongoing_channel = None
 		settings.save()
+		# Fallback: settings bo'sh bo'lsa DB'dagi public kanal ishlatiladi,
+		# shuning uchun "kanal yo'q" holatini sinashda ularni ham o'chiramiz.
+		TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.PUBLIC).delete()
 		title = build_title()
 		make_part(title, number=1)
 
@@ -204,6 +207,28 @@ class AnnouncementDeliveryTests(TransactionTestCase):
 		self.assertFalse(result.channel_sent)
 		self.assertIn("E'lon kanali tanlanmagan", result.channel_error)
 		self.assertEqual(self.session.methods("SendPhoto"), [])
+
+	def test_a_public_channel_from_the_database_is_used_as_a_fallback(self) -> None:
+		"""Sozlamalarda kanal tanlanmasa, DB'dagi public kanalga e'lon boradi."""
+		settings = BotSettings.get_solo()
+		settings.publish_channel = None
+		settings.ongoing_channel = None
+		settings.completed_channel = None
+		settings.save()
+		TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.PUBLIC).delete()
+		fallback = make_channel(
+			chat_id=-1009000000009, title="Fallback", purpose=TelegramChannel.Purpose.PUBLIC
+		)
+		title = build_title()
+		make_part(title, number=1)
+
+		result = self.send(title, to_channel=True)
+
+		self.assertTrue(result.channel_sent)
+		self.assertEqual(result.channel_error, "")
+		messages = self.session.methods("SendMessage")
+		self.assertEqual(len(messages), 1)
+		self.assertEqual(messages[0].chat_id, fallback.chat_id)
 
 	def test_announcement_reaches_every_unblocked_user(self) -> None:
 		make_user(1001)
