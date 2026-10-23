@@ -479,6 +479,91 @@ class QuizQuestionCrudTests(GameAdminTestCase):
 		self.assertEqual(by_title.data["count"], 2)
 
 
+class QuizBulkImportTests(GameAdminTestCase):
+	"""The textarea import: many questions saved through one request."""
+
+	BULK = f"{QUIZ_BASE}bulk/"
+
+	def test_many_questions_are_created_in_one_request(self) -> None:
+		response = self.client.post(
+			self.BULK,
+			{
+				"title": self.title.pk,
+				"questions": [
+					{"text": "Birinchi savol?", "choices": ["A", "B", "C"], "correct_index": 1},
+					{"text": "Ikkinchi savol?", "choices": ["X", "Y"], "correct_index": 0, "is_active": False},
+					{"text": "Uchinchi savol?", "choices": ["1", "2", "3", "4"], "correct_index": 3},
+				],
+			},
+			format="json",
+		)
+		self.assertEqual(response.status_code, 201)
+		self.assertEqual(response.data["created"], 3)
+		self.assertEqual(len(response.data["ids"]), 3)
+		self.assertEqual(QuizQuestion.objects.count(), 3)
+
+		second = QuizQuestion.objects.get(text="Ikkinchi savol?")
+		self.assertEqual(second.choices, ["X", "Y"])
+		self.assertEqual(second.correct_index, 0)
+		self.assertFalse(second.is_active)
+		self.assertEqual(second.title_id, self.title.pk)
+
+	def test_an_invalid_question_saves_nothing(self) -> None:
+		response = self.client.post(
+			self.BULK,
+			{
+				"title": self.title.pk,
+				"questions": [
+					{"text": "Yaroqli savol?", "choices": ["A", "B"], "correct_index": 0},
+					{"text": "Buziq savol?", "choices": ["A", "B"], "correct_index": 9},
+				],
+			},
+			format="json",
+		)
+		self.assertEqual(response.status_code, 400)
+		self.assertEqual(response.data["index"], 1)
+		self.assertIn("correct_index", response.data["errors"])
+		self.assertIn("Buziq savol", response.data["detail"])
+		self.assertEqual(QuizQuestion.objects.count(), 0)
+
+	def test_a_question_needs_at_least_two_choices(self) -> None:
+		response = self.client.post(
+			self.BULK,
+			{"title": self.title.pk, "questions": [{"text": "Savol?", "choices": ["A"], "correct_index": 0}]},
+			format="json",
+		)
+		self.assertEqual(response.status_code, 400)
+		self.assertEqual(response.data["index"], 0)
+		self.assertIn("choices", response.data["errors"])
+
+	def test_empty_or_malformed_payloads_are_rejected(self) -> None:
+		valid_question = {"text": "Savol?", "choices": ["A", "B"], "correct_index": 0}
+		for body in (
+			{"questions": [valid_question]},  # anime yo'q
+			{"title": "not-a-number", "questions": [valid_question]},
+			{"title": 999999, "questions": [valid_question]},  # mavjud emas
+			{"title": self.title.pk, "questions": []},
+			{"title": self.title.pk, "questions": "not-a-list"},
+			{"title": self.title.pk, "questions": ["not-an-object"]},
+		):
+			with self.subTest(body=body):
+				response = self.client.post(self.BULK, body, format="json")
+				self.assertEqual(response.status_code, 400)
+		self.assertEqual(QuizQuestion.objects.count(), 0)
+
+	def test_an_ordinary_account_cannot_bulk_create(self) -> None:
+		ordinary = get_user_model().objects.create_user(username="no-perm", password="x")
+		client = APIClient()
+		client.force_authenticate(ordinary)
+		response = client.post(
+			self.BULK,
+			{"title": self.title.pk, "questions": [{"text": "Savol?", "choices": ["A", "B"]}]},
+			format="json",
+		)
+		self.assertEqual(response.status_code, 403)
+		self.assertEqual(QuizQuestion.objects.count(), 0)
+
+
 class GameLeaderboardTests(GameAdminTestCase):
 	def _player(self, username: str, points: int, verified: int = 0):
 		user = get_user_model().objects.create_user(username=username, password="x")

@@ -267,6 +267,10 @@ export const adminQuizApi = {
     const { data } = await api.post('/admin/quiz-questions/', payload)
     return data
   },
+  async bulkCreate(payload) {
+    const { data } = await api.post('/admin/quiz-questions/bulk/', payload)
+    return data
+  },
   async update(id, payload) {
     const { data } = await api.patch(`/admin/quiz-questions/${id}/`, payload)
     return data

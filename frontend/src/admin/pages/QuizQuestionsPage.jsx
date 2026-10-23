@@ -17,6 +17,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { adminMediaApi, adminQuizApi } from '../api/adminApi'
+import QuizBulkImport from '../components/QuizBulkImport'
 import {
   ConfirmDialog,
   EmptyState,
@@ -76,11 +77,15 @@ function AnimeSelect({
       if (query) params.search = query
       const res = await adminMediaApi.list(params)
       if (requestId !== requestRef.current) return
-      const rows = Array.isArray(res?.results) ? res.results : []
+      // /catalog/ ba'zan massiv, ba'zan {count, results} qaytaradi.
+      const plain = Array.isArray(res)
+      const rows = plain ? res : Array.isArray(res?.results) ? res.results : []
       const mapped = rows.map((t) => ({ value: String(t.id), label: t.title }))
+      const total = plain ? rows.length : Number(res?.count) || 0
       setOptions((prev) => (targetPage === 1 ? mapped : [...prev, ...mapped]))
-      setTotal(res?.count || 0)
-      setPage(targetPage)
+      setTotal(total)
+      // Massiv javobda sahifalash bo'lmaydi: ro'yxat to'liq keldi deb belgilaymiz.
+      setPage(plain ? Math.max(1, Math.ceil(total / ANIME_PAGE_SIZE)) : targetPage)
     } catch {
       if (requestId !== requestRef.current) return
       if (targetPage === 1) {
@@ -206,6 +211,7 @@ export default function QuizQuestionsPage() {
   const [titleFilter, setTitleFilter] = useState('')
   const [page, setPage] = useState(1)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [bulkTitle, setBulkTitle] = useState('')
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
@@ -396,6 +402,21 @@ export default function QuizQuestionsPage() {
           </Group>
         </form>
       </div>
+
+      <QuizBulkImport
+        titleId={bulkTitle}
+        onCreated={load}
+        titleSelector={
+          <AnimeSelect
+            label="Anime"
+            placeholder="Tanlang"
+            value={bulkTitle}
+            onChange={setBulkTitle}
+            required
+            w={{ base: '100%', sm: 260 }}
+          />
+        }
+      />
 
       <Group align="flex-end" justify="space-between" wrap="wrap">
         <Group align="flex-end" wrap="wrap">

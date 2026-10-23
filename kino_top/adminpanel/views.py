@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Count, F, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -577,6 +578,69 @@ class AdminQuizQuestionViewSet(viewsets.ModelViewSet):
 		elif is_active == "0":
 			queryset = queryset.filter(is_active=False)
 		return queryset
+
+	@extend_schema(request=None, tags=["Admin"])
+	@action(detail=False, methods=["post"], url_path="bulk")
+	def bulk(self, request):
+		"""Ommaviy qo'shish: ko'p savolni bir so'rovda saqlash.
+
+		``{"title": <anime id>, "questions": [{"text", "choices",
+		"correct_index", "is_active"}, ...]}`` — har bir savol alohida
+		singleton emas, xatolik bo'lsa hech narsa yaratilmaydi (atomic).
+		"""
+		raw_title = request.data.get("title")
+		try:
+			title_id = int(raw_title)
+		except (TypeError, ValueError):
+			return Response({"detail": "Anime (title) majburiy."}, status=status.HTTP_400_BAD_REQUEST)
+		if not MediaTitle.objects.filter(pk=title_id).exists():
+			return Response({"detail": "Bunday anime topilmadi."}, status=status.HTTP_400_BAD_REQUEST)
+
+		questions = request.data.get("questions")
+		if not isinstance(questions, list) or not questions:
+			return Response(
+				{"detail": "questions — kamida bitta savollik ro'yxat bo'lishi kerak."},
+				status=status.HTTP_400_BAD_REQUEST,
+			)
+
+		records = []
+		for index, item in enumerate(questions):
+			if not isinstance(item, dict):
+				return Response(
+					{"detail": f"{index + 1}-savol obyektdan iborat bo'lishi kerak.", "index": index},
+					status=status.HTTP_400_BAD_REQUEST,
+				)
+			text = item.get("text")
+			serializer = QuizQuestionAdminSerializer(
+				data={
+					"title": title_id,
+					"text": text.strip() if isinstance(text, str) else text,
+					"choices": item.get("choices"),
+					"correct_index": item.get("correct_index", 0),
+					"is_active": item.get("is_active", True),
+				}
+			)
+			if not serializer.is_valid():
+				errors = {
+					key: [str(message) for message in value]
+					for key, value in serializer.errors.items()
+				}
+				summary = " · ".join(f"{key}: {', '.join(value)}" for key, value in errors.items())
+				label = f"{index + 1}-savol"
+				if isinstance(text, str) and text.strip():
+					label += f' "{text.strip()[:40]}"'
+				return Response(
+					{"detail": f"{label} xato: {summary}", "index": index, "errors": errors},
+					status=status.HTTP_400_BAD_REQUEST,
+				)
+			records.append(QuizQuestion(**serializer.validated_data))
+
+		with transaction.atomic():
+			QuizQuestion.objects.bulk_create(records)
+		return Response(
+			{"created": len(records), "ids": [row.pk for row in records]},
+			status=status.HTTP_201_CREATED,
+		)
 
 
 @extend_schema(tags=["Admin"])

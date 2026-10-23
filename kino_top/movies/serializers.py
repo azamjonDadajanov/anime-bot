@@ -98,6 +98,8 @@ class MediaTitleSerializer(serializers.ModelSerializer):
 			"quiz_size",
 			"created_at",
 			"updated_at",
+			'quizess_count',
+			'movies_count',
 		]
 		read_only_fields = ["id", "code", "created_at", "updated_at"]
 

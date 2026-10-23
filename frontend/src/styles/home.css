@@ -17,7 +17,10 @@
   min-height: min(920px, 100svh);
   flex-direction: column;
   justify-content: space-between;
-  margin-left: calc(50% - 44vw);
+  /* Full-bleed like the ticker and the upcoming band: 50% of the content
+     column minus half the viewport puts the left edge on the viewport's.
+     (44vw here used to shift the whole hero ~80px right and clip it.) */
+  margin-left: calc(50% - 50vw);
   margin-top: calc(var(--header-h) * -1);
   padding-top: var(--header-h);
   overflow: hidden;
@@ -481,7 +484,17 @@
   align-items: center;
   animation: ac-marquee 46s linear infinite;
 }
-.signal-ticker:hover .signal-ticker-track { animation-play-state: paused; }
+/* Pausing on hover only makes sense with a real pointer: on touch a tap
+   leaves the hover "stuck" and the strip freezes mid-word until the next tap. */
+@media (hover: hover) and (pointer: fine) {
+  .signal-ticker:hover .signal-ticker-track { animation-play-state: paused; }
+}
+/* The global reduced-motion rule (index.css) collapses every animation to one
+   0.01ms pass, which parks the marquee on its first frame — a dead strip.
+   The ticker is a slow, linear, ambient crawl, so it keeps scrolling here. */
+@media (prefers-reduced-motion: reduce) {
+  .signal-ticker-track { animation: ac-marquee 72s linear infinite !important; }
+}
 .signal-ticker-item {
   display: inline-flex;
   height: 46px;
@@ -1169,8 +1182,13 @@
 
 @media (max-width: 992px) {
   .hero-cinema { min-height: auto; }
-  .hero-rail { grid-template-columns: 1fr; gap: 34px; padding-top: 72px; }
+  /* minmax(0, 1fr), not plain 1fr: the copy column's min-content (the
+     featured title) is wider than the screen and would push the whole hero
+     sideways instead of letting the row shrink. */
+  .hero-rail { grid-template-columns: minmax(0, 1fr); gap: 34px; padding-top: 72px; }
   .hero-copy { max-width: 680px; }
+  .hero-feature { max-width: 100%; }
+  .hero-feature-title { white-space: normal; overflow: visible; text-overflow: clip; }
   .hero-visual { justify-self: start; }
   .hero-poster-frame { width: min(62%, 300px); }
   .hero-float-card.card-top { top: 4%; left: 56%; }
@@ -1186,9 +1204,12 @@
 }
 
 @media (max-width: 760px) {
-  .hero-rail { padding-top: 66px; padding-bottom: 28px; }
-  .hero-title { font-size: clamp(2.6rem, 12vw, 4.2rem); }
+  .hero-rail { padding-top: 66px; padding-bottom: 28px; gap: 26px; }
+  .hero-title { font-size: clamp(2.4rem, 11vw, 3.6rem); }
   .hero-text { font-size: 13.5px; }
+  /* The two calls to action get the whole row each — clearer to tap. */
+  .hero-actions { gap: 8px; }
+  .hero-actions .ac-btn { flex: 1 1 100%; justify-content: center; }
   .hero-meta-top .meta-coords { display: none; }
   .hero-foot { flex-direction: column; align-items: flex-start; gap: 12px; }
   .hero-foot-genres { justify-content: flex-start; }

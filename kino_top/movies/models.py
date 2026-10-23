@@ -142,6 +142,12 @@ class MediaTitle(models.Model):
 	def __str__(self):
 		return self.title
 
+	def movies_count(self):
+		return self.parts.count()
+
+	def quizess_count(self):
+		return self.quiz_questions.count()
+
 	def save(self, *args, **kwargs):
 		if not self.code:
 			for _ in range(100):

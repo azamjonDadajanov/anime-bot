@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { adminMediaApi, adminQuizApi } from '../api/adminApi'
 import { adminPath } from '../adminBase'
+import QuizBulkImport from '../components/QuizBulkImport'
 import {
   ConfirmDialog,
   EmptyState,
@@ -291,6 +292,8 @@ export default function MediaQuizPage() {
           </Group>
         </form>
       </div>
+
+      <QuizBulkImport titleId={media.id} onCreated={load} />
 
       {questions.length === 0 ? (
         <EmptyState

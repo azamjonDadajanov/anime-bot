@@ -95,6 +95,7 @@ export function MediaListPage({ typeFilter = null }) {
       if (typeFilter) query.type = typeFilter
       const result = await adminMediaApi.list(query)
       setData(Array.isArray(result) ? { results: result, count: result.length } : result)
+      
     } catch (err) {
       setError(formatError(err, 'Medialarni yuklashda xatolik.'))
     } finally {
@@ -180,6 +181,8 @@ export function MediaListPage({ typeFilter = null }) {
                 <th>Media</th>
                 <th>Turi</th>
                 <th>Kod</th>
+                <th>Qismlar</th>
+                <th>Savollar</th>
                 <th>Holat</th>
                 <th>Tarif</th>
                 <th />
@@ -217,6 +220,8 @@ export function MediaListPage({ typeFilter = null }) {
                       </ActionIcon>
                     </Group>
                   </td>
+                  <td>{item.movies_count}/{item.episode_count}</td>
+                  <td>{item.quizess_count}</td>
                   <td>{STATUS_OPTIONS.find((s) => s.value === item.status)?.label || item.status}</td>
                   <td>{ACCESS_PLAN_LABELS[item.required_plan] || item.required_plan}</td>
                   <td>
