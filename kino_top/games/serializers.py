@@ -25,6 +25,8 @@ class UnlockedTitleSerializer(serializers.Serializer):
 	questions = serializers.IntegerField()
 	quiz_size = serializers.IntegerField()
 	ready = serializers.BooleanField()
+	# Bot deliveries this title needs (``GAME_MIN_PARTS`` capped by its parts).
+	min_parts = serializers.IntegerField()
 
 
 class VerifiedTitleSerializer(serializers.Serializer):

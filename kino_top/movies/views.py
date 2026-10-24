@@ -128,6 +128,11 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		status = self.request.query_params.get("status")
 		search = self.request.query_params.get("search")
 		genre = self.request.query_params.get("genre")
+		has_parts = self.request.query_params.get("has_parts")
+		has_quiz = self.request.query_params.get("has_quiz")
+		page = self.request.query_params.get("page", "1")
+		page_size = self.request.query_params.get("page_size", "20")
+		
 		if media_type:
 			queryset = queryset.filter(type=media_type)
 		if status:
@@ -137,11 +142,28 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		if genre:
 			# Genre names, because the public catalogue only ever sees labels.
 			queryset = queryset.filter(genres__name__iexact=genre)
+		# Filters for parts and quiz questions
+		if has_parts == 'false':
+			queryset = queryset.filter(parts__isnull=True)
+		elif has_parts == 'true':
+			queryset = queryset.filter(parts__isnull=False)
+		if has_quiz == 'false':
+			queryset = queryset.filter(quiz_questions__isnull=True)
+		elif has_quiz == 'true':
+			queryset = queryset.filter(quiz_questions__isnull=False)
+		# Pagination slicing: ``distinct()`` must come before the slice, otherwise
+		# Django raises "Cannot create distinct fields once a slice has been taken".
+		# Only slice for the list action; detail / custom actions need the full
+		# queryset so ``get_object`` can find the requested slug or pk.
+		if self.action == "list":
+			start = (int(page) - 1) * int(page_size)
+			end = start + int(page_size)
+			queryset = queryset.with_counts().distinct()[start:end]
 		if self.action == "retrieve":
 			queryset = queryset.prefetch_related("genres", "parts", "parts__telegram_media")
 		else:
 			queryset = queryset.prefetch_related("genres")
-		return queryset.distinct()
+		return queryset
 
 	def perform_create(self, serializer):
 		title = serializer.save()
@@ -388,7 +410,7 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		return Response({"status": "done", **result})
 
 	def _serialize(self, request, queryset):
-		queryset = queryset.prefetch_related("genres")
+		queryset = queryset.with_counts().prefetch_related("genres")
 		paginator = CatalogPagination()
 		page = paginator.paginate_queryset(queryset, request, view=self)
 		serializer = MediaTitleSerializer(page, many=True)
@@ -399,7 +421,7 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 			limit = int(request.query_params.get("limit", limit))
 		except (TypeError, ValueError):
 			limit = 20
-		queryset = queryset.prefetch_related("genres")
+		queryset = queryset.with_counts().prefetch_related("genres")
 		return Response(MediaTitleSerializer(queryset[: max(1, min(limit, 50))], many=True).data)
 
 	@extend_schema(responses=MediaTitleSerializer(many=True), tags=["Catalog"])
@@ -475,7 +497,9 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 
 		items = community.top_rated_titles_sync(limit=limit)
 		if not items:
-			items = list(MediaTitle.objects.order_by("-rating", "-created_at")[:limit])
+			items = list(
+				MediaTitle.objects.with_counts().order_by("-rating", "-created_at")[:limit]
+			)
 		return Response(MediaTitleSerializer(items, many=True).data)
 
 

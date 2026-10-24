@@ -59,6 +59,18 @@ const MEDIA_KIND_OPTIONS = [
   { value: 'document', label: 'Fayl' },
 ]
 
+const HAS_PARTS_OPTIONS = [
+  { value: '', label: 'Barcha' },
+  { value: 'true', label: 'Qism bor' },
+  { value: 'false', label: 'Qism yo\'q' },
+]
+
+const HAS_QUIZ_OPTIONS = [
+  { value: '', label: 'Barcha' },
+  { value: 'true', label: 'Test bor' },
+  { value: 'false', label: 'Test yo\'q' },
+]
+
 const DEFAULT_YEAR = new Date().getFullYear()
 
 const EMPTY_MEDIA_FORM = {
@@ -85,6 +97,8 @@ export function MediaListPage({ typeFilter = null }) {
   const [success, setSuccess] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [hasPartsFilter, setHasPartsFilter] = useState('')
+  const [hasQuizFilter, setHasQuizFilter] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -93,6 +107,8 @@ export function MediaListPage({ typeFilter = null }) {
       const query = { page, page_size: 20 }
       if (search) query.search = search
       if (typeFilter) query.type = typeFilter
+      if (hasPartsFilter) query.has_parts = hasPartsFilter
+      if (hasQuizFilter) query.has_quiz = hasQuizFilter
       const result = await adminMediaApi.list(query)
       setData(Array.isArray(result) ? { results: result, count: result.length } : result)
       
@@ -101,7 +117,7 @@ export function MediaListPage({ typeFilter = null }) {
     } finally {
       setLoading(false)
     }
-  }, [page, search, typeFilter])
+  }, [page, search, typeFilter, hasPartsFilter, hasQuizFilter])
 
   useEffect(() => {
     load()
@@ -157,6 +173,32 @@ export function MediaListPage({ typeFilter = null }) {
             setPage(1)
           }}
           w={{ base: '100%', sm: 320 }}
+        />
+      </Group>
+      <Group align="flex-end">
+        <Select
+          label="Qismlar"
+          placeholder="Qismlar"
+          value={hasPartsFilter}
+          onChange={(value) => {
+            setHasPartsFilter(value || '')
+            setPage(1)
+          }}
+          data={HAS_PARTS_OPTIONS}
+          allowDeselect={false}
+          style={{ minWidth: 180 }}
+        />
+        <Select
+          label="Testlar"
+          placeholder="Testlar"
+          value={hasQuizFilter}
+          onChange={(value) => {
+            setHasQuizFilter(value || '')
+            setPage(1)
+          }}
+          data={HAS_QUIZ_OPTIONS}
+          allowDeselect={false}
+          style={{ minWidth: 180 }}
         />
       </Group>
 

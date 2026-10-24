@@ -100,7 +100,7 @@ def search_titles_sync(
 	status: str = "",
 	limit: Optional[int] = None,
 ) -> List[MediaTitle]:
-	queryset = MediaTitle.objects.prefetch_related("genres")
+	queryset = MediaTitle.objects.prefetch_related("genres").order_by('-title')
 	query = (query or "").strip()
 	if query:
 		if query.isdigit():

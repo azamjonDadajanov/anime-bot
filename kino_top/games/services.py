@@ -88,6 +88,24 @@ def min_parts() -> int:
 	return max(1, int(getattr(settings, "GAME_MIN_PARTS", 3)))
 
 
+def min_parts_for(title: MediaTitle) -> int:
+	"""Bot deliveries ``title`` needs before its quiz unlocks.
+
+	``GAME_MIN_PARTS`` (3 by default) is only the cap: a title with fewer
+	parts unlocks after all of them were delivered. A movie or a short manga
+	can never reach three episodes, so its quiz opens after those one or two
+	viewings — otherwise such titles would stay locked out of the game.
+	"""
+	try:
+		total = int(title.parts.count())
+	except (AttributeError, TypeError, ValueError):
+		total = 0
+	if total <= 0:
+		# Nothing to deliver (or a bare title): keep the plain rule.
+		return min_parts()
+	return max(1, min(min_parts(), total))
+
+
 def min_answer_seconds() -> int:
 	return max(0, int(getattr(settings, "GAME_MIN_ANSWER_SECONDS", 3)))
 
@@ -221,7 +239,7 @@ def eligible_titles(user, query: str = "") -> dict:
 		for title in titles:
 			if title.pk in blocked:
 				continue
-			if bot_views_for(user, title) < min_parts():
+			if bot_views_for(user, title) < min_parts_for(title):
 				continue
 			active = QuizQuestion.objects.filter(title=title, is_active=True).count()
 			needed = title_quiz_size(title)
@@ -235,6 +253,7 @@ def eligible_titles(user, query: str = "") -> dict:
 					"questions": active,
 					"quiz_size": needed,
 					"ready": active >= needed,
+					"min_parts": min_parts_for(title),
 				}
 			)
 
@@ -285,10 +304,11 @@ def start_attempt_sync(user, title_id: int, *, rng: Optional[random.Random] = No
 	if attempts_today >= max_attempts_per_day():
 		raise GameError(DAILY_LIMIT, "Bugun uchun urinishlar tugadi.")
 
-	if bot_views_for(user, title) < min_parts():
+	required_parts = min_parts_for(title)
+	if bot_views_for(user, title) < required_parts:
 		raise GameError(
 			NOT_WATCHED,
-			f"Bu animeni botda kamida {min_parts()} marta ochishingiz kerak.",
+			f"Bu animeni botda kamida {required_parts} marta ochishingiz kerak.",
 		)
 
 	pool = list(QuizQuestion.objects.filter(title=title, is_active=True))

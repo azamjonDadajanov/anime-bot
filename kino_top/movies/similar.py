@@ -97,7 +97,7 @@ def similar_titles_sync(
 	"""
 	limit = max(1, min(int(limit or SIMILAR_LIMIT), MAX_LIMIT))
 	genre_ids = list(title.genres.values_list("id", flat=True))
-	base = MediaTitle.objects.exclude(pk=title.pk).prefetch_related("genres")
+	base = MediaTitle.objects.with_counts().exclude(pk=title.pk).prefetch_related("genres")
 
 	same_type = _scored(base.filter(type=title.type), title, genre_ids)
 	same_type = list(

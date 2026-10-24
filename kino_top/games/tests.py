@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
-from movies.models import MediaTitle, MediaView
+from movies.models import MediaPart, MediaTitle, MediaView
 from rest_framework.test import APIClient
 from users.models import Subscription
 
@@ -66,6 +66,11 @@ def watch_via_bot(user, title, times: int = 3) -> None:
 		MediaView.record(user, title, part=None, source=MediaView.Source.BOT)
 
 
+def make_parts(title, count: int) -> None:
+	for number in range(1, count + 1):
+		MediaPart.objects.create(content=title, number=number)
+
+
 def as_presented(original_answers, choice_orders) -> list:
 	"""Map original choice indices to the shuffled indices the user saw."""
 	presented = []
@@ -116,6 +121,69 @@ class GameServiceTests(TestCase):
 		self.assertEqual(len(payload["unlocked"]), 1)
 		self.assertEqual(payload["unlocked"][0]["id"], self.title.pk)
 		self.assertTrue(payload["unlocked"][0]["ready"])
+
+	def test_short_title_unlocks_after_all_its_parts(self) -> None:
+		# A movie/short title with 1 part must not demand the 3-view default.
+		movie = make_title("Kinofilm", MediaTitle.MediaType.MOVIE)
+		make_questions(movie)
+		make_parts(movie, 1)
+
+		fresh_user = make_user("fresh_movie")
+		self.assertEqual(eligible_titles(fresh_user)["unlocked"], [])
+
+		watch_via_bot(fresh_user, movie, times=1)
+		payload = eligible_titles(fresh_user)
+		self.assertEqual(len(payload["unlocked"]), 1)
+		self.assertEqual(payload["unlocked"][0]["min_parts"], 1)
+		# The quiz must actually start too, not just list the title.
+		start_attempt_sync(fresh_user, movie.pk)
+
+	def test_two_part_title_needs_two_views_not_three(self) -> None:
+		duo = make_title("Ikki qism")
+		make_questions(duo)
+		make_parts(duo, 2)
+
+		fresh_user = make_user("fresh_duo")
+		watch_via_bot(fresh_user, duo, times=1)
+		payload = eligible_titles(fresh_user)
+		self.assertEqual(payload["unlocked"], [])
+		with self.assertRaises(GameError) as ctx:
+			start_attempt_sync(fresh_user, duo.pk)
+		self.assertEqual(ctx.exception.code, NOT_WATCHED)
+		self.assertIn("kamida 2 marta", ctx.exception.detail)
+
+		watch_via_bot(fresh_user, duo, times=1)
+		payload = eligible_titles(fresh_user)
+		self.assertEqual(len(payload["unlocked"]), 1)
+		self.assertEqual(payload["unlocked"][0]["min_parts"], 2)
+		start_attempt_sync(fresh_user, duo.pk)
+
+	def test_long_title_still_uses_the_default_three(self) -> None:
+		long_title = make_title("Uzun serial")
+		make_questions(long_title)
+		make_parts(long_title, 5)
+
+		fresh_user = make_user("fresh_long")
+		watch_via_bot(fresh_user, long_title, times=2)
+		self.assertEqual(eligible_titles(fresh_user)["unlocked"], [])
+
+		watch_via_bot(fresh_user, long_title, times=1)
+		payload = eligible_titles(fresh_user)
+		self.assertEqual(len(payload["unlocked"]), 1)
+		self.assertEqual(payload["unlocked"][0]["min_parts"], 3)
+
+	def test_title_without_parts_keeps_the_default(self) -> None:
+		bare = make_title("Partizsiz")
+		make_questions(bare)
+
+		fresh_user = make_user("fresh_bare")
+		watch_via_bot(fresh_user, bare, times=2)
+		self.assertEqual(eligible_titles(fresh_user)["unlocked"], [])
+
+		watch_via_bot(fresh_user, bare, times=1)
+		payload = eligible_titles(fresh_user)
+		self.assertEqual(len(payload["unlocked"]), 1)
+		self.assertEqual(payload["unlocked"][0]["min_parts"], 3)
 
 	def test_start_returns_questions_without_answers(self) -> None:
 		payload = start_attempt_sync(self.user, self.title.pk)

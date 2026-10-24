@@ -235,8 +235,9 @@ export function AnimeGamePage() {
             <i className="bi bi-lock" aria-hidden="true" />
             <h2>Hozircha o&apos;yin uchun anime yo&apos;q</h2>
             <p>
-              Botda kamida {titles?.min_parts ?? 3} ta qism ochilgan animelar shu
-              yerda paydo bo&apos;ladi.
+              Botda kamida {titles?.min_parts ?? 3} marta ochilgan animelar shu
+              yerda paydo bo&apos;ladi — qismlari shu sondan kam bo&apos;lganlar
+              uchun barcha qismlar ochilganda kifoya.
             </p>
           </div>
         ) : (

@@ -362,7 +362,8 @@ def rating_summary_sync(title, user=None) -> Dict[str, Any]:
 def top_rated_titles_sync(limit: int = 10) -> List[MediaTitle]:
 	"""Highest scored titles — shared by the site's rating widgets."""
 	return list(
-		MediaTitle.objects.filter(rating_count__gt=0)
+		MediaTitle.objects.with_counts()
+		.filter(rating_count__gt=0)
 		.order_by("-rating_average", "-rating_count", "-id")[: max(1, limit)]
 	)
 

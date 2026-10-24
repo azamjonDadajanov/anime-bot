@@ -120,9 +120,14 @@ class FavoriteListView(generics.ListAPIView):
 		if profile is None:
 			return MediaTitle.objects.none()
 
-		queryset = MediaTitle.objects.filter(user_favorites__user=profile).order_by(
-			"-user_favorites__created_at",
-		).distinct()
+		queryset = (
+			MediaTitle.objects.with_counts()
+			.filter(user_favorites__user=profile)
+			.order_by(
+				"-user_favorites__created_at",
+			)
+			.distinct()
+		)
 		media_type = self.request.query_params.get("type")
 		search = self.request.query_params.get("search", "").strip()
 		if media_type in MediaTitle.MediaType.values:

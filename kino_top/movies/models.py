@@ -5,7 +5,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.template.defaultfilters import slugify
 
 def default_available_plans():
@@ -59,7 +59,24 @@ class Genre(models.Model):
 		return self.name
 
 
+class MediaTitleQuerySet(models.QuerySet):
+	def with_counts(self):
+		"""Parts and quiz questions per title, computed in the listing query.
+
+		``movies_count``/``quizess_count`` are otherwise one COUNT per row,
+		so a page of 20 titles used to cost 40 extra queries (N+1).
+		``distinct=True`` keeps the numbers right even when the same query
+		also joins genres or another multi-valued relation.
+		"""
+		return self.annotate(
+			_movies_count=Count("parts", distinct=True),
+			_quizess_count=Count("quiz_questions", distinct=True),
+		)
+
+
 class MediaTitle(models.Model):
+	objects = MediaTitleQuerySet.as_manager()
+
 	class AccessPlan(models.TextChoices):
 		FREE = "free", "Bepul"
 		PAID = "paid", "Obunaga"
@@ -143,10 +160,15 @@ class MediaTitle(models.Model):
 		return self.title
 
 	def movies_count(self):
-		return self.parts.count()
+		# ``with_counts()`` supplies the number in the listing query itself;
+		# the COUNT only runs for a single object that was never annotated
+		# (a detail page, the admin, the bot).
+		annotated = self.__dict__.get("_movies_count")
+		return self.parts.count() if annotated is None else annotated
 
 	def quizess_count(self):
-		return self.quiz_questions.count()
+		annotated = self.__dict__.get("_quizess_count")
+		return self.quiz_questions.count() if annotated is None else annotated
 
 	def save(self, *args, **kwargs):
 		if not self.code:

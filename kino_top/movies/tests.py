@@ -286,6 +286,52 @@ class CatalogMediaTests(TestCase):
 		self.assertEqual(film.telegram_media.get(), video)
 		self.assertEqual(video.file_id, "telegram-video-file-id")
 
+	def test_catalog_counts_come_from_the_listing_query_not_per_row(self):
+		"""``movies_count``/``quizess_count`` must not add a COUNT per title."""
+		from django.test.utils import CaptureQueriesContext
+		from django.db import connection
+		from games.models import QuizQuestion
+
+		def make_title(index: int, parts: int, questions: int) -> None:
+			title = MediaTitle.objects.create(
+				type=MediaTitle.MediaType.ANIME,
+				title=f"Counted {index}",
+				slug=f"counted-{index}",
+			)
+			for number in range(1, parts + 1):
+				MediaPart.objects.create(content=title, number=number)
+			for number in range(questions):
+				QuizQuestion.objects.create(
+					title=title,
+					text=f"Savol {number}?",
+					choices=["A", "B", "C", "D"],
+					correct_index=0,
+				)
+
+		make_title(1, parts=3, questions=2)
+		# Warm up content types / sessions so the comparison below only
+		# sees the queries the catalogue page itself issues.
+		self.client.get("/api/catalog/")
+		with CaptureQueriesContext(connection) as one_title:
+			first = self.client.get("/api/catalog/")
+
+		make_title(2, parts=1, questions=4)
+		make_title(3, parts=2, questions=1)
+		with CaptureQueriesContext(connection) as three_titles:
+			second = self.client.get("/api/catalog/")
+
+		by_slug = {row["slug"]: row for row in second.data}
+		self.assertEqual(by_slug["counted-1"]["movies_count"], 3)
+		self.assertEqual(by_slug["counted-1"]["quizess_count"], 2)
+		self.assertEqual(by_slug["counted-2"]["movies_count"], 1)
+		self.assertEqual(by_slug["counted-2"]["quizess_count"], 4)
+		self.assertEqual(by_slug["counted-3"]["movies_count"], 2)
+		self.assertEqual(by_slug["counted-3"]["quizess_count"], 1)
+		self.assertEqual(first.data[0]["movies_count"], 3)
+		self.assertEqual(first.data[0]["quizess_count"], 2)
+		# Two more titles must not mean two more COUNT queries each.
+		self.assertEqual(len(three_titles.captured_queries), len(one_title.captured_queries))
+
 
 class MediaViewApiTests(TestCase):
 	def setUp(self):
