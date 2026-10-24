@@ -81,7 +81,9 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
   `📢 Ommaviy kanallar`. Har bir bo'limga bir nechta kanal qo'shish mumkin.
   Media qo'shilganda e'lon o'zi yo'naltiriladi: ongoing media → Ongoing, tugagan
   media → Tugagan, **pullik (VIP) media → VIP** kanaliga; bo'limda kanal
-  bo'lmasa asosiy e'lon kanaliga, u ham bo'lmasa birinchi ommaviy kanalga tushadi.
+  bo'lmasa asosiy e'lon kanaliga, u ham bo'lmasa mavjud e'lon kanallaridan
+  birinchisiga tushadi (e'lon hech qachon yo'qolmaydi va logda ogohlantirish
+  yoziladi).
 - JWT asosidagi autentifikatsiya: parol, Telegram login widget va Telegram Mini App.
 
 ## Texnologiyalar
