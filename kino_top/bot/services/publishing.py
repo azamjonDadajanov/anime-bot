@@ -162,22 +162,41 @@ async def resolve_target_channels(
 	"""E'lon yuboriladigan kanallar ro'yxati (bo'sh bo'lishi ham mumkin)."""
 	if channel is not None:
 		return [channel]
-	from .channels import channels_by_purpose_sync, get_channel
+	from .channels import announcement_channels_sync, channels_by_purpose_sync, get_channel
 
-	for purpose in announcement_purpose_chain(title, is_completed=is_completed):
+	chain = announcement_purpose_chain(title, is_completed=is_completed)
+	for purpose in chain:
 		channels = await to_async(channels_by_purpose_sync)(purpose, active_only=True)
 		if channels:
 			return channels
 
-	# Bo'limlarga kanal qo'shilmagan bo'lsa: asosiy e'lon kanali, keyin DB'dagi
-	# birinchi faol public kanal ishlatiladi.
+	# Bo'limga kanal qo'shilmagan bo'lsa e'lon yo'qolib ketmasligi kerak:
+	# avval «Asosiy e'lon kanali», keyin mavjud e'lon kanallaridan birinchisi.
 	settings = await get_settings()
 	if settings.publish_channel_id:
 		target = await get_channel(settings.publish_channel_id)
 		if target is not None:
+			logger.warning(
+				"No channel for %s (%s); publishing to the main announcement channel «%s».",
+				title.pk,
+				"/".join(chain),
+				target.title,
+			)
 			return [target]
-	fallback = await _default_public_channel()
-	return [fallback] if fallback is not None else []
+	fallback = await to_async(announcement_channels_sync)(active_only=True)
+	if fallback:
+		logger.warning(
+			"No channel for %s (%s); publishing to «%s» instead.",
+			title.pk,
+			"/".join(chain),
+			fallback[0].title,
+		)
+		return [fallback[0]]
+	logger.warning(
+		"Nothing published for %s: no announcement channel is configured at all.",
+		title.pk,
+	)
+	return []
 
 
 async def resolve_target_channel(
@@ -218,6 +237,11 @@ async def _send_to_targets(
 			first_message_id = message_id
 			first_channel = target
 	if first_message_id is None or first_channel is None:
+		logger.warning(
+			"Publishing %s failed in every channel: %s.",
+			title.pk,
+			", ".join(target.title for target in targets),
+		)
 		return None
 	title.metadata_channel = first_channel
 	title.metadata_message_id = first_message_id
@@ -283,7 +307,7 @@ async def publish_title(
 
 	targets = await resolve_target_channels(title, is_completed=False, channel=channel)
 	if not targets:
-		logger.info("Auto-publish skipped for %s: no channel selected.", title.pk)
+		logger.warning("Auto-publish skipped for %s: no channel selected.", title.pk)
 		return None
 
 	if not genres:
@@ -523,7 +547,7 @@ async def publish_completed_title(
 	"""Tugallangan media (anime/kino/serial/manga) uchun tugallanganlar kanaliga e'lon berish."""
 	targets = await resolve_target_channels(title, is_completed=True, channel=channel)
 	if not targets:
-		logger.info("Publish completed skipped for %s: no channel selected.", title.pk)
+		logger.warning("Publish completed skipped for %s: no channel selected.", title.pk)
 		return None
 
 	if not genres:
@@ -548,7 +572,7 @@ async def publish_ongoing_parts(
 		return None
 	targets = await resolve_target_channels(title, is_completed=False, channel=channel)
 	if not targets:
-		logger.info("Publish ongoing skipped for %s: no channel selected.", title.pk)
+		logger.warning("Publish ongoing skipped for %s: no channel selected.", title.pk)
 		return None
 
 	if not genres:

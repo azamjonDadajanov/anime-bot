@@ -113,6 +113,22 @@ class PublishingRulesTests(DispatcherTestCase):
 			self.movie_ch.pk,
 		)
 
+	def test_storage_channel_is_never_used_for_announcements(self) -> None:
+		"""Fayl saqlash kanaliga e'lon tushmasligi kerak."""
+		TelegramChannel.objects.exclude(pk=self.general_ch.pk).delete()
+		settings = BotSettings.get_solo()
+		settings.publish_channel = None
+		settings.save(update_fields=["publish_channel", "updated_at"])
+		storage = make_channel(
+			chat_id=-1005555555555, title="Cloud", purpose=Purpose.STORAGE
+		)
+		movie = make_title(code="1124", media_type="movie", status="completed")
+
+		targets = asyncio.run(resolve_target_channels(movie, is_completed=True))
+
+		self.assertEqual([target.pk for target in targets], [self.general_ch.pk])
+		self.assertNotIn(storage.pk, [target.pk for target in targets])
+
 	def test_paid_media_goes_to_the_vip_channel(self) -> None:
 		paid_anime = make_title(code="1101", media_type="anime", required_plan="paid")
 		paid_manga = make_title(code="1102", media_type="manga", required_plan="paid")
@@ -146,6 +162,30 @@ class PublishingRulesTests(DispatcherTestCase):
 		targets = asyncio.run(resolve_target_channels(anime, is_completed=False))
 
 		self.assertEqual([target.pk for target in targets], [self.general_ch.pk])
+
+	def test_movie_section_without_main_channel_uses_an_existing_announcement_channel(self) -> None:
+		"""Kino kanali hali qo'shilmagan bo'lsa ham e'lon yo'qolmaydi."""
+		self.movie_ch.delete()
+		self.movie_vip_ch.delete()
+		settings = BotSettings.get_solo()
+		settings.publish_channel = None
+		settings.save(update_fields=["publish_channel", "updated_at"])
+		movie = make_title(code="1122", media_type="movie", status="completed")
+
+		targets = asyncio.run(resolve_target_channels(movie, is_completed=True))
+
+		self.assertEqual([target.pk for target in targets], [self.anime_ongoing_ch.pk])
+
+	def test_missing_every_channel_returns_no_target(self) -> None:
+		TelegramChannel.objects.all().delete()
+		anime = make_title(code="1123", media_type="anime", status="ongoing")
+
+		self.assertEqual(
+			asyncio.run(resolve_target_channels(anime, is_completed=False)), []
+		)
+		self.assertIsNone(
+			asyncio.run(publish_ongoing_parts(self.bot, anime, [make_part(anime, number=1)]))
+		)
 
 	def test_purpose_chain_order(self) -> None:
 		paid_completed = make_title(
