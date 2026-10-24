@@ -146,7 +146,7 @@ async def pick_title(callback: CallbackQuery) -> None:
 	args = cb.section_args(callback.data)
 	page = parse_int(args[0] if args else None, minimum=1) or 1
 	titles = await all_titles()
-	items, page, pages = paginate(titles, page, page_size())
+	items, page, pages = paginate(titles, page, 30)
 	if not items:
 		await render(callback, NOT_FOUND, markup=episodes_menu(), edit=True)
 		return
