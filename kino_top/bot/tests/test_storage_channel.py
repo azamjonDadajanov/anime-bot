@@ -50,18 +50,16 @@ class StorageChannelTests(DispatcherTestCase):
 		self.completed_ch = make_channel(
 			chat_id=-1008880000002,
 			title="Completed Ch",
-			purpose=TelegramChannel.Purpose.PUBLIC,
+			purpose=TelegramChannel.Purpose.ANIME_COMPLETED,
 		)
 		self.ongoing_ch = make_channel(
 			chat_id=-1008880000003,
 			title="Ongoing Ch",
-			purpose=TelegramChannel.Purpose.PUBLIC,
+			purpose=TelegramChannel.Purpose.ANIME_ONGOING,
 		)
 
 		settings = BotSettings.get_solo()
 		settings.publish_channel = self.completed_ch
-		settings.completed_channel = self.completed_ch
-		settings.ongoing_channel = self.ongoing_ch
 		settings.auto_publish_new_content = True
 		settings.save()
 

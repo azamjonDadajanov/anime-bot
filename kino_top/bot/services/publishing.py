@@ -118,51 +118,113 @@ async def _default_public_channel() -> Optional[TelegramChannel]:
 	return channels[0] if channels else None
 
 
+def announcement_purpose_chain(
+	title: MediaTitle, *, is_completed: bool = False
+) -> tuple[str, ...]:
+	"""E'lon uchun kanal turlari zanjiri (birinchi to'ldirilgani ishlatiladi).
+
+	Qoidalar:
+	* pullik media har doim VIP kanalga tushadi (ongoing/tugaganidan qat'i nazar);
+	* ongoing media → Ongoing, tugagan media → Tugagan;
+	* kinolar uchun yagona kino kanali, pullik kinolar esa Kino VIP kanaliga.
+	"""
+	paid = title.required_plan == MediaTitle.AccessPlan.PAID
+	if title.type == MediaTitle.MediaType.MANGA:
+		ongoing = TelegramChannel.Purpose.MANGA_ONGOING
+		completed = TelegramChannel.Purpose.MANGA_COMPLETED
+		vip = TelegramChannel.Purpose.MANGA_VIP
+	elif title.type == MediaTitle.MediaType.MOVIE:
+		# Kinolarning alohida ongoing/tugagan bo'linmalari yo'q.
+		ongoing = completed = TelegramChannel.Purpose.MOVIE
+		vip = TelegramChannel.Purpose.MOVIE_VIP
+	else:
+		# Anime, serial va podcast'lar "Animelar" bo'limida.
+		ongoing = TelegramChannel.Purpose.ANIME_ONGOING
+		completed = TelegramChannel.Purpose.ANIME_COMPLETED
+		vip = TelegramChannel.Purpose.ANIME_VIP
+
+	chain: List[str] = []
+	if paid:
+		chain.append(vip)
+	chain.append(completed if is_completed else ongoing)
+	if is_completed:
+		# Tugaganlar kanali bo'sh bo'lsa ongoing kanalga tushadi.
+		chain.append(ongoing)
+	return tuple(dict.fromkeys(chain))
+
+
+async def resolve_target_channels(
+	title: MediaTitle,
+	*,
+	is_completed: bool = False,
+	channel: Optional[TelegramChannel] = None,
+) -> List[TelegramChannel]:
+	"""E'lon yuboriladigan kanallar ro'yxati (bo'sh bo'lishi ham mumkin)."""
+	if channel is not None:
+		return [channel]
+	from .channels import channels_by_purpose_sync, get_channel
+
+	for purpose in announcement_purpose_chain(title, is_completed=is_completed):
+		channels = await to_async(channels_by_purpose_sync)(purpose, active_only=True)
+		if channels:
+			return channels
+
+	# Bo'limlarga kanal qo'shilmagan bo'lsa: asosiy e'lon kanali, keyin DB'dagi
+	# birinchi faol public kanal ishlatiladi.
+	settings = await get_settings()
+	if settings.publish_channel_id:
+		target = await get_channel(settings.publish_channel_id)
+		if target is not None:
+			return [target]
+	fallback = await _default_public_channel()
+	return [fallback] if fallback is not None else []
+
+
 async def resolve_target_channel(
 	title: MediaTitle,
 	*,
 	is_completed: bool = False,
 	channel: Optional[TelegramChannel] = None,
 ) -> Optional[TelegramChannel]:
-	"""Select destination channel based on content type (media vs manga) and status (ongoing vs completed)."""
-	if channel is not None:
-		return channel
-	settings = await get_settings()
-	from .channels import get_channel
+	"""Birinchi mos e'lon kanali (sarlavha/oldindan ko'rish uchun)."""
+	channels = await resolve_target_channels(
+		title, is_completed=is_completed, channel=channel
+	)
+	return channels[0] if channels else None
 
-	is_manga = (title.type == MediaTitle.MediaType.MANGA)
-	target_id = None
-	if is_manga:
-		if is_completed:
-			target_id = (
-				getattr(settings, "manga_completed_channel_id", None)
-				or getattr(settings, "manga_channel_id", None)
-				or getattr(settings, "completed_channel_id", None)
-				or settings.publish_channel_id
-			)
-		else:
-			target_id = (
-				getattr(settings, "manga_channel_id", None)
-				or getattr(settings, "ongoing_channel_id", None)
-				or settings.publish_channel_id
-			)
-	else:
-		if is_completed:
-			target_id = (
-				getattr(settings, "completed_channel_id", None)
-				or settings.publish_channel_id
-			)
-		else:
-			target_id = (
-				getattr(settings, "ongoing_channel_id", None)
-				or settings.publish_channel_id
-			)
 
-	if not target_id:
-		# Sozlamalarda tur bo'yicha kanal tanlanmagan bo'lsa: DB'da purpose=public
-		# sifatida saqlangan birinchi faol kanalga e'lon yuboriladi.
-		return await _default_public_channel()
-	return await get_channel(target_id)
+async def _send_to_targets(
+	bot: Bot,
+	targets: Sequence[TelegramChannel],
+	title: MediaTitle,
+	caption: str,
+	*,
+	button_text: Optional[str] = None,
+) -> Optional[int]:
+	"""Bitta e'lonni bo'limning barcha kanallariga yuboradi.
+
+	Qaytariladigan qiymat — birinchi muvaffaqiyatli xabar id'si; media qayerga
+	e'lon qilingani ham shu kanal bo'yicha eslab qolinadi.
+	"""
+	first_message_id: Optional[int] = None
+	first_channel: Optional[TelegramChannel] = None
+	for target in targets:
+		message_id = await _send_to_channel(
+			bot, target, title, caption, button_text=button_text
+		)
+		if message_id is None:
+			continue
+		if first_message_id is None:
+			first_message_id = message_id
+			first_channel = target
+	if first_message_id is None or first_channel is None:
+		return None
+	title.metadata_channel = first_channel
+	title.metadata_message_id = first_message_id
+	await to_async(title.save)(
+		update_fields=["metadata_channel", "metadata_message_id", "updated_at"]
+	)
+	return first_message_id
 
 
 async def _send_to_channel(
@@ -219,8 +281,8 @@ async def publish_title(
 	if is_completed:
 		return await publish_completed_title(bot, title, channel=channel, genres=genres)
 
-	target = await resolve_target_channel(title, is_completed=False, channel=channel)
-	if target is None:
+	targets = await resolve_target_channels(title, is_completed=False, channel=channel)
+	if not targets:
 		logger.info("Auto-publish skipped for %s: no channel selected.", title.pk)
 		return None
 
@@ -228,14 +290,7 @@ async def publish_title(
 		genres = await to_async(_genres_text_sync)(title)
 	caption = announcement_text(title, part=None, genres=genres)
 	btn_label = "📖 O'qish" if title.type == MediaTitle.MediaType.MANGA else "▶️ Ko'rish"
-	message_id = await _send_to_channel(bot, target, title, caption, button_text=btn_label)
-	if message_id is not None:
-		title.metadata_channel = target
-		title.metadata_message_id = message_id
-		await to_async(title.save)(
-			update_fields=["metadata_channel", "metadata_message_id", "updated_at"]
-		)
-	return message_id
+	return await _send_to_targets(bot, targets, title, caption, button_text=btn_label)
 
 
 async def publish_coupon(bot: Bot, coupon, *, channel: Optional[TelegramChannel] = None) -> Optional[int]:
@@ -466,8 +521,8 @@ async def publish_completed_title(
 	genres: str = "",
 ) -> Optional[int]:
 	"""Tugallangan media (anime/kino/serial/manga) uchun tugallanganlar kanaliga e'lon berish."""
-	target = await resolve_target_channel(title, is_completed=True, channel=channel)
-	if target is None:
+	targets = await resolve_target_channels(title, is_completed=True, channel=channel)
+	if not targets:
 		logger.info("Publish completed skipped for %s: no channel selected.", title.pk)
 		return None
 
@@ -476,14 +531,7 @@ async def publish_completed_title(
 	caption = completed_announcement_text(title, genres=genres)
 	btn_label = "📖 O'qish" if title.type == MediaTitle.MediaType.MANGA else "▶️ Ko'rish"
 
-	message_id = await _send_to_channel(bot, target, title, caption, button_text=btn_label)
-	if message_id is not None:
-		title.metadata_channel = target
-		title.metadata_message_id = message_id
-		await to_async(title.save)(
-			update_fields=["metadata_channel", "metadata_message_id", "updated_at"]
-		)
-	return message_id
+	return await _send_to_targets(bot, targets, title, caption, button_text=btn_label)
 
 
 async def publish_ongoing_parts(
@@ -498,8 +546,8 @@ async def publish_ongoing_parts(
 	parts = [p for p in parts if p is not None]
 	if not parts:
 		return None
-	target = await resolve_target_channel(title, is_completed=False, channel=channel)
-	if target is None:
+	targets = await resolve_target_channels(title, is_completed=False, channel=channel)
+	if not targets:
 		logger.info("Publish ongoing skipped for %s: no channel selected.", title.pk)
 		return None
 
@@ -508,7 +556,7 @@ async def publish_ongoing_parts(
 	caption = ongoing_announcement_text(title, parts, genres=genres)
 	btn_label = "📖 O'qish" if title.type == MediaTitle.MediaType.MANGA else "▶️ Ko'rish"
 
-	return await _send_to_channel(bot, target, title, caption, button_text=btn_label)
+	return await _send_to_targets(bot, targets, title, caption, button_text=btn_label)
 
 
 async def publish_parts_by_rules(

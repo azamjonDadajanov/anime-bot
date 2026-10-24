@@ -410,18 +410,6 @@ class BotSettingsSerializer(serializers.ModelSerializer):
 	publish_channel_title = serializers.CharField(
 		source="publish_channel.title", read_only=True, default=None
 	)
-	completed_channel_title = serializers.CharField(
-		source="completed_channel.title", read_only=True, default=None
-	)
-	ongoing_channel_title = serializers.CharField(
-		source="ongoing_channel.title", read_only=True, default=None
-	)
-	manga_channel_title = serializers.CharField(
-		source="manga_channel.title", read_only=True, default=None
-	)
-	manga_completed_channel_title = serializers.CharField(
-		source="manga_completed_channel.title", read_only=True, default=None
-	)
 
 	class Meta:
 		model = BotSettings
@@ -430,14 +418,6 @@ class BotSettingsSerializer(serializers.ModelSerializer):
 			"auto_publish_new_content",
 			"publish_channel",
 			"publish_channel_title",
-			"completed_channel",
-			"completed_channel_title",
-			"ongoing_channel",
-			"ongoing_channel_title",
-			"manga_channel",
-			"manga_channel_title",
-			"manga_completed_channel",
-			"manga_completed_channel_title",
 			"welcome_text",
 			"access_denied_text",
 			"broadcast_rate_per_second",

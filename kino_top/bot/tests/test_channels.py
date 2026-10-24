@@ -1,4 +1,4 @@
-"""Channel management tests for the three logical channel types."""
+"""Channel management tests for the logical channel types."""
 
 from __future__ import annotations
 
@@ -10,11 +10,16 @@ from movies.models import TelegramChannel
 from ..models import BotSettings
 from ..services.bot_settings import update_settings_sync
 from ..services.channels import (
+	ANNOUNCEMENT_PURPOSES,
+	PURPOSE_LABELS,
+	PURPOSE_ORDER,
 	add_channel_sync,
 	all_channels_sync,
 	channels_by_purpose_sync,
+	counts_by_group_sync,
 	counts_by_purpose_sync,
 	delete_channel_sync,
+	group_key_for_purpose,
 	public_channels_sync,
 	required_channels_sync,
 	resolve_chat,
@@ -208,30 +213,42 @@ class SettingsChannelBindingTests(TransactionTestCase):
 		make_channel(chat_id=-802, purpose=TelegramChannel.Purpose.PUBLIC, title="B")
 		self.assertEqual(len(public_channels_sync()), 2)
 
-	def test_type_channels_can_be_saved_via_update_settings(self) -> None:
+	def test_main_announcement_channel_can_be_saved_via_update_settings(self) -> None:
 		publish = make_channel(chat_id=-803, purpose=TelegramChannel.Purpose.PUBLIC, title="Publish")
-		completed = make_channel(chat_id=-804, purpose=TelegramChannel.Purpose.PUBLIC, title="Completed")
-		ongoing = make_channel(chat_id=-805, purpose=TelegramChannel.Purpose.PUBLIC, title="Ongoing")
-		manga = make_channel(chat_id=-806, purpose=TelegramChannel.Purpose.PUBLIC, title="Manga")
-		manga_completed = make_channel(chat_id=-807, purpose=TelegramChannel.Purpose.PUBLIC, title="Manga done")
-
-		settings = update_settings_sync(
-			publish_channel=publish,
-			completed_channel=completed,
-			ongoing_channel=ongoing,
-			manga_channel=manga,
-			manga_completed_channel=manga_completed,
+		ongoing = make_channel(
+			chat_id=-805, purpose=TelegramChannel.Purpose.ANIME_ONGOING, title="Anime ongoing"
 		)
 
-		self.assertEqual(settings.publish_channel_id, publish.pk)
-		self.assertEqual(settings.completed_channel_id, completed.pk)
-		self.assertEqual(settings.ongoing_channel_id, ongoing.pk)
-		self.assertEqual(settings.manga_channel_id, manga.pk)
-		self.assertEqual(settings.manga_completed_channel_id, manga_completed.pk)
+		settings = update_settings_sync(publish_channel=publish)
 
-		settings = BotSettings.get_solo()
 		self.assertEqual(settings.publish_channel_id, publish.pk)
-		self.assertEqual(settings.completed_channel_id, completed.pk)
-		self.assertEqual(settings.ongoing_channel_id, ongoing.pk)
-		self.assertEqual(settings.manga_channel_id, manga.pk)
-		self.assertEqual(settings.manga_completed_channel_id, manga_completed.pk)
+		self.assertEqual(BotSettings.get_solo().publish_channel_id, publish.pk)
+
+		# Bo'lim kanallari sozlamalar orqali emas, kanal turi (purpose) orqali
+		# tanlanadi.
+		self.assertEqual(
+			[channel.pk for channel in channels_by_purpose_sync(ongoing.purpose)],
+			[ongoing.pk],
+		)
+
+	def test_section_channels_are_counted_per_group(self) -> None:
+		make_channel(chat_id=-810, purpose=TelegramChannel.Purpose.ANIME_ONGOING)
+		make_channel(chat_id=-811, purpose=TelegramChannel.Purpose.ANIME_VIP)
+		make_channel(chat_id=-812, purpose=TelegramChannel.Purpose.MOVIE)
+		make_channel(chat_id=-813, purpose=TelegramChannel.Purpose.MANGA_COMPLETED)
+
+		counts = counts_by_group_sync()
+
+		self.assertEqual(counts["anime"], 2)
+		self.assertEqual(counts["movie"], 1)
+		self.assertEqual(counts["manga"], 1)
+
+	def test_purpose_labels_and_groups_cover_every_purpose(self) -> None:
+		for purpose in TelegramChannel.Purpose.values:
+			self.assertIn(purpose, PURPOSE_LABELS)
+			self.assertIn(purpose, PURPOSE_ORDER)
+			self.assertEqual(
+				purpose in ANNOUNCEMENT_PURPOSES,
+				bool(group_key_for_purpose(purpose)),
+				f"{purpose} is counted as an announcement channel but has no group",
+			)

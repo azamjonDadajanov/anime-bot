@@ -14,6 +14,16 @@ def default_available_plans():
 
 class TelegramChannel(models.Model):
 	class Purpose(models.TextChoices):
+		# E'lon (announcement) kanallari katalog bo'limlari bo'yicha taqsimlanadi.
+		ANIME_ONGOING = "anime_ongoing", "Animelar · Ongoing"
+		ANIME_COMPLETED = "anime_completed", "Animelar · Tugagan"
+		ANIME_VIP = "anime_vip", "Animelar · VIP"
+		MOVIE = "movie", "Kinolar"
+		MOVIE_VIP = "movie_vip", "Kinolar · VIP"
+		MANGA_ONGOING = "manga_ongoing", "Mangalar · Ongoing"
+		MANGA_COMPLETED = "manga_completed", "Mangalar · Tugagan"
+		MANGA_VIP = "manga_vip", "Mangalar · VIP"
+		# E'lon uchun ishlatilmaydigan kanallar.
 		REQUIRED = "required", "Majburiy obuna"
 		STORAGE = "storage", "Cloud saqlash"
 		PUBLIC = "public", "Ommaviy kanal"
@@ -24,7 +34,7 @@ class TelegramChannel(models.Model):
 	is_active = models.BooleanField(default=True)
 	is_public = models.BooleanField(default=False)
 	purpose = models.CharField(
-		max_length=10,
+		max_length=20,
 		choices=Purpose.choices,
 		default=Purpose.STORAGE,
 	)

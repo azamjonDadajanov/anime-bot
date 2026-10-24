@@ -68,10 +68,33 @@ export const REQUEST_STATUS_LABELS = {
 }
 
 export const CHANNEL_PURPOSE_LABELS = {
+  anime_ongoing: 'Animelar · Ongoing',
+  anime_completed: 'Animelar · Tugagan',
+  anime_vip: 'Animelar · VIP',
+  movie: 'Kinolar',
+  movie_vip: 'Kinolar · VIP',
+  manga_ongoing: 'Mangalar · Ongoing',
+  manga_completed: 'Mangalar · Tugagan',
+  manga_vip: 'Mangalar · VIP',
   required: 'Majburiy obuna',
   storage: 'Cloud saqlash',
   public: 'Ommaviy kanal',
 }
+
+// Panel order: catalogue sections first, then subscription/storage/general.
+export const CHANNEL_PURPOSE_ORDER = [
+  'anime_ongoing',
+  'anime_completed',
+  'anime_vip',
+  'movie',
+  'movie_vip',
+  'manga_ongoing',
+  'manga_completed',
+  'manga_vip',
+  'required',
+  'storage',
+  'public',
+]
 
 export const COUPON_STATUS_LABELS = {
   active: 'Faol',

@@ -377,10 +377,13 @@ ADMIN_EPISODE_LIST = "🎞 <b>{title}</b> qismlari — {page}/{pages}"
 ADMIN_EPISODE_DELETE_CONFIRM = "🗑 {label}qismni o'chirmoqchimisiz?"
 ADMIN_EPISODE_DELETED = "🗑 Qism o'chirildi."
 
-ADMIN_CHANNELS_MENU = "📡 <b>Kanallar boshqaruvi</b>\n\nQaysi turdagi kanallar?"
+ADMIN_CHANNELS_MENU = "📡 <b>Kanallar boshqaruvi</b>\n\nBo'limni tanlang:"
 ADMIN_CHANNEL_LIST = "📡 <b>{label}</b> — {page}/{pages}"
 ADMIN_CHANNEL_EMPTY = "📭 Bu turdagi kanallar yo'q."
-ADMIN_CHANNEL_ASK_PURPOSE = "📡 Kanal turini tanlang:"
+ADMIN_CHANNEL_ASK_PURPOSE = (
+	"📡 Kanal turini tanlang:\n\n"
+	"Animelar, Kinolar va Mangalar uchun Ongoing / Tugagan / VIP bo'limlari bor."
+)
 ADMIN_CHANNEL_ASK_CHAT = (
 	"📡 Kanalning <b>ID</b>, <b>@username</b> yoki <b>t.me</b> havolasini yuboring.\n\n"
 	"Masalan: <code>-1001234567890</code> yoki <code>@mening_kanalim</code>"

@@ -75,6 +75,13 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
   manzil sifatida kanal, barcha bot foydalanuvchilari yoki ikkalasi birdaniga
   tanlanadi. Xuddi shu tugma bot panelida ham bor: davom etayotgan media uchun
   «oxirgi qism / barcha qismlar» so'raladi, tugallangan media hammasini yuboradi.
+- **Kanallar tuzilmasi** (botda «📡 Kanallar», saytda «Kanallar» sahifasi):
+  `🎬 Animelar` (Ongoing, Tugagan, VIP), `🎥 Kinolar` (asosiy + VIP), `📖 Mangalar`
+  (Ongoing, Tugagan, VIP), shuningdek `🔒 Majburiy obuna`, `☁️ Cloud saqlash` va
+  `📢 Ommaviy kanallar`. Har bir bo'limga bir nechta kanal qo'shish mumkin.
+  Media qo'shilganda e'lon o'zi yo'naltiriladi: ongoing media → Ongoing, tugagan
+  media → Tugagan, **pullik (VIP) media → VIP** kanaliga; bo'limda kanal
+  bo'lmasa asosiy e'lon kanaliga, u ham bo'lmasa birinchi ommaviy kanalga tushadi.
 - JWT asosidagi autentifikatsiya: parol, Telegram login widget va Telegram Mini App.
 
 ## Texnologiyalar

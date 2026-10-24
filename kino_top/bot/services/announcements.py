@@ -12,11 +12,11 @@ same message when the operator presses «📢 E'lon qilish»: a cover image with
 
 and one button that opens the bot on that very title's ``/start`` deep link.
 
-The message may go to the public channel, to every bot user, or to both at
-once; :func:`send_announcement` is the single entry point for all three. The
-channel rules are the publishing ones (:func:`resolve_target_channel`), so an
-ongoing title lands in the ongoing channel and a finished one in the completed
-channel without the operator picking anything.
+The message may go to the channel, to every bot user, or to both at once;
+:func:`send_announcement` is the single entry point for all three. The channel
+rules are the publishing ones (:func:`resolve_target_channels`), so an ongoing
+title lands in its section's Ongoing channel, a finished one in Tugagan and a
+paid one in VIP without the operator picking anything.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from .publishing import (
 	cover_input_file,
 	deep_link_payload,
 	parts_range_label,
-	resolve_target_channel,
+	resolve_target_channels,
 )
 from .users import recipients_sync
 
@@ -181,30 +181,41 @@ async def send_to_channel(
 	cover: Optional[BufferedInputFile],
 	channel=None,
 ) -> Tuple[Optional[int], str]:
-	"""Post to the channel the publishing rules point at; ``(id, error)``."""
+	"""Post to every channel the publishing rules point at; ``(id, error)``."""
 	is_completed = (
 		title.status == MediaTitle.Status.COMPLETED
 		or title.type == MediaTitle.MediaType.MOVIE
 	)
-	target = await resolve_target_channel(title, is_completed=is_completed, channel=channel)
-	if target is None:
+	targets = await resolve_target_channels(
+		title, is_completed=is_completed, channel=channel
+	)
+	if not targets:
 		return None, (
-			"E'lon kanali tanlanmagan. «Sozlamalar → E'lon kanali» bo'limida "
-			"kanalni belgilang."
+			"E'lon kanali tanlanmagan. «Kanallar» bo'limida shu turdagi kanalni "
+			"qo'shing yoki asosiy e'lon kanalini belgilang."
 		)
-	message_id = await _send_message(bot, target.chat_id, caption, keyboard, cover)
-	if message_id is None:
+
+	first_message_id: Optional[int] = None
+	first_target = None
+	for target in targets:
+		message_id = await _send_message(bot, target.chat_id, caption, keyboard, cover)
+		if message_id is None:
+			continue
+		if first_message_id is None:
+			first_message_id, first_target = message_id, target
+	if first_message_id is None:
+		titles = ", ".join(f"«{target.title}»" for target in targets)
 		return None, (
-			f"Telegram «{target.title}» kanaliga e'lonni qabul qilmadi. "
+			f"Telegram {titles} kanaliga e'lonni qabul qilmadi. "
 			"Bot kanalda administrator ekanini tekshiring."
 		)
 	# Remember where the title was announced, like the existing publisher does.
-	title.metadata_channel = target
-	title.metadata_message_id = message_id
+	title.metadata_channel = first_target
+	title.metadata_message_id = first_message_id
 	await to_async(title.save)(
 		update_fields=["metadata_channel", "metadata_message_id", "updated_at"]
 	)
-	return message_id, ""
+	return first_message_id, ""
 
 
 async def send_to_users(

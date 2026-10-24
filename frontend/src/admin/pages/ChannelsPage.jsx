@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { adminChannelApi } from '../api/adminApi'
 import {
   CHANNEL_PURPOSE_LABELS,
+  CHANNEL_PURPOSE_ORDER,
   ConfirmDialog,
   EmptyState,
   ErrorAlert,
@@ -31,7 +32,12 @@ export default function ChannelsPage() {
     setError(null)
     try {
       const data = await adminChannelApi.list()
-      setItems(data)
+      // Panel order: catalogue sections first, then subscription/storage/general.
+      const order = (purpose) => {
+        const index = CHANNEL_PURPOSE_ORDER.indexOf(purpose)
+        return index === -1 ? CHANNEL_PURPOSE_ORDER.length : index
+      }
+      setItems([...data].sort((a, b) => order(a.purpose) - order(b.purpose)))
     } catch (err) {
       setError(formatError(err, 'Kanallarni yuklashda xatolik.'))
     } finally {
@@ -118,7 +124,7 @@ export default function ChannelsPage() {
     <Stack gap="lg">
       <SectionHeading
         title="Telegram kanallar"
-        description="Majburiy obuna, cloud saqlash va ommaviy kanallar."
+        description="Animelar, Kinolar va Mangalar bo'limlari (Ongoing / Tugagan / VIP), majburiy obuna, cloud saqlash va ommaviy kanallar."
       />
       <ErrorAlert>{error}</ErrorAlert>
       <SuccessAlert>{success}</SuccessAlert>

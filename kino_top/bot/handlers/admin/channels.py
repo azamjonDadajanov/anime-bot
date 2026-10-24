@@ -16,6 +16,7 @@ from ...keyboards.admin import (
 	channel_actions,
 	channel_edit_fields,
 	channel_purposes,
+	channels_group,
 	channels_list,
 	channels_menu,
 	confirm,
@@ -24,12 +25,17 @@ from ...keyboards.common import btn, cancel_keyboard, keyboard
 from ...services.access import active_required_channels_sync
 from ...services.bot_settings import update_settings
 from ...services.channels import (
+	CHANNEL_GROUPS,
 	add_channel,
 	channels_by_purpose_sync,
+	counts_by_group_sync,
 	counts_by_purpose,
 	delete_channel,
 	get_channel,
+	group_label,
+	group_purposes,
 	purpose_label,
+	purpose_short_label,
 	resolve_chat,
 	ChatResolutionError,
 	test_channel,
@@ -74,23 +80,49 @@ def _context(callback: CallbackQuery, *, purpose: str, page: int) -> str:
 
 async def channels_menu_text() -> str:
 	counts = await counts_by_purpose()
+	group_counts = await to_async(counts_by_group_sync)()
 	# Public channels count towards the mandatory subscription too, so show the
 	# real number the users are checked against, not just the 'required' rows.
 	enforced = len(await to_async(active_required_channels_sync)())
-	return (
-		ADMIN_CHANNELS_MENU
-		+ f"\n\n🔒 Majburiy: <b>{counts.get('required', 0)}</b>"
-		+ f"\n☁️ Saqlash: <b>{counts.get('storage', 0)}</b>"
-		+ f"\n📢 Ommaviy: <b>{counts.get('public', 0)}</b>"
-		+ "\n\nℹ️ Ommaviy kanallar ham majburiy obuna sifatida ishlaydi"
-		+ f" (jami tekshiriladi: <b>{enforced}</b> ta faol kanal)."
+	lines = [ADMIN_CHANNELS_MENU, ""]
+	for key, label, _purposes in CHANNEL_GROUPS:
+		lines.append(f"{label}: <b>{group_counts.get(key, 0)}</b> ta kanal")
+	lines.append(f"\n🔒 Majburiy: <b>{counts.get('required', 0)}</b>")
+	lines.append(f"☁️ Saqlash: <b>{counts.get('storage', 0)}</b>")
+	lines.append(f"📢 Ommaviy: <b>{counts.get('public', 0)}</b>")
+	lines.append(
+		"\nℹ️ Ommaviy kanallar ham majburiy obuna sifatida ishlaydi"
+		f" (jami tekshiriladi: <b>{enforced}</b> ta faol kanal)."
 	)
+	return "\n".join(lines)
+
+
 
 
 @router.callback_query(F.data == cb.ADM_CHANNELS)
 async def show_menu(callback: CallbackQuery, state: FSMContext) -> None:
 	await state.clear()
 	await render(callback, await channels_menu_text(), markup=channels_menu(), edit=True)
+
+
+@router.callback_query(F.data.startswith(f"{cb.ADM_CHANNELS}:group:"))
+async def show_group(callback: CallbackQuery, state: FSMContext) -> None:
+	await state.clear()
+	args = cb.section_args(callback.data)
+	group_key = args[0] if args else ""
+	if not group_purposes(group_key):
+		await render(callback, await channels_menu_text(), markup=channels_menu(), edit=True)
+		return
+	counts = await counts_by_purpose()
+	lines = [f"{group_label(group_key)}\n"]
+	for purpose in group_purposes(group_key):
+		lines.append(f"• {purpose_short_label(purpose)}: <b>{counts.get(purpose, 0)}</b>")
+	await render(
+		callback,
+		"\n".join(lines),
+		markup=channels_group(group_key),
+		edit=True,
+	)
 
 
 @router.callback_query(F.data.startswith(f"{cb.ADM_CHANNELS}:list:"))

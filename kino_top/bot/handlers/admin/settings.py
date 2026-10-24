@@ -18,7 +18,7 @@ from ...services.bot_settings import (
 	toggle_setting,
 	update_settings,
 )
-from ...services.channels import get_channel, public_channels
+from ...services.channels import announcement_channels, get_channel
 from ...states import AdminSettingsStates
 from ...texts import (
 	ADMIN_INVALID_INPUT,
@@ -41,20 +41,6 @@ TEXT_FIELDS = {"welcome": "welcome_text", "denied": "access_denied_text"}
 
 async def settings_text(settings) -> str:
 	channel = await get_channel(settings.publish_channel_id) if settings.publish_channel_id else None
-	completed_ch = (
-		await get_channel(settings.completed_channel_id) if settings.completed_channel_id else None
-	)
-	ongoing_ch = (
-		await get_channel(settings.ongoing_channel_id) if settings.ongoing_channel_id else None
-	)
-	manga_ch = (
-		await get_channel(settings.manga_channel_id) if settings.manga_channel_id else None
-	)
-	manga_comp_ch = (
-		await get_channel(settings.manga_completed_channel_id)
-		if settings.manga_completed_channel_id
-		else None
-	)
 
 	base = ADMIN_SETTINGS_MENU.format(
 		require_subscription=on_off(settings.require_subscription),
@@ -65,14 +51,11 @@ async def settings_text(settings) -> str:
 		rate=settings.broadcast_rate_per_second,
 		concurrency=settings.broadcast_concurrency,
 	)
-	extra = [
-		"",
-		f"✅ Tugallangan medialar: <b>{escape_html(completed_ch.title) if completed_ch else '— (Asosiy)'}</b>",
-		f"▶️ Ongoing medialar: <b>{escape_html(ongoing_ch.title) if ongoing_ch else '— (Asosiy)'}</b>",
-		f"📖 Mangalar: <b>{escape_html(manga_ch.title) if manga_ch else '— (Asosiy)'}</b>",
-		f"📚 Tugallangan mangalar: <b>{escape_html(manga_comp_ch.title) if manga_comp_ch else '— (Mangalar)'}</b>",
-	]
-	return base + "\n" + "\n".join(extra)
+	return (
+		base
+		+ "\n\nℹ️ E'lon kanallari «📡 Kanallar» bo'limida bo'limlar bo'yicha "
+		"(Ongoing / Tugagan / VIP) sozlanadi."
+	)
 
 
 @router.callback_query(F.data == cb.ADM_SETTINGS)
@@ -161,20 +144,14 @@ async def save_numeric(message: Message, state: FSMContext) -> None:
 	await message.answer(await settings_text(settings), reply_markup=settings_menu(settings))
 
 
-ALLOWED_CHANNEL_FIELDS = {
-	"publish_channel",
-	"completed_channel",
-	"ongoing_channel",
-	"manga_channel",
-	"manga_completed_channel",
-}
+ALLOWED_CHANNEL_FIELDS = {"publish_channel"}
 
 
 @router.callback_query(F.data.startswith(f"{cb.ADM_SETTINGS}:chan"))
 async def choose_channel(callback: CallbackQuery) -> None:
 	parts = callback.data.split(":")
 	field = parts[2] if len(parts) > 2 and parts[2] in ALLOWED_CHANNEL_FIELDS else "publish_channel"
-	channels = await public_channels(active_only=False)
+	channels = await announcement_channels(active_only=False)
 	await render(
 		callback,
 		ADMIN_SETTINGS_SELECT_CHANNEL,

@@ -57,7 +57,7 @@ async def _publish(title_id: int, part_id: Optional[int]) -> Tuple[Optional[int]
 	if message_id is None:
 		return None, (
 			"Kanal tanlanmagan yoki Telegram e'lonni rad etdi. "
-			"Sozlamalarda \"E'lon kanali\"ni belgilang."
+			"«Kanallar» bo'limida shu turdagi kanalni qo'shing."
 		)
 	return message_id, None
 

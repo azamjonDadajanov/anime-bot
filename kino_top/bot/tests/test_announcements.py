@@ -135,15 +135,17 @@ class AnnouncementDeliveryTests(TransactionTestCase):
 		self.addCleanup(shutil.rmtree, self.media_root, ignore_errors=True)
 
 		self.ongoing = make_channel(
-			chat_id=-1009000000001, title="Ongoing", purpose=TelegramChannel.Purpose.PUBLIC
+			chat_id=-1009000000001,
+			title="Animelar Ongoing",
+			purpose=TelegramChannel.Purpose.ANIME_ONGOING,
 		)
 		self.completed = make_channel(
-			chat_id=-1009000000002, title="Completed", purpose=TelegramChannel.Purpose.PUBLIC
+			chat_id=-1009000000002,
+			title="Animelar Tugagan",
+			purpose=TelegramChannel.Purpose.ANIME_COMPLETED,
 		)
 		settings = BotSettings.get_solo()
 		settings.publish_channel = self.ongoing
-		settings.ongoing_channel = self.ongoing
-		settings.completed_channel = self.completed
 		settings.save()
 
 		self.session = FakeSession()
@@ -194,11 +196,11 @@ class AnnouncementDeliveryTests(TransactionTestCase):
 	def test_without_a_channel_the_operator_gets_an_explanation(self) -> None:
 		settings = BotSettings.get_solo()
 		settings.publish_channel = None
-		settings.ongoing_channel = None
 		settings.save()
-		# Fallback: settings bo'sh bo'lsa DB'dagi public kanal ishlatiladi,
-		# shuning uchun "kanal yo'q" holatini sinashda ularni ham o'chiramiz.
-		TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.PUBLIC).delete()
+		# Fallback: bo'limga kanal qo'shilmagan bo'lsa asosiy e'lon kanali, keyin
+		# DB'dagi public kanal ishlatiladi, shuning uchun "kanal yo'q" holatini
+		# sinashda ularning hammasini o'chiramiz.
+		TelegramChannel.objects.all().delete()
 		title = build_title()
 		make_part(title, number=1)
 
@@ -212,10 +214,8 @@ class AnnouncementDeliveryTests(TransactionTestCase):
 		"""Sozlamalarda kanal tanlanmasa, DB'dagi public kanalga e'lon boradi."""
 		settings = BotSettings.get_solo()
 		settings.publish_channel = None
-		settings.ongoing_channel = None
-		settings.completed_channel = None
 		settings.save()
-		TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.PUBLIC).delete()
+		TelegramChannel.objects.all().delete()
 		fallback = make_channel(
 			chat_id=-1009000000009, title="Fallback", purpose=TelegramChannel.Purpose.PUBLIC
 		)
@@ -283,15 +283,17 @@ class AdminAnnounceFlowTests(DispatcherTestCase):
 		self.addCleanup(env.__exit__, None, None, None)
 
 		self.ongoing = make_channel(
-			chat_id=-1009100000001, title="Ongoing", purpose=TelegramChannel.Purpose.PUBLIC
+			chat_id=-1009100000001,
+			title="Animelar Ongoing",
+			purpose=TelegramChannel.Purpose.ANIME_ONGOING,
 		)
 		self.completed = make_channel(
-			chat_id=-1009100000002, title="Completed", purpose=TelegramChannel.Purpose.PUBLIC
+			chat_id=-1009100000002,
+			title="Animelar Tugagan",
+			purpose=TelegramChannel.Purpose.ANIME_COMPLETED,
 		)
 		settings = BotSettings.get_solo()
 		settings.publish_channel = self.ongoing
-		settings.ongoing_channel = self.ongoing
-		settings.completed_channel = self.completed
 		settings.save()
 
 		self.title = build_title()

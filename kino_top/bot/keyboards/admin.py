@@ -18,6 +18,12 @@ from movies.models import MediaTitle, TelegramChannel
 from users.models import Giveaway
 
 from .. import callbacks as cb
+from ..services.channels import (
+	CHANNEL_GROUPS,
+	group_purposes,
+	purpose_label,
+	purpose_short_label,
+)
 from .common import btn, confirm_keyboard, keyboard, pagination_row
 
 FIELD_LABELS = {
@@ -204,24 +210,47 @@ def part_actions(part, *, title_pk: int, page: int = 1, media_items: Sequence = 
 	return keyboard(*rows)
 
 
+def _channel_back_payload(purpose: str) -> str:
+	"""Back target for a channel list: its catalogue section or the main menu."""
+	for key, _label, purposes in CHANNEL_GROUPS:
+		if purpose in purposes:
+			return f"{cb.ADM_CHANNELS}:group:{key}"
+	return cb.ADM_CHANNELS
+
+
 def channels_menu() -> InlineKeyboardMarkup:
-	return keyboard(
-		[btn("🔒 Majburiy obuna", f"{cb.ADM_CHANNELS}:list:required:1")],
-		[btn("☁️ Cloud saqlash", f"{cb.ADM_CHANNELS}:list:storage:1")],
-		[btn("📢 Ommaviy kanallar", f"{cb.ADM_CHANNELS}:list:public:1")],
-		[btn("➕ Kanal qo'shish", f"{cb.ADM_CHANNELS}:new:storage")],
-		[btn("🧪 Hammasini tekshirish", f"{cb.ADM_CHANNELS}:testall")],
-		[btn("🏠 Panel", cb.ADM_STATS)],
-	)
+	rows = [
+		[btn(label, f"{cb.ADM_CHANNELS}:group:{key}")] for key, label, _purposes in CHANNEL_GROUPS
+	]
+	rows.append([btn("🔒 Majburiy obuna", f"{cb.ADM_CHANNELS}:list:required:1")])
+	rows.append([btn("☁️ Cloud saqlash", f"{cb.ADM_CHANNELS}:list:storage:1")])
+	rows.append([btn("📢 Ommaviy kanallar", f"{cb.ADM_CHANNELS}:list:public:1")])
+	rows.append([btn("🧪 Hammasini tekshirish", f"{cb.ADM_CHANNELS}:testall")])
+	rows.append([btn("🏠 Panel", cb.ADM_STATS)])
+	return keyboard(*rows)
+
+
+def channels_group(group_key: str) -> InlineKeyboardMarkup:
+	"""One catalogue section: its ongoing/completed/VIP channel buckets."""
+	rows = [
+		[btn(purpose_short_label(purpose), f"{cb.ADM_CHANNELS}:list:{purpose}:1")]
+		for purpose in group_purposes(group_key)
+	]
+	rows.append([btn("⬅️ Orqaga", cb.ADM_CHANNELS)])
+	return keyboard(*rows)
 
 
 def channel_purposes(prefix: str) -> InlineKeyboardMarkup:
-	return keyboard(
-		[btn("🔒 Majburiy obuna", f"{prefix}:required")],
-		[btn("☁️ Cloud saqlash", f"{prefix}:storage")],
-		[btn("📢 Ommaviy kanal", f"{prefix}:public")],
-		[btn("❌ Bekor qilish", cb.CANCEL)],
-	)
+	rows: List[List[InlineKeyboardButton]] = []
+	for _key, label, purposes in CHANNEL_GROUPS:
+		rows.append([btn(label, cb.NOOP)])
+		for purpose in purposes:
+			rows.append([btn(f"  {purpose_label(purpose)}", f"{prefix}:{purpose}")])
+	rows.append([btn("🔒 Majburiy obuna", f"{prefix}:required")])
+	rows.append([btn("☁️ Cloud saqlash", f"{prefix}:storage")])
+	rows.append([btn("📢 Ommaviy kanal", f"{prefix}:public")])
+	rows.append([btn("❌ Bekor qilish", cb.CANCEL)])
+	return keyboard(*rows)
 
 
 def channels_list(channels: Sequence[TelegramChannel], purpose: str, page: int, pages: int) -> InlineKeyboardMarkup:
@@ -233,7 +262,7 @@ def channels_list(channels: Sequence[TelegramChannel], purpose: str, page: int, 
 		)
 	rows.append(pagination_row(f"{cb.ADM_CHANNELS}:list:{purpose}:", page, pages))
 	rows.append([btn("➕ Qo'shish", f"{cb.ADM_CHANNELS}:new:{purpose}")])
-	rows.append([btn("⬅️ Orqaga", cb.ADM_CHANNELS)])
+	rows.append([btn("⬅️ Orqaga", _channel_back_payload(purpose))])
 	return keyboard(*rows)
 
 
@@ -243,7 +272,7 @@ def channel_actions(channel, *, purpose: str, page: int = 1) -> InlineKeyboardMa
 		[btn("🧪 Tekshirish", f"{cb.ADM_CHANNELS}:test:{channel.pk}")],
 		[btn(state, f"{cb.ADM_CHANNELS}:tog:{channel.pk}:{purpose}:{page}")],
 		[btn("✏️ Tahrirlash", f"{cb.ADM_CHANNELS}:edit:{channel.pk}:title")],
-		[btn("📢 E'lon kanali qilish", f"{cb.ADM_CHANNELS}:pub:{channel.pk}")],
+		[btn("📌 Asosiy e'lon kanali qilish", f"{cb.ADM_CHANNELS}:pub:{channel.pk}")],
 		[btn("🗑 O'chirish", f"{cb.ADM_CHANNELS}:del:{channel.pk}:{purpose}:{page}")],
 		[btn("⬅️ Orqaga", f"{cb.ADM_CHANNELS}:list:{purpose}:{page}")],
 	)
@@ -355,10 +384,7 @@ def settings_menu(settings) -> InlineKeyboardMarkup:
 		[btn("📣 Broadcast tezligi", f"{cb.ADM_SETTINGS}:rate")],
 		[btn("⚡ Parallel yuborish", f"{cb.ADM_SETTINGS}:conc")],
 		[btn("📡 Asosiy e'lon kanali", f"{cb.ADM_SETTINGS}:chan:publish_channel")],
-		[btn("✅ Tugallangan medialar kanali", f"{cb.ADM_SETTINGS}:chan:completed_channel")],
-		[btn("▶️ Ongoing medialar kanali", f"{cb.ADM_SETTINGS}:chan:ongoing_channel")],
-		[btn("📖 Mangalar kanali", f"{cb.ADM_SETTINGS}:chan:manga_channel")],
-		[btn("📚 Tugallangan mangalar kanali", f"{cb.ADM_SETTINGS}:chan:manga_completed_channel")],
+		[btn("📡 Kanallar bo'limi", cb.ADM_CHANNELS)],
 		[btn("📝 Salomlashuv matni", f"{cb.ADM_SETTINGS}:welcome"), btn("🚫 Taqiq matni", f"{cb.ADM_SETTINGS}:denied")],
 		[btn("🏠 Panel", cb.ADM_STATS)],
 	)

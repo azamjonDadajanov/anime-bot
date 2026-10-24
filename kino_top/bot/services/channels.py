@@ -1,8 +1,16 @@
-"""Channel management for the three logical channel types.
+"""Channel management for the logical channel types.
+
+E'lon kanallari katalog bo'limlari bo'yicha guruhlangan:
+
+* ``anime_ongoing`` / ``anime_completed`` / ``anime_vip`` — animelar;
+* ``movie`` / ``movie_vip`` — kinolar;
+* ``manga_ongoing`` / ``manga_completed`` / ``manga_vip`` — mangalar.
+
+Qolgan turlar:
 
 * ``required`` — membership is mandatory before the bot replies at all.
 * ``storage``  — stores video/photo/document ``file_id`` references.
-* ``public``   — receives announcements and new-episode posts; membership is
+* ``public``   — general announcement/coupon/giveaway channel; membership is
   mandatory too, because users are pointed at public channels.
 
 The types are fully independent: each may contain zero or many channels.
@@ -25,15 +33,71 @@ from ..utils import parse_admin_target, to_async
 logger = logging.getLogger(__name__)
 
 PURPOSE_LABELS = {
+	TelegramChannel.Purpose.ANIME_ONGOING: "🎬 Animelar · Ongoing",
+	TelegramChannel.Purpose.ANIME_COMPLETED: "🎬 Animelar · Tugagan",
+	TelegramChannel.Purpose.ANIME_VIP: "💎 Animelar · VIP",
+	TelegramChannel.Purpose.MOVIE: "🎥 Kinolar",
+	TelegramChannel.Purpose.MOVIE_VIP: "💎 Kinolar · VIP",
+	TelegramChannel.Purpose.MANGA_ONGOING: "📖 Mangalar · Ongoing",
+	TelegramChannel.Purpose.MANGA_COMPLETED: "📖 Mangalar · Tugagan",
+	TelegramChannel.Purpose.MANGA_VIP: "💎 Mangalar · VIP",
 	TelegramChannel.Purpose.REQUIRED: "🔒 Majburiy obuna",
 	TelegramChannel.Purpose.STORAGE: "☁️ Cloud saqlash",
 	TelegramChannel.Purpose.PUBLIC: "📢 Ommaviy kanal",
 }
-PURPOSE_ORDER = (
+
+#: Bo'lim ichidagi tugmalar uchun qisqa nomlar (guruh nomi takrorlanmaydi).
+PURPOSE_SHORT_LABELS = {
+	TelegramChannel.Purpose.ANIME_ONGOING: "▶️ Ongoing",
+	TelegramChannel.Purpose.ANIME_COMPLETED: "✅ Tugagan",
+	TelegramChannel.Purpose.ANIME_VIP: "💎 VIP",
+	TelegramChannel.Purpose.MOVIE: "🎥 Kinolar",
+	TelegramChannel.Purpose.MOVIE_VIP: "💎 VIP",
+	TelegramChannel.Purpose.MANGA_ONGOING: "▶️ Ongoing",
+	TelegramChannel.Purpose.MANGA_COMPLETED: "✅ Tugagan",
+	TelegramChannel.Purpose.MANGA_VIP: "💎 VIP",
+}
+
+#: (key, label, purposes) — the catalogue sections shown in both panels.
+CHANNEL_GROUPS = (
+	(
+		"anime",
+		"🎬 Animelar",
+		(
+			TelegramChannel.Purpose.ANIME_ONGOING,
+			TelegramChannel.Purpose.ANIME_COMPLETED,
+			TelegramChannel.Purpose.ANIME_VIP,
+		),
+	),
+	(
+		"movie",
+		"🎥 Kinolar",
+		(TelegramChannel.Purpose.MOVIE, TelegramChannel.Purpose.MOVIE_VIP),
+	),
+	(
+		"manga",
+		"📖 Mangalar",
+		(
+			TelegramChannel.Purpose.MANGA_ONGOING,
+			TelegramChannel.Purpose.MANGA_COMPLETED,
+			TelegramChannel.Purpose.MANGA_VIP,
+		),
+	),
+)
+
+#: Purposes that receive title/episode announcements.
+ANNOUNCEMENT_PURPOSES = tuple(
+	purpose for _key, _label, purposes in CHANNEL_GROUPS for purpose in purposes
+)
+
+#: Channel types that are not catalogue sections (subscription, storage, general).
+SERVICE_PURPOSES = (
 	TelegramChannel.Purpose.REQUIRED,
 	TelegramChannel.Purpose.STORAGE,
 	TelegramChannel.Purpose.PUBLIC,
 )
+
+PURPOSE_ORDER = ANNOUNCEMENT_PURPOSES + SERVICE_PURPOSES
 ADMIN_STATUSES = {"administrator", "creator"}
 
 
@@ -61,6 +125,34 @@ def purpose_label(purpose: str) -> str:
 	return PURPOSE_LABELS.get(purpose, purpose)
 
 
+def purpose_short_label(purpose: str) -> str:
+	"""Label used inside a catalogue section, where the section name is known."""
+	return PURPOSE_SHORT_LABELS.get(purpose) or purpose_label(purpose)
+
+
+def group_purposes(group_key: str) -> tuple:
+	"""Purposes of one catalogue section; an empty tuple for an unknown key."""
+	for key, _label, purposes in CHANNEL_GROUPS:
+		if key == group_key:
+			return purposes
+	return ()
+
+
+def group_key_for_purpose(purpose: str) -> str:
+	"""The catalogue section a purpose belongs to (``""`` for service types)."""
+	for key, _label, purposes in CHANNEL_GROUPS:
+		if purpose in purposes:
+			return key
+	return ""
+
+
+def group_label(group_key: str) -> str:
+	for key, label, _purposes in CHANNEL_GROUPS:
+		if key == group_key:
+			return label
+	return group_key
+
+
 def channels_by_purpose_sync(
 	purpose: str, *, active_only: bool = False
 ) -> List[TelegramChannel]:
@@ -86,15 +178,36 @@ def public_channels_sync(*, active_only: bool = True) -> List[TelegramChannel]:
 	return channels_by_purpose_sync(TelegramChannel.Purpose.PUBLIC, active_only=active_only)
 
 
+def announcement_channels_sync(*, active_only: bool = False) -> List[TelegramChannel]:
+	"""Every channel an announcement may be posted to, in panel order."""
+	queryset = TelegramChannel.objects.filter(
+		purpose__in=ANNOUNCEMENT_PURPOSES + (TelegramChannel.Purpose.PUBLIC,)
+	)
+	if active_only:
+		queryset = queryset.filter(is_active=True)
+	order = {purpose: index for index, purpose in enumerate(PURPOSE_ORDER)}
+	titles = list(queryset.order_by("title"))
+	return sorted(titles, key=lambda channel: order.get(channel.purpose, len(order)))
+
+
 all_channels = to_async(all_channels_sync)
 storage_channels = to_async(storage_channels_sync)
 public_channels = to_async(public_channels_sync)
+announcement_channels = to_async(announcement_channels_sync)
 
 
 def counts_by_purpose_sync() -> Dict[str, int]:
 	return {
 		purpose: TelegramChannel.objects.filter(purpose=purpose).count()
 		for purpose in PURPOSE_ORDER
+	}
+
+
+def counts_by_group_sync() -> Dict[str, int]:
+	"""Number of announcement channels per catalogue section."""
+	return {
+		key: TelegramChannel.objects.filter(purpose__in=purposes).count()
+		for key, _label, purposes in CHANNEL_GROUPS
 	}
 
 
@@ -235,6 +348,14 @@ async def test_channel(bot: Bot, channel: TelegramChannel) -> ChannelTestResult:
 			"Bot administrator va a'zolikni tekshira oladi."
 			if ok
 			else "Bot administrator emas: majburiy obunani tekshirib bo'lmaydi."
+		)
+	elif channel.purpose in ANNOUNCEMENT_PURPOSES:
+		# E'lon kanali: faqat post yuborish huquqi kerak.
+		ok = can_post or chat_type == "private"
+		message = (
+			"Bot bu kanalga e'lon joylay oladi."
+			if ok
+			else "Botda post yuborish huquqi yo'q. Administrator qilib tayinlang."
 		)
 	elif channel.purpose == TelegramChannel.Purpose.PUBLIC:
 		# A public channel is a mandatory-subscription channel too, so the bot

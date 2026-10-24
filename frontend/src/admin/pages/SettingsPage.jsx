@@ -6,6 +6,7 @@ import {
   Select,
   Stack,
   Switch,
+  Text,
   Textarea,
   Title,
 } from '@mantine/core'
@@ -14,14 +15,23 @@ import { adminChannelApi, adminSettingsApi } from '../api/adminApi'
 import { ErrorAlert, SectionHeading, SuccessAlert } from '../components/adminShared'
 import { formatError, inputHandler, numberHandler } from '../utils/formUtils'
 
+// Channels an announcement may be posted to (see TelegramChannel.Purpose).
+const ANNOUNCEMENT_PURPOSES = [
+  'anime_ongoing',
+  'anime_completed',
+  'anime_vip',
+  'movie',
+  'movie_vip',
+  'manga_ongoing',
+  'manga_completed',
+  'manga_vip',
+  'public',
+]
+
 const EMPTY = {
   require_subscription: true,
   auto_publish_new_content: false,
   publish_channel: null,
-  completed_channel: null,
-  ongoing_channel: null,
-  manga_channel: null,
-  manga_completed_channel: null,
   protect_content: true,
   maintenance_mode: false,
   welcome_text: '',
@@ -36,10 +46,6 @@ function toForm(data) {
     require_subscription: Boolean(data.require_subscription),
     auto_publish_new_content: Boolean(data.auto_publish_new_content),
     publish_channel: data.publish_channel ? Number(data.publish_channel) : null,
-    completed_channel: data.completed_channel ? Number(data.completed_channel) : null,
-    ongoing_channel: data.ongoing_channel ? Number(data.ongoing_channel) : null,
-    manga_channel: data.manga_channel ? Number(data.manga_channel) : null,
-    manga_completed_channel: data.manga_completed_channel ? Number(data.manga_completed_channel) : null,
     protect_content: Boolean(data.protect_content),
     maintenance_mode: Boolean(data.maintenance_mode),
     welcome_text: data.welcome_text || '',
@@ -79,11 +85,14 @@ export default function SettingsPage() {
 
   useEffect(() => {
     let active = true
-    // Announcements can only go to a channel marked "Ommaviy kanal".
+    // The fallback announcement channel is picked from the announcement
+    // channels (catalogue sections) and the general "Ommaviy kanal" ones.
     adminChannelApi
       .list()
       .then((items) => {
-        if (active) setChannels(items.filter((item) => item.purpose === 'public'))
+        if (active) {
+          setChannels(items.filter((item) => ANNOUNCEMENT_PURPOSES.includes(item.purpose)))
+        }
       })
       .catch(() => {
         if (active) setChannels([])
@@ -108,10 +117,6 @@ export default function SettingsPage() {
         require_subscription: form.require_subscription,
         auto_publish_new_content: form.auto_publish_new_content,
         publish_channel: form.publish_channel ?? null,
-        completed_channel: form.completed_channel ?? null,
-        ongoing_channel: form.ongoing_channel ?? null,
-        manga_channel: form.manga_channel ?? null,
-        manga_completed_channel: form.manga_completed_channel ?? null,
         protect_content: form.protect_content,
         maintenance_mode: form.maintenance_mode,
         welcome_text: form.welcome_text,
@@ -168,54 +173,10 @@ export default function SettingsPage() {
             clearable
             searchable
           />
-          <Select
-            label="Tugallangan medialar kanali"
-            description="Tugallangan anime, serial yoki kinolar (barcha qismlari yuklanganda) shu kanalga chiqadi."
-            placeholder="Asosiy kanalga yuboriladi"
-            data={channelOptions}
-            value={form.completed_channel === null ? null : String(form.completed_channel)}
-            onChange={(value) =>
-              setForm((prev) => ({ ...prev, completed_channel: value ? Number(value) : null }))
-            }
-            clearable
-            searchable
-          />
-          <Select
-            label="Ongoing medialar kanali"
-            description="Ongoing medialarga har bir yangi qism qo'shilganda shu kanalga chiqadi."
-            placeholder="Asosiy kanalga yuboriladi"
-            data={channelOptions}
-            value={form.ongoing_channel === null ? null : String(form.ongoing_channel)}
-            onChange={(value) =>
-              setForm((prev) => ({ ...prev, ongoing_channel: value ? Number(value) : null }))
-            }
-            clearable
-            searchable
-          />
-          <Select
-            label="Mangalar kanali (Ongoing)"
-            description="Mangalarga yangi bob qo'shilganda shu kanalga chiqadi."
-            placeholder="Ongoing / Asosiy kanalga yuboriladi"
-            data={channelOptions}
-            value={form.manga_channel === null ? null : String(form.manga_channel)}
-            onChange={(value) =>
-              setForm((prev) => ({ ...prev, manga_channel: value ? Number(value) : null }))
-            }
-            clearable
-            searchable
-          />
-          <Select
-            label="Tugallangan mangalar kanali"
-            description="Tugallangan mangalar (barcha boblari yuklanganda yoki tugallanganda) shu kanalga chiqadi."
-            placeholder="Mangalar / Tugallanganlar kanaliga yuboriladi"
-            data={channelOptions}
-            value={form.manga_completed_channel === null ? null : String(form.manga_completed_channel)}
-            onChange={(value) =>
-              setForm((prev) => ({ ...prev, manga_completed_channel: value ? Number(value) : null }))
-            }
-            clearable
-            searchable
-          />
+          <Text size="xs" c="dimmed">
+            Bo'limlar bo'yicha e'lon kanallari (Animelar / Kinolar / Mangalar · Ongoing,
+            Tugagan, VIP) «Kanallar» sahifasida sozlanadi.
+          </Text>
           <Switch
             label="Kontentni himoyalash (forward/cheklash)"
             checked={form.protect_content}

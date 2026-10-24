@@ -44,18 +44,16 @@ class AnnounceApiTestCase(TransactionTestCase):
 			chat_id=-1008880000001,
 			title="Ongoing e'lonlari",
 			username="ongoing_news",
-			purpose=TelegramChannel.Purpose.PUBLIC,
+			purpose=TelegramChannel.Purpose.ANIME_ONGOING,
 		)
 		self.completed_channel = TelegramChannel.objects.create(
 			chat_id=-1008880000002,
 			title="Tugallangan e'lonlari",
 			username="done_news",
-			purpose=TelegramChannel.Purpose.PUBLIC,
+			purpose=TelegramChannel.Purpose.ANIME_COMPLETED,
 		)
 		settings = BotSettings.get_solo()
 		settings.publish_channel = self.ongoing_channel
-		settings.ongoing_channel = self.ongoing_channel
-		settings.completed_channel = self.completed_channel
 		settings.save()
 
 		self.title = MediaTitle.objects.create(
@@ -203,12 +201,11 @@ class AnnounceSendTests(AnnounceApiTestCase):
 	def test_without_a_channel_the_single_target_request_fails_with_a_reason(self) -> None:
 		settings = BotSettings.get_solo()
 		settings.publish_channel = None
-		settings.ongoing_channel = None
-		settings.completed_channel = None
 		settings.save()
-		# Fallback: settings bo'sh bo'lsa DB'dagi public kanal ishlatiladi,
-		# shuning uchun "kanal yo'q" holatini sinashda ularni ham o'chiramiz.
-		TelegramChannel.objects.filter(purpose=TelegramChannel.Purpose.PUBLIC).delete()
+		# Fallback: bo'limga kanal qo'shilmagan bo'lsa asosiy e'lon kanali, keyin
+		# DB'dagi public kanal ishlatiladi, shuning uchun "kanal yo'q" holatini
+		# sinashda ularning hammasini o'chiramiz.
+		TelegramChannel.objects.all().delete()
 
 		with self.bot_patch():
 			response = self.client.post(
