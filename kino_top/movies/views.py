@@ -156,9 +156,7 @@ class MediaTitleViewSet(viewsets.ModelViewSet):
 		# Only slice for the list action; detail / custom actions need the full
 		# queryset so ``get_object`` can find the requested slug or pk.
 		if self.action == "list":
-			start = (int(page) - 1) * int(page_size)
-			end = start + int(page_size)
-			queryset = queryset.with_counts().distinct()[start:end]
+			queryset = queryset.with_counts().distinct()
 		if self.action == "retrieve":
 			queryset = queryset.prefetch_related("genres", "parts", "parts__telegram_media")
 		else:
