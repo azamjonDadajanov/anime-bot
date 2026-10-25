@@ -54,8 +54,8 @@ def announcement_text(
 	genres = genres or "—"
 	lines: List[str] = []
 	if part is None:
-		lines.append(f"🎬 <b>{escape_html(title.title)}</b>")
-		lines.append(f"🆔 Kod: <code>{title.code}</code>")
+		lines.append(f"🎬 {escape_html(title.title)}")
+		lines.append(f"🆔 Kod: {title.code}")
 		lines.append(f"📺 Turi: {title.get_type_display()}")
 		lines.append(f"🎭 Janr: {escape_html(genres)}")
 		lines.append(f"🌐 Til: {escape_html(title.language)}")
@@ -65,9 +65,9 @@ def announcement_text(
 			lines.append("")
 			lines.append(title.synopsis[:600])
 	else:
-		lines.append(f"🆕 <b>{escape_html(title.title)}</b>")
+		lines.append(f"🆕 {escape_html(title.title)}")
 		lines.append(f"🎞 {escape_html(part_label(part))}")
-		lines.append(f"🆔 Kod: <code>{title.code}</code>")
+		lines.append(f"🆔 Kod: {title.code}")
 	lines.append("")
 	lines.append("▶️ Tomosha qilish uchun pastdagi tugmani bosing.")
 	return "\n".join(lines)
@@ -480,9 +480,9 @@ def completed_announcement_text(title: MediaTitle, *, genres: str = "") -> str:
 	action_text = "Mutolaa qilish" if title.type == MediaTitle.MediaType.MANGA else "Ko'rish"
 
 	lines: List[str] = [
-		f"✅ <b>{escape_html(title.title)}</b> (Tugallandi)",
+		f"✅ {escape_html(title.title)} (Tugallandi)",
 		"",
-		f"🆔 Kod: <code>{title.code}</code>",
+		f"🆔 Kod: {title.code}",
 		f"{type_emoji} Turi: {title.get_type_display()}",
 		f"🎭 Janr: {escape_html(genres)}",
 		f"🌐 Til: {escape_html(title.language)}",
@@ -515,13 +515,13 @@ def ongoing_announcement_text(
 	range_label = parts_range_label(parts) if parts else ""
 
 	lines: List[str] = [
-		f"🆕 <b>{escape_html(title.title)}</b>",
+		f"🆕 {escape_html(title.title)}",
 	]
 	if range_label:
 		lines.append(f"🎞 {escape_html(range_label)}")
 	lines.extend([
 		"",
-		f"🆔 Kod: <code>{title.code}</code>",
+		f"🆔 Kod: {title.code}",
 		f"{type_emoji} Turi: {title.get_type_display()}",
 		f"🎭 Janr: {escape_html(genres)}",
 		f"🌐 Til: {escape_html(title.language)}",
