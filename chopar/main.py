@@ -24,6 +24,7 @@ volume'da (chopar-data) qoladi.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -222,25 +223,35 @@ async def run() -> None:
     await client.run_until_disconnected()
 
 
+async def start_and_close() -> None:
+    """Telethon'ning ``start``/``disconnect`` metodlari dual: senkron
+    kontekstda ``self`` qaytaradi, ishlayotgan loop ichida korutina.
+    Shuning uchun qaytgan qiymatni kutyapmiz.
+    """
+    # PHONE bo'sh bo'lsa, telefoni so'rab so'rang (Telethon'ning default
+    # lambda'si) — ``phone=None`` buni o'chirib qo'yadi va ValueError beradi.
+    kwargs = {"phone": PHONE} if PHONE else {}
+    result = client.start(**kwargs)
+    if inspect.isawaitable(result):
+        await result
+    result = client.disconnect()
+    if inspect.isawaitable(result):
+        await result
+
+
 def main() -> None:
     if COMMAND == "login":
         # Birinchi kirish: telefon, Telegram kod va (bo'lsa) 2FA parol so'raladi.
-        try:
-            client.loop.run_until_complete(client.start(phone=PHONE or None))
-        finally:
-            client.loop.run_until_complete(client.disconnect())
+        client.loop.run_until_complete(start_and_close())
         log.info("Session saqlandi: %s.session", SESSION_PATH)
         return
 
     try:
         client.loop.run_until_complete(run())
     finally:
-        if not client.is_connected():
-            return
-        try:
-            client.loop.run_until_complete(client.disconnect())
-        except Exception:  # noqa: BLE001 - yopishda xato muhim emas
-            pass
+        # Bu yerda loop to'xtagan — disconnect senkron chaqiriladi.
+        if client.is_connected():
+            client.disconnect()
 
 
 if __name__ == "__main__":
