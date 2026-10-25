@@ -185,7 +185,13 @@ async def process_and_send(msg) -> bool:
 
 async def copy_range(min_id: int = 0, limit: int | None = None) -> None:
     """min_id dan keyingi (yoki oxirgi limit ta) xabarlarni eskidan yangiga
-    tartibda ko'chiradi va har biridan keyin progressni saqlaydi."""
+    tartibda ko'chiradi va har biridan keyin progressni saqlaydi.
+
+    Xabar ko'chirilmasa (FloodWait/RPC xato) u bosqich ichida qayta
+    uriniladi; natija bo'lmasa backfill to'xtaydi — progress faqat
+    muvaffaqiyatli xabargacha yozilgani uchun qayta ishga tushirish
+    o'sha joydan davom etadi.
+    """
     if min_id:
         iterator = client.iter_messages(source_entity, min_id=min_id, reverse=True)
         messages = [msg async for msg in iterator]
@@ -198,9 +204,19 @@ async def copy_range(min_id: int = 0, limit: int | None = None) -> None:
     total = len(messages)
     log.info("Ko'chiriladigan xabarlar: %s ta", total)
     for index, msg in enumerate(messages, start=1):
-        ok = await process_and_send(msg)
-        if ok:
-            save_progress(msg.id)
+        for attempt in range(3):
+            ok = await process_and_send(msg)
+            if ok:
+                break
+            await asyncio.sleep(min(DELAY * (attempt + 1) * 5, 60))
+        if not ok:
+            log.error(
+                "Xabar %s ko'chirilmadi — backfill to'xtatildi. "
+                "Qayta ishga tushirish shu joydan davom etadi.",
+                msg.id,
+            )
+            return
+        save_progress(msg.id)
         log.info("  %s/%s", index, total)
         await asyncio.sleep(DELAY)
 
@@ -276,8 +292,17 @@ async def run() -> None:
     @client.on(events.NewMessage(chats=source_entity))
     async def handler(event):
         log.info("[YANGI XABAR] ID %s", event.message.id)
-        if await process_and_send(event.message):
-            save_progress(event.message.id)
+        for attempt in range(3):
+            if await process_and_send(event.message):
+                save_progress(event.message.id)
+                break
+            await asyncio.sleep(min(DELAY * (attempt + 1) * 5, 60))
+        else:
+            log.error(
+                "Yangi xabar %s ko'chirilmadi — qayta ishga tushirilganda "
+                "orqadagi xabarlar bilan birga qayta uriniladi.",
+                event.message.id,
+            )
         await asyncio.sleep(DELAY)
 
     await client.run_until_disconnected()
