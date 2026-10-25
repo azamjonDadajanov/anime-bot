@@ -29,6 +29,7 @@ from typing import List, Optional, Sequence, Tuple
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.enums import ParseMode
 from movies.models import MediaPart, MediaTitle
 
 from ..utils import chunked, deep_link, escape_html, to_async
@@ -155,6 +156,7 @@ async def _send_message(
 				photo=cover,
 				caption=caption,
 				reply_markup=keyboard,
+				parse_mode=ParseMode.HTML
 			)
 		else:
 			message = await bot.send_message(
@@ -298,6 +300,7 @@ async def send_announcement(
 			keyboard=keyboard,
 			cover=cover,
 			channel=channel,
+			
 		)
 		result.channel_message_id = message_id
 		result.channel_error = error
