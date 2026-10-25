@@ -18,48 +18,57 @@ from typing import Optional, Tuple
 from asgiref.sync import async_to_sync
 from django.conf import settings
 
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+
 logger = logging.getLogger(__name__)
 
 
 def _bot_token() -> str:
-	return getattr(settings, "BOT_TOKEN", "") or getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    return getattr(settings, "BOT_TOKEN", "") or getattr(settings, "TELEGRAM_BOT_TOKEN", "")
 
 
 def auto_publish_enabled() -> bool:
-	"""Whether the panel's single ``Avtomatik e'lon`` switch is on."""
-	try:
-		from bot.services.bot_settings import get_settings_sync
+    """Whether the panel's single ``Avtomatik e'lon`` switch is on."""
+    try:
+        from bot.services.bot_settings import get_settings_sync
 
-		return bool(get_settings_sync().auto_publish_new_content)
-	except Exception:  # noqa: BLE001 - a broken settings row must not break a save
-		logger.exception("Could not read the auto-publish switch.")
-		return False
+        return bool(get_settings_sync().auto_publish_new_content)
+    except Exception:  # noqa: BLE001 - a broken settings row must not break a save
+        logger.exception("Could not read the auto-publish switch.")
+        return False
+
+
+def _build_bot() -> Bot:
+    token = _bot_token()
+    return Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
 async def _publish(title_id: int, part_id: Optional[int]) -> Tuple[Optional[int], Optional[str]]:
-	from aiogram import Bot
+    from bot.services.publishing import publish_title
+    from movies.models import MediaPart, MediaTitle
 
-	from bot.services.publishing import publish_title
-	from movies.models import MediaPart, MediaTitle
+    token = _bot_token()
+    if not token:
+        return None, "BOT_TOKEN sozlanmagan, shuning uchun kanalga joylab bo'lmadi."
 
-	token = _bot_token()
-	if not token:
-		return None, "BOT_TOKEN sozlanmagan, shuning uchun kanalga joylab bo'lmadi."
+    title = await MediaTitle.objects.aget(pk=title_id)
+    part = await MediaPart.objects.aget(pk=part_id) if part_id else None
+    bot = _build_bot()
+    try:
+        message_id = await publish_title(bot, title, part=part)
+    finally:
+        await bot.session.close()
 
-	title = await MediaTitle.objects.aget(pk=title_id)
-	part = await MediaPart.objects.aget(pk=part_id) if part_id else None
-	bot = Bot(token=token)
-	try:
-		message_id = await publish_title(bot, title, part=part)
-	finally:
-		await bot.session.close()
-
-	if message_id is None:
-		return None, (
-			"Kanal tanlanmagan yoki Telegram e'lonni rad etdi. "
-			"«Kanallar» bo'limida shu turdagi kanalni qo'shing."
-		)
-	return message_id, None
+    if message_id is None:
+        return None, (
+            "Kanal tanlanmagan yoki Telegram e'lonni rad etdi. "
+            "«Kanallar» bo'limida shu turdagi kanalni qo'shing."
+        )
+    return message_id, None
 
 
 def publish_title_to_channel(
@@ -97,25 +106,23 @@ def auto_publish_part(title_id: int, part_id: int) -> Optional[int]:
 
 
 async def _publish_completed(title_id: int) -> Tuple[Optional[int], Optional[str]]:
-	from aiogram import Bot
+    from bot.services.publishing import publish_completed_title
+    from movies.models import MediaTitle
 
-	from bot.services.publishing import publish_completed_title
-	from movies.models import MediaTitle
+    token = _bot_token()
+    if not token:
+        return None, "BOT_TOKEN sozlanmagan, shuning uchun kanalga joylab bo'lmadi."
 
-	token = _bot_token()
-	if not token:
-		return None, "BOT_TOKEN sozlanmagan, shuning uchun kanalga joylab bo'lmadi."
+    title = await MediaTitle.objects.aget(pk=title_id)
+    bot = _build_bot()
+    try:
+        message_id = await publish_completed_title(bot, title)
+    finally:
+        await bot.session.close()
 
-	title = await MediaTitle.objects.aget(pk=title_id)
-	bot = Bot(token=token)
-	try:
-		message_id = await publish_completed_title(bot, title)
-	finally:
-		await bot.session.close()
-
-	if message_id is None:
-		return None, "Kanal tanlanmagan yoki Telegram e'lonni rad etdi."
-	return message_id, None
+    if message_id is None:
+        return None, "Kanal tanlanmagan yoki Telegram e'lonni rad etti."
+    return message_id, None
 
 
 def auto_publish_completed(title_id: int) -> Optional[int]:

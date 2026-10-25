@@ -14,36 +14,45 @@ from typing import Optional, Tuple
 from asgiref.sync import async_to_sync
 from django.conf import settings
 
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+
 logger = logging.getLogger(__name__)
 
 
 def _bot_token() -> str:
-	return getattr(settings, "BOT_TOKEN", "") or getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+    return getattr(settings, "BOT_TOKEN", "") or getattr(settings, "TELEGRAM_BOT_TOKEN", "")
+
+
+def _build_bot() -> Bot:
+    token = _bot_token()
+    return Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
 
 
 async def _publish(coupon_id: int) -> Tuple[Optional[int], Optional[str]]:
-	from aiogram import Bot
+    from bot.services.publishing import publish_coupon
+    from users.models import Coupon
 
-	from bot.services.publishing import publish_coupon
-	from users.models import Coupon
+    token = _bot_token()
+    if not token:
+        return None, "BOT_TOKEN sozlanmagan, shuning uchun kanalga joylab bo'lmadi."
 
-	token = _bot_token()
-	if not token:
-		return None, "BOT_TOKEN sozlanmagan, shuning uchun kanalga joylab bo'lmadi."
+    coupon = await Coupon.objects.select_related("posted_channel").aget(pk=coupon_id)
+    bot = _build_bot()
+    try:
+        message_id = await publish_coupon(bot, coupon)
+    finally:
+        await bot.session.close()
 
-	coupon = await Coupon.objects.select_related("posted_channel").aget(pk=coupon_id)
-	bot = Bot(token=token)
-	try:
-		message_id = await publish_coupon(bot, coupon)
-	finally:
-		await bot.session.close()
-
-	if message_id is None:
-		return None, (
-			"Kanal tanlanmagan yoki Telegram e'lonni rad etdi. "
-			"Sozlamalarda \"E'lon kanali\"ni belgilang."
-		)
-	return message_id, None
+    if message_id is None:
+        return None, (
+            "Kanal tanlanmagan yoki Telegram e'lonni rad etdi. "
+            "Sozlamalarda \"E'lon kanali\"ni belgilang."
+        )
+    return message_id, None
 
 
 def publish_coupon_to_channel(coupon_id: int) -> Tuple[Optional[int], Optional[str]]:

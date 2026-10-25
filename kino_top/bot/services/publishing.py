@@ -6,6 +6,7 @@ import logging
 from typing import List, Optional, Sequence
 
 from aiogram import Bot
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -270,7 +271,7 @@ async def _send_to_channel(
 				photo=cover,
 				caption=caption,
 				reply_markup=keyboard,
-				parse_mode='HTML'
+				parse_mode=ParseMode.HTML,
 			)
 		else:
 			message = await bot.send_message(
@@ -278,7 +279,7 @@ async def _send_to_channel(
 				text=caption,
 				reply_markup=keyboard,
 				disable_web_page_preview=True,
-				parse_mode='HTML'
+				parse_mode=ParseMode.HTML,
 			)
 		return message.message_id
 	except (TelegramBadRequest, TelegramForbiddenError) as exc:
