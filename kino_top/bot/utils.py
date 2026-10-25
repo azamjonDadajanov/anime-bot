@@ -103,7 +103,7 @@ def chunked(iterable: Iterable[T], size: int) -> Iterator[List[T]]:
 
 
 def escape_html(text: Any) -> str:
-	return html.escape(str(text or ""))
+	return str(text or "")
 
 
 def truncate(text: Any, limit: int = 100) -> str:
