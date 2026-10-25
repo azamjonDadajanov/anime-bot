@@ -20,6 +20,7 @@ from django.conf import settings
 
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram import Bot
 
 logger = logging.getLogger(__name__)
 

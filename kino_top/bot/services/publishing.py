@@ -63,7 +63,7 @@ def announcement_text(
 		lines.append(f"📊 Holat: {title.get_status_display()}")
 		if title.synopsis:
 			lines.append("")
-			lines.append(escape_html(title.synopsis)[:600])
+			lines.append(title.synopsis[:600])
 	else:
 		lines.append(f"🆕 <b>{escape_html(title.title)}</b>")
 		lines.append(f"🎞 {escape_html(part_label(part))}")
