@@ -28,6 +28,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -72,13 +73,29 @@ def require(name: str) -> str:
     return value
 
 
+def parse_chat(value: str) -> int | str:
+    """"-1003514954083" kabi raqamli manzilni butun songa aylantiradi.
+
+    Telethon string ko'rinishidagi raqamni telefon raqami deb tushunib,
+    GetContacts so'rovini yuboradi — bu esa FloodWait olib keladi.
+    """
+    text = value.strip()
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    return text
+
+
 load_dotenv()
 
 API_ID = int(require("CHOPAR_API_ID"))
 API_HASH = require("CHOPAR_API_HASH")
 PHONE = env("CHOPAR_PHONE", "")
-SOURCE = require("CHOPAR_SOURCE_CHAT")
-TARGET = require("CHOPAR_TARGET_CHAT")
+SOURCE = parse_chat(require("CHOPAR_SOURCE_CHAT"))
+TARGET = parse_chat(require("CHOPAR_TARGET_CHAT"))
+
+# Dialoglardan topilgan to'liq entity'lar (run() boshida to'ldiriladi).
+source_entity = None
+target_entity = None
 SESSION_PATH = Path(
     env("CHOPAR_SESSION_PATH", str(Path(__file__).resolve().parent / "data" / "chopar"))
 )
@@ -135,15 +152,15 @@ async def process_and_send(msg) -> bool:
             file_path = await client.download_media(msg, file=tmp_dir)
             if file_path:
                 await client.send_file(
-                    TARGET,
+                    target_entity,
                     file=file_path,
                     caption=msg.text or "",
                 )
             elif msg.text:
                 # Yuklab bo'lmadigan media (masalan interaktiv tugma) — matnni ko'chiramiz.
-                await client.send_message(TARGET, message=msg.text)
+                await client.send_message(target_entity, message=msg.text)
         elif msg.text:
-            await client.send_message(TARGET, message=msg.text)
+            await client.send_message(target_entity, message=msg.text)
 
         log.info("[OK] ID %s ko'chirildi", msg.id)
         return True
@@ -170,10 +187,12 @@ async def copy_range(min_id: int = 0, limit: int | None = None) -> None:
     """min_id dan keyingi (yoki oxirgi limit ta) xabarlarni eskidan yangiga
     tartibda ko'chiradi va har biridan keyin progressni saqlaydi."""
     if min_id:
-        iterator = client.iter_messages(SOURCE, min_id=min_id, reverse=True)
+        iterator = client.iter_messages(source_entity, min_id=min_id, reverse=True)
         messages = [msg async for msg in iterator]
     else:
-        collected = [msg async for msg in client.iter_messages(SOURCE, limit=limit)]
+        collected = [
+            msg async for msg in client.iter_messages(source_entity, limit=limit)
+        ]
         messages = list(reversed(collected))
 
     total = len(messages)
@@ -186,6 +205,40 @@ async def copy_range(min_id: int = 0, limit: int | None = None) -> None:
         await asyncio.sleep(DELAY)
 
 
+async def resolve_entity(ref: int | str, role: str):
+    """Manba/maqsad kanalni dialoglar ro'yxatidan topadi.
+
+    Raqamli ID keshda ham, dialogda ham bo'lishi shart; Telethon'ning
+    ``get_input_entity`` funksiyasi manzilni keshsiz topa olmaydi.
+    """
+    if isinstance(ref, str):
+        # @username yoki invite-link — to'g'ridan-to'g'ri so'rov bilan olamiz.
+        return await client.get_entity(ref)
+    async for dialog in client.iter_dialogs():
+        if dialog.id == ref:
+            return dialog.entity
+    log.error(
+        "%s kanal topilmadi (ID %s): akkaunt bu kanalga a'zo emas "
+        "yoki ID noto'g'ri.",
+        role,
+        ref,
+    )
+    sys.exit(1)
+
+
+async def resolve_targets() -> None:
+    """Manba va maqsad entity'larini topadi; FloodWait bo'lsa kutadi."""
+    global source_entity, target_entity
+    while True:
+        try:
+            source_entity = await resolve_entity(SOURCE, "Manba")
+            target_entity = await resolve_entity(TARGET, "Maqsad")
+            return
+        except FloodWaitError as exc:
+            log.warning("Telegram cheklovi: %s soniya kutyapiz...", exc.seconds)
+            await asyncio.sleep(exc.seconds + 5)
+
+
 async def run() -> None:
     await client.connect()
     if not await client.is_user_authorized():
@@ -196,6 +249,13 @@ async def run() -> None:
         sys.exit(1)
     me = await client.get_me()
     log.info("Telegram ulandi: %s", me.username or me.phone)
+
+    await resolve_targets()
+    log.info(
+        "Kanallar topildi: manba ID %s → maqsad ID %s",
+        getattr(source_entity, "id", SOURCE),
+        getattr(target_entity, "id", TARGET),
+    )
 
     progress = load_progress()
     last_id = int(progress.get("last_id") or 0)
@@ -213,7 +273,7 @@ async def run() -> None:
 
     log.info("Backfill tugadi. Endi yangi xabarlar kuzatilmoqda...")
 
-    @client.on(events.NewMessage(chats=SOURCE))
+    @client.on(events.NewMessage(chats=source_entity))
     async def handler(event):
         log.info("[YANGI XABAR] ID %s", event.message.id)
         if await process_and_send(event.message):
