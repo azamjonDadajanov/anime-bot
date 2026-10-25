@@ -530,7 +530,7 @@ def ongoing_announcement_text(
 	])
 	if title.synopsis:
 		lines.append("")
-		lines.append(escape_html(title.synopsis)[:300])
+		lines.append(title.synopsis[:300])
 	lines.append("")
 	lines.append("▶️ Tomosha qilish uchun pastdagi tugmani bosing.")
 	return "\n".join(lines)
