@@ -494,7 +494,7 @@ def completed_announcement_text(title: MediaTitle, *, genres: str = "") -> str:
 		lines.append(f"🔢 Jami: {title.episode_count} {unit}")
 	if title.synopsis:
 		lines.append("")
-		lines.append(escape_html(title.synopsis)[:300])
+		lines.append(title.synopsis[:300])
 	lines.append("")
 	lines.append("▶️ Tomosha qilish uchun pastdagi tugmani bosing.")
 	return "\n".join(lines)
