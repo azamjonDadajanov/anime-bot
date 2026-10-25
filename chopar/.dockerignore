@@ -1,0 +1,4 @@
+# Local secrets — never commit. Same names are used on the production server.
+__pycache__/
+*.session
+data/

@@ -10,6 +10,10 @@
 # Local dev artifacts that may contain real tokens or session state.
 # Never commit these — regenerate them locally instead.
 .sisyphus/
+# Telethon authorization session (chopar) — created by `python main.py login`.
+*.session
+*.session-journal
+chopar/data/
 frontend/public/dev-session.json
 frontend/public/*.local
 

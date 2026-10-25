@@ -71,6 +71,19 @@ services:
       web:
         condition: service_healthy
 
+  # Chopar — yopiq manba kanalidan medialarni o'z kanaliga ko'chiruvchi
+  # Telethon skripti. Barcha sozlamalar .env dagi CHOPAR_* kalitlarida.
+  # Birinchi marta session yozish uchun:
+  #   docker compose run --rm chopar python main.py login
+  chopar:
+    build: ./chopar
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      CHOPAR_SESSION_PATH: /app/data/chopar
+    volumes:
+      - chopar-data:/app/data
+
   nginx:
     build:
       context: ./frontend
@@ -110,3 +123,4 @@ volumes:
   pgdata:
   static:
   media:
+  chopar-data:

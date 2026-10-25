@@ -196,6 +196,32 @@ curl -s  https://api.anichopar.uz/api/schema/ | head -c 200
 # bilan yana origin:80 ga kelardi) — endi 200 bo'lishi shart
 ```
 
+## 6. Chopar — yopiq kanaldan media ko'chirish
+
+`chopar/` xizmati Telethon (MTProto, bot emas — **foydalanuvchi** hisobi)
+orqali yopiq manba kanaldagi xabarlarni yuklab olib, o'z kanaliga
+ko'chiradi: birinchi ishda oxirgi `CHOPAR_BACKFILL_LIMIT` (150) ta xabar,
+keyin yangi xabarlar real vaqtda. Qayta ishga tushganda allaqachon
+ko'chirilganlar takrorlanmaydi — oxirgi ID `chopar-data` volume'idagi
+`progress.json` da saqlanadi.
+
+Sozlamalar `.env` dagi `CHOPAR_*` kalitlarida (`api_id`, `api_hash`,
+`source_chat`, `target_chat`, `phone`, `backfill_limit`, `delay`).
+
+**Birinchi marta session yozish** (interaktiv: telefon, kod, 2FA parol):
+
+```bash
+docker compose run --rm --interactive chopar python main.py login
+```
+
+Session `chopar-data` volume'idа qoladi, shuning uchun keyingi restart'larda
+qayta login kerak bo'lmaydi.
+
+```bash
+docker compose up -d --build chopar   # ishga tushirish
+docker compose logs -f chopar          # ko'chirish jarayoni
+```
+
 ## Eslatmalar
 
 - `bot` xizmatini hech qachon bir nechta replikada ishga tushirmang
