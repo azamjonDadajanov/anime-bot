@@ -495,7 +495,7 @@ def completed_announcement_text(title: MediaTitle, *, genres: str = "") -> str:
 		lines.append("")
 		lines.append(escape_html(title.synopsis)[:300])
 	lines.append("")
-	lines.append(f"▶️ {action_text} uchun pastdagi tugmani bosing.")
+	lines.append("▶️ Tomosha qilish uchun pastdagi tugmani bosing.")
 	return "\n".join(lines)
 
 
@@ -531,7 +531,7 @@ def ongoing_announcement_text(
 		lines.append("")
 		lines.append(escape_html(title.synopsis)[:300])
 	lines.append("")
-	lines.append(f"▶️ {action_text} uchun pastdagi tugmani bosing.")
+	lines.append("▶️ Tomosha qilish uchun pastdagi tugmani bosing.")
 	return "\n".join(lines)
 
 
