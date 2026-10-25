@@ -270,6 +270,7 @@ async def _send_to_channel(
 				photo=cover,
 				caption=caption,
 				reply_markup=keyboard,
+				parse_mode='HTML'
 			)
 		else:
 			message = await bot.send_message(
@@ -277,6 +278,7 @@ async def _send_to_channel(
 				text=caption,
 				reply_markup=keyboard,
 				disable_web_page_preview=True,
+				parse_mode='HTML'
 			)
 		return message.message_id
 	except (TelegramBadRequest, TelegramForbiddenError) as exc:
