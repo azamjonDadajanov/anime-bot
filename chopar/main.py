@@ -32,6 +32,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+import shutil
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, RPCError
@@ -155,6 +156,7 @@ async def process_and_send(msg) -> bool:
                     target_entity,
                     file=file_path,
                     caption=msg.text or "",
+                    supports_streaming=True
                 )
             elif msg.text:
                 # Yuklab bo'lmadigan media (masalan interaktiv tugma) — matnni ko'chiramiz.
@@ -172,15 +174,10 @@ async def process_and_send(msg) -> bool:
         log.error("[XATO] ID %s yuborilmadi: %s", msg.id, exc)
         return False
     finally:
-        if file_path:
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
-        try:
-            Path(tmp_dir).rmdir()
-        except OSError:
-            pass
+        # Yaratilgan vaqtinchalik papkani va faylni to'liq o'chirish
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        
 
 
 async def copy_range(min_id: int = 0, limit: int | None = None) -> None:
