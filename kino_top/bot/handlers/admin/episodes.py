@@ -29,6 +29,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from ... import callbacks as cb
 from ...bot_logging import record_event
 from ...config import page_size
+from movies.models import MediaPart, MediaTitle
 from ...keyboards.admin import (
 	EPISODE_CANCEL_LABEL,
 	EPISODE_SAVE_LABEL,
@@ -88,12 +89,23 @@ def part_scope_label(season: Optional[int], number: int) -> str:
 	return f"{season}-mavsum · {number}-" if season else f"{number}-"
 
 
-def extract_media_entry(message: Message, fallback_channel_id: Optional[int]) -> Optional[Dict[str, Any]]:
+def extract_media_entry(
+	message: Message,
+	fallback_channel_id: Optional[int],
+	title: Optional[MediaTitle] = None,
+	season_number: Optional[int] = None,
+	part_number: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
 	"""Turn an uploaded or forwarded message into a storable file entry."""
 	forward_chat = getattr(message, "forward_from_chat", None)
 	source_channel_id = getattr(forward_chat, "id", None) or fallback_channel_id
 	source_message_id = getattr(message, "forward_from_message_id", None)
 	caption = (message.caption or "")[:1024]
+
+	if title and season_number is not None and part_number is not None:
+		season_part = f"{season_number}-{part_number}"
+		vip_line = "Yana ko'proq animelar va imkoniyatlarga ega bo'lmoqchi bo'lsangiz VIPga obuna bo'ling"
+		caption = f"{title.title}\n{season_part}\n\n{vip_line}"
 
 	if message.video:
 		return {
@@ -219,16 +231,25 @@ async def choose_channel(callback: CallbackQuery, state: FSMContext) -> None:
 @router.message(AdminEpisodeStates.media, F.video | F.photo | F.document)
 async def store_media(message: Message, state: FSMContext, bot) -> None:
 	"""Copy the message to the Cloud channel and store it as a new part."""
+	from ...services.media import part_label
 	data = await state.get_data()
 	episode = dict(data.get("episode") or {})
 	title = await get_title_by_pk(episode.get("title_id"))
 	channel = await get_channel(episode.get("channel_id")) if episode.get("channel_id") else None
+	season_number = episode.get("season")
 	if title is None or channel is None:
 		await state.clear()
 		await message.answer(ADMIN_INVALID_INPUT, reply_markup=ReplyKeyboardRemove())
 		return
 
-	entry = extract_media_entry(message, channel.chat_id)
+	taken = await to_async(MediaPart.objects.filter(content=title, season_number=season_number).values_list)(
+		"number", flat=True
+	)
+	part_number = len(taken) + 1
+	while part_number in taken:
+		part_number += 1
+
+	entry = extract_media_entry(message, channel.chat_id, title=title, season_number=season_number, part_number=part_number)
 	if entry is None:
 		await message.answer(ADMIN_INVALID_INPUT, reply_markup=episode_upload_reply_keyboard())
 		return
