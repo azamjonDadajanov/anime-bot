@@ -242,9 +242,11 @@ async def store_media(message: Message, state: FSMContext, bot) -> None:
 		await message.answer(ADMIN_INVALID_INPUT, reply_markup=ReplyKeyboardRemove())
 		return
 
-	taken = await to_async(MediaPart.objects.filter(content=title, season_number=season_number).values_list)(
-		"number", flat=True
-	)
+	taken = await to_async(lambda: list(
+		MediaPart.objects.filter(content=title, season_number=season_number).values_list(
+			"number", flat=True
+		)
+	))()
 	part_number = len(taken) + 1
 	while part_number in taken:
 		part_number += 1
