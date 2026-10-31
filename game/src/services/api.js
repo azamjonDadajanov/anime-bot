@@ -1,8 +1,21 @@
 /**
  * Django Backend REST API Client & Auth
+ * API manzili: https://api.anichopar.uz/api/game/...
  */
 
-const API_BASE = '/api/game';
+const getApiBase = () => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl) {
+    const clean = envUrl.replace(/\/+$/, '');
+    return `${clean}/game`;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('anichopar.uz')) {
+    return 'https://api.anichopar.uz/api/game';
+  }
+  return '/api/game';
+};
+
+const API_BASE = getApiBase();
 
 export function getStoredUser() {
   try {

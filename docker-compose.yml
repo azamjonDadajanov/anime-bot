@@ -89,7 +89,7 @@ services:
     build:
       context: ./game
       args:
-        VITE_API_BASE_URL: "//api.anichopar.uz/api"
+        VITE_API_BASE_URL: "https://api.anichopar.uz/api"
     restart: unless-stopped
     expose:
       - "80"

@@ -11,7 +11,7 @@ RUN npm ci --prefer-offline
 COPY . .
 
 # Production build (VITE_API_BASE_URL points to the Django API)
-ARG VITE_API_BASE_URL=//api.anichopar.uz/api
+ARG VITE_API_BASE_URL=https://api.anichopar.uz/api
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 RUN npm run build
