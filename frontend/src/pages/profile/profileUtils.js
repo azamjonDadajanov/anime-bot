@@ -1,4 +1,4 @@
-export const TELEGRAM_BOT_URL = 'https://t.me/adgfdsfbot'
+export const TELEGRAM_BOT_URL = 'https://t.me/anichoparbot'
 
 export const MEDIA_TYPE_LABELS = {
   movie: 'Kino',
