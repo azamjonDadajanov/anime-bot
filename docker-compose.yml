@@ -84,6 +84,21 @@ services:
     volumes:
       - chopar-data:/app/data
 
+  # game.anichopar.uz — Artifact Hunter Mini App (Three.js + React)
+  game:
+    build:
+      context: ./game
+      args:
+        VITE_API_BASE_URL: "//api.anichopar.uz/api"
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   nginx:
     build:
       context: ./frontend
@@ -100,18 +115,15 @@ services:
       - static:/var/www/static:ro
       - media:/var/www/media:ro
       # TLS material, copied there by root from /etc/letsencrypt (the host's
-      # certbot output). nginx runs its master as root, so the root-owned key is
-      # readable here. The snap-packaged docker daemon cannot bind-mount a fresh
-      # /etc/letsencrypt — it resolves to an empty directory — which is why the
-      # certificate is a copy: the renewal deploy hook refreshes it on every
-      # renew and reloads this container. No ./certs yet? Create the certificate
-      # first, otherwise the container refuses to start (intended failure).
+      # certbot output).
       - ./certs:/etc/nginx/certs:ro
       # http-01 webroot: certbot on the host writes the token, nginx serves it
       # (location /.well-known/acme-challenge/ in frontend/nginx.conf).
       - ./certbot-www:/var/www/certbot:ro
     depends_on:
       web:
+        condition: service_healthy
+      game:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1/healthz"]

@@ -228,6 +228,12 @@ def manga_url(slug: str, number: Optional[int] = None) -> str:
 	return url
 
 
+def artifact_game_url() -> str:
+	"""Public HTTPS URL of the 3D Artifact Hunter Telegram Mini App."""
+	raw = _setting("BOT_GAME_URL", "GAME_URL", default="https://game.anichopar.uz")
+	return str(raw or "https://game.anichopar.uz").strip()
+
+
 def game_url() -> str:
 	"""Deep link to the website rating game (empty without a site URL)."""
 	base = site_url()

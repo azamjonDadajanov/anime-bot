@@ -37,7 +37,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from movies.ai_assistant import user_can_use
 
 from .. import callbacks as cb
-from ..config import game_url, webapp_url
+from ..config import artifact_game_url, game_url, webapp_url
 from ..utils import chunked, truncate
 from .common import btn, keyboard, pagination_row
 
@@ -110,9 +110,9 @@ def main_menu(is_admin: bool = False, profile=None) -> InlineKeyboardMarkup:
 	rows.append([btn("ℹ️ Yordam", cb.HELP), btn("✉️ Adminga xabar", cb.SUPPORT)])
 	# The rating table is public and lives right in the bot; playing the game
 	# itself opens the website, so that half only appears with a site URL.
-	game = game_url()
-	if game:
-		rows.insert(3, [btn("🎮 O'yin o'ynash", url=game), btn("🏆 Reyting", cb.RATING)])
+	g_url = artifact_game_url()
+	if g_url:
+		rows.insert(3, [btn("🎮 O'yin o'ynash", web_app=g_url), btn("🏆 Reyting", cb.RATING)])
 	else:
 		rows.insert(4, [btn("🏆 Reyting", cb.RATING)])
 	# The Mini App's Telegram-native screen covers sign-in and sign-up.
@@ -581,11 +581,16 @@ def referral_keyboard(*, invited: int, claimed, link: str) -> InlineKeyboardMark
 
 
 def profile_keyboard() -> InlineKeyboardMarkup:
-	return keyboard(
+	g_url = artifact_game_url()
+	rows = []
+	if g_url:
+		rows.append([btn("🎮 O'yin o'ynash", web_app=g_url)])
+	rows.extend([
 		[btn("🎫 Obuna", cb.SUBSCRIPTION)],
 		[btn("💖 Sevimlilar", f"{cb.FAVORITES}:1")],
 		[btn("🏠 Asosiy menyu", cb.MENU)],
-	)
+	])
+	return keyboard(*rows)
 
 
 def subscription_keyboard(
