@@ -25,7 +25,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-env/
 
 # Local database, collected static files and user uploads (manga PDFs,
 # subscription screenshots). Production keeps these in PostgreSQL and volumes.
@@ -47,7 +46,7 @@ htmlcov/
 .coverage.*
 
 # ---------------------------------------------------------------------------
-# Node / Vite (React SPA)
+# Node / Vite (React SPA + Game)
 # ---------------------------------------------------------------------------
 node_modules/
 dist/
@@ -58,6 +57,15 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 coverage/
+
+# Game (Three.js mini app) — build artifacts
+game/dist/
+game/node_modules/
+game/.env*.local
+
+# Frontend SPA — build artifacts
+frontend/dist/
+frontend/node_modules/
 
 # ---------------------------------------------------------------------------
 # Editors and OS

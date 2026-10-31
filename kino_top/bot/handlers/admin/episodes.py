@@ -103,9 +103,14 @@ def extract_media_entry(
 	caption = (message.caption or "")[:1024]
 
 	if title and season_number is not None and part_number is not None:
+		# The Cloud message carries only what it stores: the title and the
+		# season/episode marker the listener can still parse. The VIP promo that
+		# used to follow belonged to nobody — it travelled with the file into the
+		# Cloud channel and, because deliveries reused the stored caption, into
+		# private chats as well (the user-facing text is now built by
+		# ``bot.services.media.delivery_caption``).
 		season_part = f"{season_number}-{part_number}"
-		vip_line = "Yana ko'proq animelar va imkoniyatlarga ega bo'lmoqchi bo'lsangiz VIPga obuna bo'ling"
-		caption = f"{title.title}\n{season_part}\n\n{vip_line}"
+		caption = f"{title.title}\n{season_part}"
 
 	if message.video:
 		return {

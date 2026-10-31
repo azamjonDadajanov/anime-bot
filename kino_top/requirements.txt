@@ -13,3 +13,7 @@ gunicorn>=23.0,<24.0
 Pillow>=11.0,<14.0
 # Server-side PDF rendering: chapter pages are served as images, never as PDF.
 pypdfium2>=4.45,<6.0
+# Respan Gateway: the in-process LLM router behind AI provider rows of kind
+# "gateway" (movies.gateway). Pinned: the wheel embeds the gateway itself, and
+# its routing/plugin behaviour changes between releases.
+respan-gateway==0.3.0

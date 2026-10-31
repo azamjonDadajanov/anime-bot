@@ -23,8 +23,13 @@ from movies.covers import content_file as new_cover_file
 from movies.models import Genre, MediaPart, MediaTitle, MediaView, TelegramChannel, TelegramMedia
 
 from ..config import manga_url
-from ..texts import PDF_READER_HINT, WATCH_PARTS_HINT
-from ..utils import to_async
+from ..texts import (
+	DELIVERY_CAPTION,
+	DELIVERY_CAPTION_SEASON,
+	PDF_READER_HINT,
+	WATCH_PARTS_HINT,
+)
+from ..utils import escape_html, to_async
 
 logger = logging.getLogger(__name__)
 
@@ -771,6 +776,38 @@ async def send_parts_keyboard(
 	)
 
 
+def delivery_caption_sync(part: MediaPart) -> str:
+	"""The caption of a file sent to a user — never the Cloud channel's own text.
+
+	``TelegramMedia.caption`` is whatever the Cloud message happened to carry
+	(the admin's upload note, the ``code: 1234`` parser hint, the old VIP promo
+	line), so it never reaches a private chat. The user gets three lines::
+
+	    🎬 <b>Naruto</b>
+	    🎞 5/12
+	    📺 2-fasl
+
+	The season line is omitted for a part that has no season. ``total`` follows
+	the announcement rule (``episode_count`` first, the stored parts otherwise)
+	so «5/12» means the same thing in a channel post and in a delivery.
+	"""
+	title = part.content
+	total = title.episode_count or MediaPart.objects.filter(
+		content_id=part.content_id
+	).count()
+	text = DELIVERY_CAPTION.format(
+		title=escape_html(title.title),
+		number=part.number,
+		total=total,
+	)
+	if part.season_number:
+		text += DELIVERY_CAPTION_SEASON.format(season=part.season_number)
+	return text
+
+
+delivery_caption = to_async(delivery_caption_sync)
+
+
 async def deliver_part(
 	bot: Bot,
 	chat_id: int,
@@ -782,6 +819,10 @@ async def deliver_part(
 	reply_markup: Any = None,
 ) -> List[int]:
 	"""Deliver a part, falling back to the next stored copy when one is stale."""
+	if caption is None:
+		# No caller-supplied text: describe the part instead of echoing whatever
+		# the Cloud channel message said.
+		caption = await delivery_caption(part)
 	records = await select_media_for_delivery(part, quality)
 	if not records:
 		if await part_has_pdf(part):
@@ -876,6 +917,10 @@ async def edit_part_media(
 	kind, a multi-page part) or Telegram refused it, and :class:`MediaUnavailable`
 	when the part stores no file at all.
 	"""
+	if caption is None:
+		# The swap rewrites the caption too, so a navigator hop never leaves the
+		# previous episode's description under the new file.
+		caption = await delivery_caption(part)
 	records = await select_media_for_delivery(part, quality)
 	if not records:
 		if await part_has_pdf(part):

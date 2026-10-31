@@ -284,6 +284,12 @@ AI_LLM_DEADLINE = env_int("AI_LLM_DEADLINE", 12)
 # Ask the provider for a strict JSON object (Groq/OpenAI support it; a gateway
 # that does not would error, so it is opt-in). Tool calls do not use it.
 AI_LLM_JSON_MODE = env_bool("AI_LLM_JSON_MODE", False)
+# Respan Gateway (movies.gateway): a provider row of kind "gateway" is called
+# through the gateway that runs inside this process. Without this path the
+# gateway is configured from AI_LLM_* above (one provider, a catch-all route);
+# with it, the file is the gateway's own gateway.toml — providers, routes,
+# fallback between them, tools. A relative path is read from BASE_DIR.
+AI_GATEWAY_CONFIG = env("AI_GATEWAY_CONFIG", "")
 
 BOT_PAGE_SIZE = env_int("BOT_PAGE_SIZE", 8)
 BOT_LOG_CHANNEL_ID = env("BOT_LOG_CHANNEL_ID", "")

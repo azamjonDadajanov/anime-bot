@@ -398,6 +398,9 @@ class AIProvider(models.Model):
 		GEMINI = "gemini", "Google Gemini"
 		OPENAI = "openai", "OpenAI"
 		CUSTOM = "custom", "Boshqa (OpenAI-mos)"
+		# Called through the in-process Respan Gateway instead of directly:
+		# the model is the route the gateway asks for (movies.gateway).
+		GATEWAY = "gateway", "Respan Gateway"
 
 	name = models.CharField(max_length=60, unique=True, help_text="Masalan: Groq (asosiy)")
 	kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.GROQ)

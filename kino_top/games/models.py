@@ -164,3 +164,9 @@ class MonthlyPrize(models.Model):
 
 	def __str__(self) -> str:
 		return f"{self.year}-{self.month:02d}: {self.user_id} ({self.points} ball)"
+
+
+# Artifact Hunter & Dynamic Portals models
+from .artifact_models import *  # noqa: F401, F403
+
+from .battle_models import *    # noqa: F401, F403

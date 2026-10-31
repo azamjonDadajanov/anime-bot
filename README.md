@@ -95,6 +95,7 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 | Backend   | Django 5.2, Django REST Framework, SimpleJWT, drf-spectacular, CORS, whitenoise |
 | Baza      | SQLite (dev) yoki PostgreSQL (production)                                     |
 | Frontend  | React 19, Vite, Mantine 9, React Router, axios, bootstrap-icons               |
+| Game      | React 18, Three.js (WebGL 3D), Vite, Tailwind CSS, Telegram Mini App         |
 | Production| Docker Compose, gunicorn, nginx, PostgreSQL 17                                 |
 
 ## Repo tuzilishi
@@ -119,6 +120,42 @@ sayt esa katalog, sevimlilar, profil va obuna bo'limlarini beradi.
 â””â”€â”€ kino_top/.env.example      # mahalliy ishlab chiqish uchun namuna
 ```
 
+
+## ?? Artifact Hunter — Mini App O'yini
+
+Telegram Mini App sifatida ishlaydigan **ochiq dunyo 3D RPG o'yini**.
+
+### O'yin imkoniyatlari
+
+- **Ochiq dunyo** — toglar, daraxtlar, osmon, bulutlar, quyosh bilan 3D landshaft
+- **4 ta qahramon sinfi** — Swordman, Mage, Ranger, Rogue (har birining o'z stat va qurollari)
+- **Portal jangi** — Portallarga kirganda 3D arena ochiladi, to'lqin-to'lqin skeletlar hujum qiladi
+- **Portal kirish bonusi** — Portaldagi HP, Mana va zarar **+30%** kuchaytiriladi
+- **Skelet turlari** — Minion, Rogue, Warrior, Mage (har birida o'z qurollari), Boss (2.65× katta)
+- **Daraja tizimi** — XP yig'ish, daraja oshish (har darajada ko'proq XP kerak: 500 × 1.35??¹)
+- **Inventar va qurollar** — Sandiq ochish orqali qurol va kiyimlar, almashtirish imkoni
+- **Virtual joystick** — Mobil uchun analog joystick (touch + pointer, chap tomon)
+- **O'lim teleport animatsiyasi** — Qahramon o'lganda procedural tiz cho'kish › ko'tarilish › portal effekti
+- **HUD** — HP, Mana, XP, to'lqin, tanga paneli; profil va sumka modallari
+
+### Game ishga tushirish (mahalliy)
+
+`ash
+cd game
+npm install
+npm run dev      # http://localhost:5173 (Django :8000 ga proxy)
+`
+
+### Game texnik tafsilotlar
+
+| Komponent | Texnologiya |
+|---|---|
+| 3D Render | Three.js WebGL, GLTFLoader, SkeletonUtils |
+| Animatsiya | Procedural skeletal animator (CharacterAnimator.js) |
+| Fizika | AABB chegarasi, arena radius, enemy AI pathfinding |
+| UI | React 18 + Tailwind CSS (overlay HUD) |
+| Backend | Django REST + games/battle_views.py (AllowAny) |
+| Build | Vite 6, tree-shaking, gzip ~257 KB |
 ## Tez boshlash (mahalliy)
 
 ### 1. Backend va bot
@@ -336,6 +373,50 @@ javob yozadi (`movies.ai_assistant`):
 - **Kesh**: bir xil savol 2 daqiqa ichida qayta berilsa javob keshdan olinadi.
 
 
+
+### Respan Gateway orqali model chaqirish
+
+Yordamchining model chaqiruvi **Respan Gateway** orqali ham o'tishi mumkin: u
+ilova jarayoni ichida ishlaydi (alohida server, port, socket yo'q) va
+OpenAI-mos so'rovni model nomi bo'yicha kerakli provayderga yo'naltiradi.
+Paket `requirements.txt` da (`respan-gateway==0.3.0`, Python 3.10+):
+
+```bash
+cd kino_top && pip install -r requirements.txt
+```
+
+Yoqish: `/django-admin/` â†’ *AI provayderlar* â†’ yangi qator, **Turi** =
+Â«Respan GatewayÂ», **Model** = gatewaydan so'raladigan model (yoki route) nomi.
+Kalit maydoni bo'sh qoladi: provayder kalitlarini gateway o'zi ko'taradi.
+Gateway ikki xil sozlanadi:
+
+- **`AI_LLM_*` bo'yicha** (odatiy hol): `.env` dagi provayder (Groq/Gemini/OpenAI
+  yoki `custom` + `AI_LLM_BASE_URL`) gatewayning yagona provayderi bo'ladi,
+  `*` route esa qator so'ragan modelni o'shanga uzatadi â€” qator to'g'ridan-to'g'ri
+  chaqirilgani bilan bir xil ishlaydi.
+- **`AI_GATEWAY_CONFIG=gateway.toml`**: gatewayning o'z formati â€” bir nechta
+  provayder, `routes` (`to`, `tries`, `hedge`, `pick`), MCP tool serverlar.
+  Nisbiy yo'l `kino_top/` dan o'qiladi; kalitlar `env:NAME` havolasi bilan.
+
+Zanjirning qolgan qismi o'zgarmaydi: gateway qatori ham priority, cooldown va
+`ai_status` bilan boshqariladi, faqat so'rov to'g'ridan-to'g'ri yuborilmaydi
+(`movies.gateway`, `movies.llm`). Kalit manba kodga ham, brauzerga ham tushmaydi.
+
+Tekshirish (provayder kaliti va tashqi tarmoq kerak emas â€” loopback'dagi
+fixture ishlatiladi):
+
+```bash
+python manage.py test movies.tests_gateway      # qator â†’ gateway â†’ fixture
+python manage.py ai_status --test               # haqiqiy provayder bilan bitta savol
+```
+
+Kuzatilgan natija (2026-10-31, lokal): `movies.tests_gateway` 7/7 o'tadi â€”
+AniVoy savoli va katalog funksiyasi gateway orqali fixture'ga yetib boradi,
+javob va `tool_calls` qaytib keladi, 429 â†’ zanjirda Â«limitÂ» bo'ladi.
+Haqiqiy provayderga jonli so'rov bu tekshiruvga kirmaydi.
+
+Gateway hujjati va to'liq konfiguratsiya:
+[respanai/respan-gateway](https://github.com/respanai/respan-gateway?utm_source=freebuff&utm_medium=paid&utm_campaign=respan-gateway&bfcid=bfc_1.eyJpZCI6IjQ0NzgzYjJlLTdkYmQtNDBhMy04NmM2LTQ0MWE2MTgwNGVhYyIsImMiOiIyMDM2ODZkZS1mMzg0LTQ4NTQtYmViNC1hYzBiYWRmNmM1NTUiLCJrIjoiM2IxMGE4YmUtNzgyOS00MmJhLWFmNmEtYmI0YWUxZTRhY2Y4IiwiaWF0IjoxNzkzNDM2MDg5fQ.oUahQ1rwkYQMar9WbvnfgYn8XWc-LCFFqtczWfzaai4).
 
 ## Xavfsizlik
 

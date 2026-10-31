@@ -139,6 +139,18 @@ PART_CARD = (
 	"Ko'rish uchun quyidagi tugmani bosing."
 )
 
+# Caption of a file the bot delivers to a user. Deliberately NOT
+# ``TelegramMedia.caption``: that is the Cloud channel's own text (the admin's
+# upload note, the ``code: 1234`` parser hint, the old VIP promo line) and it
+# must never reach a private chat. The user gets the title, the part within the
+# run and — when the part belongs to one — its season, and nothing else.
+#   🎬 <b>Naruto</b>
+#   🎞 5/12
+#   📺 2-fasl
+DELIVERY_CAPTION = "🎬 <b>{title}</b>\n🎞 {number}/{total}"
+# Appended only for a part that has a season (``part.season_number``).
+DELIVERY_CAPTION_SEASON = "\n📺 {season}-fasl"
+
 # Attached below a delivered part whose files are images only: a media group
 # cannot carry a keyboard, so the navigator goes out as its own message.
 WATCH_PARTS_HINT = "🎞 Qismni tanlang:"

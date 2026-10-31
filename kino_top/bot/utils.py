@@ -103,7 +103,15 @@ def chunked(iterable: Iterable[T], size: int) -> Iterator[List[T]]:
 
 
 def escape_html(text: Any) -> str:
-	return str(text or "")
+	"""Escape a value for Telegram's HTML parse mode.
+
+	The bot sends with ``ParseMode.HTML`` (see ``runner.build_bot``), so a title
+	like ``Tom & Jerry`` or ``Kimi ni Natteru? <Signal>`` would be rejected by
+	Telegram with ``can't parse entities`` unless ``&`` and the angle brackets
+	are escaped first. ``quote=False``: quotes are legal in text content and
+	Telegram only decodes the three entities ``html.escape`` writes here.
+	"""
+	return html.escape(str(text or ""), quote=False)
 
 
 def truncate(text: Any, limit: int = 100) -> str:

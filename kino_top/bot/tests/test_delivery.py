@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import html
 import asyncio
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Chat, Message
 from django.test import TransactionTestCase
-from movies.models import MediaPart, TelegramMedia
+from movies.models import MediaPart, MediaTitle, TelegramMedia
 
 from ..services.media import (
 	MediaUnavailable,
@@ -159,6 +160,50 @@ class DeliveryFallbackTests(TransactionTestCase):
 		asyncio.run(deliver_part(make_bot(session), 111, part, protect_content=True))
 
 		self.assertTrue(session.methods("SendVideo")[0].protect_content)
+
+	def test_delivery_caption_describes_the_part_not_the_cloud_message(self) -> None:
+		"""The stored caption (Cloud text, VIP promo) must never reach the user."""
+		title = make_title(code="1015", title="Naruto")
+		MediaTitle.objects.filter(pk=title.pk).update(episode_count=12)
+		part = load_part(make_part(title, number=5, season=2))
+		make_media(
+			part,
+			file_id="video-file",
+			media_type="video",
+			caption="Naruto\n2-5\n\nVIPga obuna bo'ling",
+		)
+
+		session = FakeSession()
+		asyncio.run(deliver_part(make_bot(session), 111, part))
+
+		sent = session.methods("SendVideo")[0]
+		self.assertEqual(sent.caption, "🎬 <b>Naruto</b>\n🎞 5/12\n📺 2-fasl")
+
+	def test_delivery_caption_omits_the_season_line_when_there_is_none(self) -> None:
+		title = make_title(code="1016", title="Kino")
+		part = load_part(make_part(title, number=1))
+		make_media(part, file_id="movie-file", media_type="video")
+
+		session = FakeSession()
+		asyncio.run(deliver_part(make_bot(session), 111, part))
+
+		sent = session.methods("SendVideo")[0]
+		self.assertEqual(sent.caption, "🎬 <b>Kino</b>\n🎞 1/1")
+
+	def test_delivery_caption_escapes_the_title_for_html(self) -> None:
+		"""Telegram rejects an unescaped ``&`` in an HTML caption."""
+		title = make_title(code="1017", title="Tom & Jerry")
+		part = load_part(make_part(title, number=1))
+		make_media(part, file_id="escaped-file", media_type="video")
+
+		session = FakeSession()
+		asyncio.run(deliver_part(make_bot(session), 111, part))
+
+		sent = session.methods("SendVideo")[0]
+		self.assertEqual(
+			sent.caption,
+			f"🎬 <b>{html.escape('Tom & Jerry', quote=False)}</b>\n🎞 1/1",
+		)
 
 	def test_storage_channel_metadata_is_preserved(self) -> None:
 		title = make_title(code="1009")

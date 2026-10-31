@@ -17,6 +17,7 @@ urlpatterns = [
     path('api/auth/', include('users.urls')),
     path('api/', include('movies.urls')),
     path('api/game/', include('games.urls')),
+    path('api/games/', include('games.urls')),
     path('api/admin/', include('adminpanel.urls')),
 ] + static(settings.MEDIA_URL,
             document_root=settings.MEDIA_ROOT)

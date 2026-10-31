@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 # there — and not only in the server's console.
 operator_log = logging.getLogger("bot.ai")
 
+# The provider kind that is not called directly but routed through the Respan
+# Gateway (movies.gateway). A chain entry of this kind gets the gateway's
+# model-name routing without the assistant knowing about it.
+GATEWAY_KIND = "gateway"
+
 # Presets: base URL and the model to use when the row (or ``AI_LLM_MODEL``) does
 # not name one. Kept in one place so adding a provider stays a data change.
 PRESETS: Dict[str, Dict[str, str]] = {
@@ -67,6 +72,13 @@ PRESETS: Dict[str, Dict[str, str]] = {
 		"model": "gpt-6-luna",
 	},
 	"custom": {
+		"base_url": "",
+		"model": "",
+	},
+	# Not a URL: a row of this kind is called through the in-process Respan
+	# Gateway, which decides where the model goes (see movies.gateway). Such a
+	# row therefore needs a model (its route) and no key of its own.
+	GATEWAY_KIND: {
 		"base_url": "",
 		"model": "",
 	},
@@ -255,6 +267,10 @@ def env_provider() -> ProviderConfig:
 
 
 def _configured(config: ProviderConfig) -> bool:
+	if config.kind == GATEWAY_KIND:
+		# The gateway holds the provider keys itself, so a row needs only the
+		# model (the route) it asks for.
+		return bool(config.model)
 	return bool(config.api_key and config.model and config.base_url)
 
 
@@ -623,6 +639,60 @@ def _text_only_messages(messages: Sequence[Dict[str, Any]]) -> List[Dict[str, An
 # --------------------------------------------------------------------------- #
 # One attempt
 # --------------------------------------------------------------------------- #
+def _via_gateway(config: ProviderConfig, payload: Dict[str, Any], *, seconds: int) -> Dict[str, Any]:
+	"""One attempt through the in-process Respan Gateway (:mod:`movies.gateway`).
+
+	The gateway is a black box that answers OpenAI-shaped bodies, so this is
+	where its failures become the four facts the chain already understands: a
+	limit (skip for minutes), a withdrawn model or bad request (skip for much
+	longer), a timeout or outage (skip briefly), and "it cannot run at all" —
+	judged a configuration problem, because no retry will install a package.
+	"""
+	from . import gateway  # imported here: gateway reads this module's presets
+
+	try:
+		return gateway.complete(payload, seconds=seconds)
+	except gateway.GatewayUnavailable as exc:
+		raise ProviderError(str(exc), config=True) from exc
+	except gateway.GatewayCallError as exc:
+		raise ProviderError(
+			str(exc),
+			quota=exc.status in QUOTA_STATUS_CODES,
+			config=exc.status in MODEL_GONE_STATUS_CODES,
+			retry_after=exc.retry_after,
+		) from exc
+
+
+def _completion_result(body: Dict[str, Any], label: str) -> ChatResult:
+	"""One decoded completion body as the answer the assistant works with.
+
+	Shared by both transports — the direct call and the gateway — because the
+	body is the same OpenAI shape either way: prose, functions, or both.
+	"""
+	try:
+		message = body["choices"][0]["message"]
+		extract = str(message.get("content") or "")
+	except (KeyError, IndexError, TypeError, AttributeError) as exc:
+		raise ProviderError(f"{label} javobida 'choices' yo'q.") from exc
+
+	calls = []
+	for index, item in enumerate(message.get("tool_calls") or []):
+		function = item.get("function") or {}
+		name = str(function.get("name") or "").strip()
+		if not name:
+			continue
+		extra = item.get("extra_content")
+		calls.append(
+			ToolCall(
+				id=str(item.get("id") or f"call_{index}"),
+				name=name,
+				arguments=str(function.get("arguments") or "{}"),
+				extra=extra if isinstance(extra, dict) and extra else None,
+			)
+		)
+	return ChatResult(content=extract, tool_calls=tuple(calls), provider=label)
+
+
 def _attempt(
 	config: ProviderConfig,
 	messages: Sequence[Dict[str, Any]],
@@ -654,6 +724,12 @@ def _attempt(
 		payload["tool_choice"] = tool_choice or "auto"
 	elif not tools and json_mode():
 		payload["response_format"] = {"type": "json_object"}
+	if config.kind == GATEWAY_KIND:
+		# The same body, handed to the gateway instead of to a provider: it
+		# routes it by model name and answers in the same shape.
+		return _completion_result(
+			_via_gateway(config, payload, seconds=max(3, int(seconds))), config.label
+		)
 	request = urllib.request.Request(
 		f"{config.base_url}/chat/completions",
 		data=json.dumps(payload).encode("utf-8"),
@@ -693,28 +769,7 @@ def _attempt(
 	except json.JSONDecodeError as exc:
 		raise ProviderError(f"{config.label} noto'g'ri javob qaytardi.") from exc
 
-	try:
-		message = body["choices"][0]["message"]
-		extract = str(message.get("content") or "")
-	except (KeyError, IndexError, TypeError, AttributeError) as exc:
-		raise ProviderError(f"{config.label} javobida 'choices' yo'q.") from exc
-
-	calls = []
-	for index, item in enumerate(message.get("tool_calls") or []):
-		function = item.get("function") or {}
-		name = str(function.get("name") or "").strip()
-		if not name:
-			continue
-		extra = item.get("extra_content")
-		calls.append(
-			ToolCall(
-				id=str(item.get("id") or f"call_{index}"),
-				name=name,
-				arguments=str(function.get("arguments") or "{}"),
-				extra=extra if isinstance(extra, dict) and extra else None,
-			)
-		)
-	return ChatResult(content=extract, tool_calls=tuple(calls), provider=config.label)
+	return _completion_result(body, config.label)
 
 
 def probe(config: ProviderConfig, *, seconds: Optional[int] = None) -> Tuple[str, str]:

@@ -111,6 +111,10 @@ class AIProviderAdmin(admin.ModelAdmin):
 
 	@admin.display(description="Kalit")
 	def key_state(self, obj: AIProvider) -> str:
+		if obj.kind == llm.GATEWAY_KIND:
+			# A gateway row has no key of its own: the gateway holds the
+			# provider keys (AI_LLM_* or gateway.toml).
+			return "gateway (kalitsiz)"
 		if (obj.api_key or "").strip():
 			return obj.masked_key
 		# A row without its own key borrows the environment's one — but only
@@ -126,6 +130,8 @@ class AIProviderAdmin(admin.ModelAdmin):
 			return "o'chirilgan"
 		if obj.cooling_down:
 			return "kutishda (limit)"
+		if obj.kind == llm.GATEWAY_KIND:
+			return "tayyor (gateway)" if (obj.model or "").strip() else "modelsiz"
 		if not (obj.api_key or "").strip():
 			env = llm.env_provider()
 			if env.api_key and env.kind == obj.kind:
@@ -161,7 +167,9 @@ class AIProviderAdmin(admin.ModelAdmin):
 				row_id=row.pk,
 				supports_tools=bool(getattr(row, "supports_tools", True)),
 			)
-			if not settings_row.api_key:
+			if not settings_row.api_key and settings_row.kind != llm.GATEWAY_KIND:
+				# A gateway row needs no key: the gateway has its own (and
+				# says so itself when it does not).
 				self.message_user(request, f"{row.name}: kalit yo'q, sinab bo'lmaydi.")
 				continue
 			started = time.monotonic()

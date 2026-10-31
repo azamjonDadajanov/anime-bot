@@ -144,3 +144,7 @@ class LeaderboardView(APIView, GameErrorMixin):
 		)
 		payload["month"] = timezone.now().strftime("%Y-%m")
 		return Response(payload)
+
+
+# Artifact Hunter Views
+from .artifact_views import *  # noqa: F401, F403
