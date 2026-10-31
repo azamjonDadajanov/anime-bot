@@ -328,6 +328,12 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-user-id',
+]
+
 # Origins allowed to POST to Django (the administrator login in production).
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
